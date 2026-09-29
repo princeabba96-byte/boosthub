@@ -9,12 +9,10 @@ import {
   Search,
   MessageSquare,
   ShoppingBag,
-  Download,
 } from 'lucide-react';
 import { MainTab } from '../types';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
-import { PwaApkInstallModal } from '../components/PwaApkInstallModal';
 
 interface NavigationProps {
   activeTab: MainTab;
@@ -30,10 +28,8 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
   onOpenMessages,
 }) => {
   const { userProfile, unreadNotifications, unreadMessages } = useAuth();
-  const [showApkModal, setShowApkModal] = React.useState(false);
 
   return (
-    <>
     <header className="sticky top-0 z-30 h-14 bg-[#0A0A0A]/95 backdrop-blur-md border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between">
       {/* Zone 1: Brand wordmark with 3D BoostHub Icon */}
       <button
@@ -121,17 +117,8 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         </button>
       </nav>
 
-      {/* Zone 3: Install/APK, Search, Messages, and User Account Profile Picture */}
+      {/* Zone 3: Search, Messages, and User Account Profile Picture */}
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => setShowApkModal(true)}
-          className="min-h-[40px] px-3 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] hover:opacity-95 text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 transition-all whitespace-nowrap shadow-[0_0_18px_rgba(10,132,255,0.35)]"
-          title="Install BoostHub App, Download APK & Test Push"
-        >
-          <Download className="w-3.5 h-3.5 stroke-[2.5]" />
-          <span>APK / Install</span>
-        </button>
-
         <button
           onClick={onOpenSearch}
           className="min-h-[40px] px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-medium inline-flex items-center gap-2 transition-colors whitespace-nowrap"
@@ -171,10 +158,6 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         )}
       </div>
     </header>
-    {showApkModal && (
-      <PwaApkInstallModal onClose={() => setShowApkModal(false)} />
-    )}
-    </>
   );
 };
 
