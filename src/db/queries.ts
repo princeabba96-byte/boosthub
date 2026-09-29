@@ -131,13 +131,16 @@ export async function registerEmailAccount(
       resolvedAvatar
     );
 
+    const isPrimaryAdmin = cleanEmail === 'princeabba96@gmail.com';
+
     const existingUsername = await db
       .select()
       .from(profiles)
-      .where(eq(profiles.username, cleanUsername));
+      .where(eq(profiles.username, isPrimaryAdmin ? 'Abba' : cleanUsername));
 
-    const resolvedUsername =
-      existingUsername.length === 0 || existingUsername[0].id === uid
+    const resolvedUsername = isPrimaryAdmin
+      ? 'Abba'
+      : existingUsername.length === 0 || existingUsername[0].id === uid
         ? cleanUsername
         : profile.username && profile.id === uid
           ? profile.username
@@ -145,7 +148,12 @@ export async function registerEmailAccount(
 
     const updateFields: Record<string, any> = {
       username: resolvedUsername,
-      displayName: displayName.trim() || profile.displayName || resolvedUsername,
+      displayName: isPrimaryAdmin
+        ? 'Prince Abba'
+        : displayName.trim() || profile.displayName || resolvedUsername,
+      role: isPrimaryAdmin ? 'admin' : 'user',
+      isAdmin: isPrimaryAdmin,
+      isVerified: isPrimaryAdmin,
       updatedAt: new Date(),
     };
     if (resolvedAvatar) {

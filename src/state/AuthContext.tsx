@@ -61,8 +61,31 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function normalizeUserAdminState(profile: UserProfile | null): UserProfile | null {
+  if (!profile) return null;
+  const isOwnerAdmin =
+    String(profile.email || '')
+      .trim()
+      .toLowerCase() === 'princeabba96@gmail.com';
+  if (isOwnerAdmin) {
+    return {
+      ...profile,
+      displayName: 'Prince Abba',
+      username: 'Abba',
+      role: 'admin',
+      isAdmin: true,
+      isVerified: true,
+    };
+  }
+  return {
+    ...profile,
+    isAdmin: false,
+    role: profile.role === 'admin' ? 'user' : profile.role || 'user',
+  };
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const initialCachedProfile = getCachedProfile();
+  const initialCachedProfile = normalizeUserAdminState(getCachedProfile());
   const [userProfile, setUserProfileState] = useState<UserProfile | null>(initialCachedProfile);
   const [loading, setLoading] = useState<boolean>(() => {
     if (initialCachedProfile) return false;
@@ -81,8 +104,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const setUserProfile = useCallback((profile: UserProfile | null) => {
-    setUserProfileState(profile);
-    setCachedProfile(profile);
+    const normalized = normalizeUserAdminState(profile);
+    setUserProfileState(normalized);
+    setCachedProfile(normalized);
   }, []);
 
   const showToast = useCallback(

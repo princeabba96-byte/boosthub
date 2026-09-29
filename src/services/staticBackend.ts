@@ -418,6 +418,32 @@ function createInitialStaticDb(): StaticDbState {
   };
 }
 
+const ADMIN_EMAIL = 'princeabba96@gmail.com';
+
+function isStrictAdminEmail(email?: string): boolean {
+  return String(email || '').trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+function sanitizeUsersAdminStatus(
+  usersMap: Record<string, UserProfile & { password?: string }>
+) {
+  Object.values(usersMap).forEach((u) => {
+    if (!u || u.id === 'boost_bot_official') return;
+    if (isStrictAdminEmail(u.email)) {
+      u.isAdmin = true;
+      u.role = 'admin';
+      u.isVerified = true;
+      u.displayName = 'Prince Abba';
+      u.username = 'Abba';
+    } else {
+      u.isAdmin = false;
+      if (u.role === 'admin') {
+        u.role = 'user';
+      }
+    }
+  });
+}
+
 function loadStaticDb(): StaticDbState {
   if (typeof window === 'undefined') return createInitialStaticDb();
   try {
@@ -428,6 +454,7 @@ function loadStaticDb(): StaticDbState {
         if (!parsed.users.boost_bot_official) {
           parsed.users.boost_bot_official = BOOST_BOT_PROFILE;
         }
+        sanitizeUsersAdminStatus(parsed.users);
         return parsed;
       }
     }
@@ -472,7 +499,7 @@ function ensureUserWelcomeMessages(userId: string, db: StaticDbState): void {
       senderId: 'boost_bot_official',
       receiverId: userId,
       content:
-        'Welcome to BoostHub! You can message friends, share Capshots, or use the Admin Console in your Profile to send BOOST BOT broadcasts.',
+        'Welcome to BoostHub! Explore personalized feeds, watch Capshots, join creator communities, and connect with friends.',
       mediaUrl: '',
       mediaType: '',
       replyToId: null,
@@ -519,6 +546,7 @@ export async function handleStaticBackendRequest<T = any>(
     const email = String(body.email || 'user@boosthub.app')
       .trim()
       .toLowerCase();
+    const isOwnerAdmin = isStrictAdminEmail(email);
     const existing = Object.values(db.users).find(
       (u) => u.email.toLowerCase() === email
     );
@@ -532,8 +560,18 @@ export async function handleStaticBackendRequest<T = any>(
       if (body.avatarUrl) {
         existing.avatarUrl = body.avatarUrl;
       }
-      existing.isAdmin = true;
-      existing.role = 'admin';
+      if (isOwnerAdmin) {
+        existing.isAdmin = true;
+        existing.role = 'admin';
+        existing.isVerified = true;
+        existing.displayName = 'Prince Abba';
+        existing.username = 'Abba';
+      } else {
+        existing.isAdmin = false;
+        if (existing.role === 'admin') {
+          existing.role = 'user';
+        }
+      }
       ensureUserWelcomeMessages(existing.id, db);
       saveStaticDb(db);
       return {
@@ -544,13 +582,16 @@ export async function handleStaticBackendRequest<T = any>(
     }
 
     const userId = `user_${Date.now()}`;
-    const username =
-      String(body.username || email.split('@')[0] || 'boostuser')
-        .toLowerCase()
-        .replace(/[^a-z0-9_]/g, '') || `user_${Math.floor(Math.random() * 9999)}`;
-    const displayName = String(
-      body.displayName || body.username || email.split('@')[0] || 'BoostHub Creator'
-    );
+    const username = isOwnerAdmin
+      ? 'Abba'
+      : String(body.username || email.split('@')[0] || 'boostuser')
+          .toLowerCase()
+          .replace(/[^a-z0-9_]/g, '') || `user_${Math.floor(Math.random() * 9999)}`;
+    const displayName = isOwnerAdmin
+      ? 'Prince Abba'
+      : String(
+          body.displayName || body.username || email.split('@')[0] || 'BoostHub User'
+        );
 
     const newUser: UserProfile & { password?: string } = {
       id: userId,
@@ -558,10 +599,12 @@ export async function handleStaticBackendRequest<T = any>(
       username,
       displayName,
       avatarUrl: defaultAvatar,
-      bio: 'Creating and connecting on BoostHub',
-      role: 'admin',
-      isAdmin: true,
-      isVerified: true,
+      bio: isOwnerAdmin
+        ? 'Primary Administrator of BoostHub'
+        : 'Creating and connecting on BoostHub',
+      role: isOwnerAdmin ? 'admin' : 'user',
+      isAdmin: isOwnerAdmin,
+      isVerified: isOwnerAdmin,
       onboardingCompleted: true,
       joinReason: 'Connect & Create',
       wantToWatch: 'Creators & Tech',
@@ -573,12 +616,12 @@ export async function handleStaticBackendRequest<T = any>(
       isPrivate: false,
       notificationsEnabled: true,
       interests: ['Creators', 'Technology', 'Music'],
-      followersCount: 18,
+      followersCount: isOwnerAdmin ? 1450 : 1,
       followingCount: 4,
       friendsCount: 3,
-      likesReceivedCount: 42,
-      sharesReceivedCount: 9,
-      viewsReceivedCount: 320,
+      likesReceivedCount: isOwnerAdmin ? 4200 : 0,
+      sharesReceivedCount: isOwnerAdmin ? 310 : 0,
+      viewsReceivedCount: isOwnerAdmin ? 18500 : 10,
       postsCount: 0,
       createdAt: new Date().toISOString(),
     };
@@ -602,14 +645,27 @@ export async function handleStaticBackendRequest<T = any>(
 
   // 2. Current User Profile
   if (pathname === '/api/me') {
+    sanitizeUsersAdminStatus(db.users);
+    saveStaticDb(db);
     return currentUser as unknown as T;
   }
 
   if (pathname === '/api/profile' || pathname === '/api/profiles/me') {
+    const isOwnerAdmin = isStrictAdminEmail(currentUser.email);
     const updated: UserProfile = {
       ...currentUser,
-      displayName: body.displayName ?? currentUser.displayName,
-      username: body.username ?? currentUser.username,
+      displayName: isOwnerAdmin
+        ? 'Prince Abba'
+        : (body.displayName ?? currentUser.displayName),
+      username: isOwnerAdmin
+        ? 'Abba'
+        : (body.username ?? currentUser.username),
+      role: isOwnerAdmin
+        ? 'admin'
+        : currentUser.role === 'admin'
+          ? 'user'
+          : currentUser.role,
+      isAdmin: isOwnerAdmin,
       bio: body.bio ?? currentUser.bio,
       avatarUrl: body.avatarUrl ?? currentUser.avatarUrl,
       whoCanMessage: body.whoCanMessage ?? currentUser.whoCanMessage,
@@ -1080,6 +1136,9 @@ export async function handleStaticBackendRequest<T = any>(
 
   // 9. Admin Overview & BOOST BOT Console
   if (pathname === '/api/admin/overview') {
+    if (!isStrictAdminEmail(currentUser.email)) {
+      throw new Error('Forbidden: Admin access is restricted to Prince Abba.');
+    }
     const allUsers = Object.values(db.users).filter(
       (u) => u.id !== 'boost_bot_official'
     );
@@ -1110,6 +1169,9 @@ export async function handleStaticBackendRequest<T = any>(
   }
 
   if (pathname === '/api/admin/action' && method === 'POST') {
+    if (!isStrictAdminEmail(currentUser.email)) {
+      throw new Error('Forbidden: Admin access is restricted to Prince Abba.');
+    }
     const { action, targetId, content } = body;
     if (action === 'send_boost_bot_message') {
       const msgText = String(content || '').trim();

@@ -174,12 +174,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           setPushDeviceCount(st.deviceCount);
         })
         .catch(() => {});
-    } else if (isMe && activeMainMode === 'admin') {
+    } else if (
+      isMe &&
+      activeMainMode === 'admin' &&
+      userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+    ) {
       apiFetch('/api/admin/overview')
         .then(setAdminData)
         .catch(() => {});
     }
-  }, [isMe, activeMainMode]);
+  }, [isMe, activeMainMode, userProfile?.email]);
 
   const openFollowModal = async (type: 'followers' | 'following') => {
     setFollowModalType(type);
@@ -438,7 +442,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-400">
-                @{profile.username} · {profile.role} ·{' '}
+                @{profile.username} ·{' '}
+                {profile.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+                  ? 'admin'
+                  : profile.role === 'admin'
+                    ? 'user'
+                    : profile.role}{' '}
+                ·{' '}
                 <span className="text-blue-400 tabular-nums">
                   {profile.xp} XP
                 </span>
@@ -484,18 +494,20 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               >
                 <Settings className="w-3.5 h-3.5" /> Settings
               </button>
-              {(profile.isAdmin || profile.role === 'admin') && (
-                <button
-                  onClick={() => setActiveMainMode('admin')}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
-                    activeMainMode === 'admin'
-                      ? 'bg-purple-600 text-white'
-                      : 'bg-purple-600/20 text-purple-300 border border-purple-500/30'
-                  }`}
-                >
-                  <ShieldAlert className="w-3.5 h-3.5" /> Admin Console
-                </button>
-              )}
+              {(profile.isAdmin || profile.role === 'admin') &&
+                profile.email?.trim().toLowerCase() ===
+                  'princeabba96@gmail.com' && (
+                  <button
+                    onClick={() => setActiveMainMode('admin')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                      activeMainMode === 'admin'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-purple-600/20 text-purple-300 border border-purple-500/30'
+                    }`}
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" /> Admin Console
+                  </button>
+                )}
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
@@ -1059,6 +1071,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       {/* MODE 4: ADMIN MODERATION CONSOLE (Primary Admin: Prince Abba) */}
       {isMe &&
         (profile.isAdmin || profile.role === 'admin') &&
+        profile.email?.trim().toLowerCase() === 'princeabba96@gmail.com' &&
         activeMainMode === 'admin' &&
         adminData && (
           <div className="space-y-6">

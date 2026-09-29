@@ -55,10 +55,18 @@ export async function getOrCreateUser(
 
     if (existingProfiles.length > 0) {
       const existing = existingProfiles[0];
-      if (isAdminUser && (!existing.isAdmin || existing.role !== 'admin')) {
+      if (
+        isAdminUser &&
+        (!existing.isAdmin ||
+          existing.role !== 'admin' ||
+          existing.displayName !== 'Prince Abba' ||
+          existing.username !== 'Abba')
+      ) {
         const updated = await db
           .update(profiles)
           .set({
+            displayName: 'Prince Abba',
+            username: 'Abba',
             isAdmin: true,
             role: 'admin',
             isVerified: true,
@@ -74,7 +82,7 @@ export async function getOrCreateUser(
           .update(profiles)
           .set({
             isAdmin: false,
-            role: 'creator',
+            role: 'user',
             lastSeenAt: new Date(),
           })
           .where(eq(profiles.id, uid))
@@ -95,13 +103,12 @@ export async function getOrCreateUser(
     const emailPrefix =
       email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').toLowerCase() || 'user';
     const uniqueSuffix = uid.slice(-4).replace(/[^a-zA-Z0-9]/g, 'x').toLowerCase();
-    const generatedUsername = `${emailPrefix}_${uniqueSuffix}`;
-    const resolvedDisplayName =
-      displayName && displayName.trim().length > 0
+    const generatedUsername = isAdminUser ? 'Abba' : `${emailPrefix}_${uniqueSuffix}`;
+    const resolvedDisplayName = isAdminUser
+      ? 'Prince Abba'
+      : displayName && displayName.trim().length > 0
         ? displayName.trim()
-        : isAdminUser
-          ? 'Prince Abba'
-          : emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
+        : emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
 
     const inserted = await db
       .insert(profiles)
@@ -112,7 +119,7 @@ export async function getOrCreateUser(
         displayName: resolvedDisplayName,
         avatarUrl: avatarUrl || '',
         bio: isAdminUser ? 'Primary Administrator of BoostHub' : '',
-        role: isAdminUser ? 'admin' : 'creator',
+        role: isAdminUser ? 'admin' : 'user',
         isAdmin: isAdminUser,
         isVerified: isAdminUser,
         onboardingCompleted: false,

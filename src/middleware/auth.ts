@@ -119,7 +119,11 @@ export const requireAdmin = async (
   }
   try {
     const profile = await getProfileById(req.user.uid);
-    if (!profile || (!profile.isAdmin && profile.role !== 'admin')) {
+    const isOwnerEmail =
+      String(profile?.email || req.user.email || '')
+        .trim()
+        .toLowerCase() === 'princeabba96@gmail.com';
+    if (!profile || !isOwnerEmail || (!profile.isAdmin && profile.role !== 'admin')) {
       return res.status(403).json({ error: 'Forbidden: Administrator access required' });
     }
     next();
