@@ -9,10 +9,12 @@ import {
   Search,
   MessageSquare,
   ShoppingBag,
+  Download,
 } from 'lucide-react';
 import { MainTab } from '../types';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
+import { PwaApkInstallModal } from '../components/PwaApkInstallModal';
 
 interface NavigationProps {
   activeTab: MainTab;
@@ -28,15 +30,26 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
   onOpenMessages,
 }) => {
   const { userProfile, unreadNotifications, unreadMessages } = useAuth();
+  const [showApkModal, setShowApkModal] = React.useState(false);
 
   return (
-    <header className="sticky top-0 z-30 h-14 bg-[#060813]/90 backdrop-blur-md border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between">
-      {/* Zone 1: Single text element Brand wordmark */}
+    <>
+    <header className="sticky top-0 z-30 h-14 bg-[#0A0A0A]/95 backdrop-blur-md border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between">
+      {/* Zone 1: Brand wordmark with 3D BoostHub Icon */}
       <button
         onClick={() => onChangeTab('home')}
-        className="font-display text-xl font-bold tracking-tight text-white whitespace-nowrap"
+        className="flex items-center gap-2.5 font-display text-xl font-bold tracking-tight text-white whitespace-nowrap"
       >
-        BoostHub
+        <img
+          src="./icons/icon-192x192.png"
+          alt="BoostHub"
+          referrerPolicy="no-referrer"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).src = './icon.svg';
+          }}
+          className="w-8 h-8 rounded-xl border border-[#00E5FF]/40 shadow-[0_0_12px_rgba(10,132,255,0.45)] object-cover"
+        />
+        <span>BoostHub</span>
       </button>
 
       {/* Zone 2: 5 clean text navigation links on desktop */}
@@ -108,20 +121,29 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         </button>
       </nav>
 
-      {/* Zone 3: Search, Messages, and User Account Profile Picture */}
+      {/* Zone 3: Install/APK, Search, Messages, and User Account Profile Picture */}
       <div className="flex items-center gap-2">
+        <button
+          onClick={() => setShowApkModal(true)}
+          className="min-h-[40px] px-3 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] hover:opacity-95 text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 transition-all whitespace-nowrap shadow-[0_0_18px_rgba(10,132,255,0.35)]"
+          title="Install BoostHub App, Download APK & Test Push"
+        >
+          <Download className="w-3.5 h-3.5 stroke-[2.5]" />
+          <span>APK / Install</span>
+        </button>
+
         <button
           onClick={onOpenSearch}
           className="min-h-[40px] px-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-200 text-xs font-medium inline-flex items-center gap-2 transition-colors whitespace-nowrap"
           aria-label="Global Search"
         >
-          <Search className="w-4 h-4 text-blue-400" />
+          <Search className="w-4 h-4 text-[#00E5FF]" />
           <span className="hidden sm:inline">Search</span>
         </button>
 
         <button
           onClick={onOpenMessages}
-          className="relative min-h-[40px] px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium inline-flex items-center gap-2 transition-colors whitespace-nowrap"
+          className="relative min-h-[40px] px-3 rounded-xl bg-[#0A84FF] hover:bg-[#00B8FF] text-white text-xs font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap"
           aria-label="Direct Messages"
         >
           <MessageSquare className="w-4 h-4" />
@@ -137,7 +159,7 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
           <button
             onClick={() => onChangeTab('me')}
             title={`${userProfile.displayName} (@${userProfile.username})`}
-            className="ml-1 rounded-full ring-2 ring-blue-500/40 hover:ring-blue-400 transition-all"
+            className="ml-1 rounded-full ring-2 ring-[#0A84FF]/50 hover:ring-[#00E5FF] transition-all"
           >
             <Avatar
               src={userProfile.avatarUrl}
@@ -149,6 +171,10 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         )}
       </div>
     </header>
+    {showApkModal && (
+      <PwaApkInstallModal onClose={() => setShowApkModal(false)} />
+    )}
+    </>
   );
 };
 

@@ -1598,6 +1598,33 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={async () => {
+                    setPushBusy(true);
+                    try {
+                      await enableBackgroundPushNotifications(true).catch(() => {});
+                      await triggerTestPushNotification();
+                      const st = await getBrowserPushPermissionState();
+                      setPushSubscribed(st.subscribed);
+                      setPushDeviceCount(st.deviceCount);
+                      setNotificationsEnabled(true);
+                      showToast(
+                        'Test push sent! Check your phone/browser notifications tray.',
+                        'success'
+                      );
+                    } catch {
+                      showToast('Failed to send test push.', 'error');
+                    } finally {
+                      setPushBusy(false);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_0_16px_rgba(10,132,255,0.4)]"
+                >
+                  <Send className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>Send Test Push</span>
+                </button>
                 {!pushSubscribed ? (
                   <button
                     type="button"
@@ -1617,50 +1644,32 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                         setPushBusy(false);
                       }
                     }}
-                    className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <BellRing className="w-3.5 h-3.5" />
                     <span>{pushBusy ? 'Enabling...' : 'Enable on This Device'}</span>
                   </button>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      disabled={pushBusy}
-                      onClick={async () => {
-                        try {
-                          await triggerTestPushNotification();
-                          showToast('Test push sent! Check your notifications tray.', 'success');
-                        } catch {
-                          showToast('Failed to send test push.', 'error');
-                        }
-                      }}
-                      className="px-3 py-2 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-300 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Send className="w-3.5 h-3.5" />
-                      <span>Test Push</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={pushBusy}
-                      onClick={async () => {
-                        setPushBusy(true);
-                        try {
-                          await disableBackgroundPushNotifications();
-                          const st = await getBrowserPushPermissionState();
-                          setPushSubscribed(st.subscribed);
-                          setPushDeviceCount(st.deviceCount);
-                          showToast('Push disabled for this device.', 'info');
-                        } finally {
-                          setPushBusy(false);
-                        }
-                      }}
-                      className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs inline-flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <BellOff className="w-3.5 h-3.5" />
-                      <span>Disable</span>
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    disabled={pushBusy}
+                    onClick={async () => {
+                      setPushBusy(true);
+                      try {
+                        await disableBackgroundPushNotifications();
+                        const st = await getBrowserPushPermissionState();
+                        setPushSubscribed(st.subscribed);
+                        setPushDeviceCount(st.deviceCount);
+                        showToast('Push disabled for this device.', 'info');
+                      } finally {
+                        setPushBusy(false);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BellOff className="w-3.5 h-3.5" />
+                    <span>Disable</span>
+                  </button>
                 )}
               </div>
             </div>

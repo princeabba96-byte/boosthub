@@ -1,3 +1,5 @@
+const CACHE_NAME = 'boosthub-pwa-v8';
+
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -6,9 +8,22 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     Promise.all([
       self.clients.claim(),
-      // Clear any stale caches from older service worker versions so they never block page loads
-      caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))),
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(
+            keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+          )
+        ),
     ])
+  );
+});
+
+// Network-first fetch handler required for PWA installability & PWABuilder APK packaging
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request))
   );
 });
 
@@ -17,10 +32,10 @@ self.addEventListener('push', (event) => {
   let payload = {
     title: 'BoostHub',
     body: 'You have a new update on BoostHub!',
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: './icons/icon-192x192.png',
+    badge: './icons/icon-192x192.png',
     tag: 'boosthub-notification',
-    url: '/',
+    url: './',
   };
 
   if (event.data) {
@@ -37,13 +52,13 @@ self.addEventListener('push', (event) => {
 
   const options = {
     body: payload.body,
-    icon: payload.icon || '/icon.svg',
-    badge: payload.badge || '/icon.svg',
+    icon: payload.icon || './icons/icon-192x192.png',
+    badge: payload.badge || './icons/icon-192x192.png',
     tag: payload.tag || `boosthub-${Date.now()}`,
     renotify: true,
     vibrate: [150, 70, 150],
     data: {
-      url: payload.url || '/',
+      url: payload.url || './',
       type: payload.type || 'general',
       entityId: payload.entityId || '',
     },
@@ -56,7 +71,7 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetUrl =
-    (event.notification.data && event.notification.data.url) || '/';
+    (event.notification.data && event.notification.data.url) || './';
 
   event.waitUntil(
     self.clients

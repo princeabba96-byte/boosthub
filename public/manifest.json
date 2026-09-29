@@ -36,6 +36,41 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Watch Capshots",
+      "short_name": "Capshots",
+      "description": "Watch vertical short videos on BoostHub",
+      "url": "/?tab=capshots",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Create Post",
+      "short_name": "Create",
+      "description": "Open BoostHub Studio Editor & publish",
+      "url": "/?tab=create",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "B-Shop Gifts",
+      "short_name": "B-Shop",
+      "description": "Browse & send virtual gifts",
+      "url": "/?tab=bshop",
+      "icons": [{ "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png" }]
     }
   ]
 }

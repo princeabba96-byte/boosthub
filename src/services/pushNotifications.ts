@@ -34,8 +34,8 @@ export async function showBrowserSystemNotification(
 
   const notifOptions: any = {
     body,
-    icon: '/icon.svg',
-    badge: '/icon.svg',
+    icon: './icons/icon-192x192.png',
+    badge: './icons/icon-192x192.png',
     tag: `boosthub-${Date.now()}`,
     renotify: true,
     vibrate: [200, 100, 200],
