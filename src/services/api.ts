@@ -1,4 +1,5 @@
 import { CommentItem, MissionItem, PostItem, StoryItem, UserProfile } from '../types';
+import { handleStaticBackendRequest } from './staticBackend';
 
 const AUTH_STORAGE_KEY = 'boosthub_auth_token';
 const PROFILE_CACHE_KEY = 'boosthub_cached_profile_v1';
@@ -173,6 +174,16 @@ function xhrJsonRequest<T>(
           resolve({} as T);
         }
       } else {
+        const contentType = xhr.getResponseHeader('content-type') || '';
+        if (
+          (xhr.status === 404 || xhr.status === 405) &&
+          contentType.includes('text/html')
+        ) {
+          const fallbackErr: any = new Error('Static host fallback');
+          fallbackErr.isStaticHostFallback = true;
+          reject(fallbackErr);
+          return;
+        }
         let errMessage = 'Something went wrong. Please try again.';
         try {
           const parsed = JSON.parse(text);
@@ -229,8 +240,35 @@ export async function apiFetch<T = any>(
 
   const execute = async (): Promise<T> => {
     try {
+      const isGitHubPages =
+        typeof window !== 'undefined' &&
+        (window.location.hostname.endsWith('.github.io') ||
+          window.location.hostname.endsWith('.pages.dev') ||
+          window.location.hostname.endsWith('.netlify.app'));
+
+      if (isGitHubPages && path.startsWith('/api/')) {
+        return await handleStaticBackendRequest<T>(
+          path,
+          method,
+          options.body,
+          activeToken
+        );
+      }
+
       if (typeof window !== 'undefined' && typeof XMLHttpRequest !== 'undefined' && path.startsWith('/')) {
-        return await xhrJsonRequest<T>(path, method, headersObj, options.body);
+        try {
+          return await xhrJsonRequest<T>(path, method, headersObj, options.body);
+        } catch (xhrErr: any) {
+          if (xhrErr?.isStaticHostFallback && path.startsWith('/api/')) {
+            return await handleStaticBackendRequest<T>(
+              path,
+              method,
+              options.body,
+              activeToken
+            );
+          }
+          throw xhrErr;
+        }
       }
 
       const response = await fetch(path, {

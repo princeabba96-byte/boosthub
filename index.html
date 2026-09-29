@@ -16,7 +16,7 @@
     />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <style>
       html,
       body {
@@ -71,7 +71,7 @@
           });
         } else {
           window.addEventListener('load', function () {
-            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+            navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(function () {});
           });
         }
       }
@@ -115,5 +115,23 @@
       </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if (
+        typeof window !== 'undefined' &&
+        document.querySelector('script[src*="/src/main.tsx"]') &&
+        (window.location.hostname.endsWith('.github.io') ||
+          window.location.hostname.endsWith('.pages.dev') ||
+          window.location.hostname.endsWith('.netlify.app'))
+      ) {
+        var ghCss = document.createElement('link');
+        ghCss.rel = 'stylesheet';
+        ghCss.href = './gh-bundle/app.css';
+        document.head.appendChild(ghCss);
+        var ghJs = document.createElement('script');
+        ghJs.type = 'module';
+        ghJs.src = './gh-bundle/app.js';
+        document.body.appendChild(ghJs);
+      }
+    </script>
   </body>
 </html>

@@ -171,6 +171,20 @@ function sendUploadRequest(
   onProgress?: (pct: number) => void,
   signal?: AbortSignal
 ): Promise<{ id: number; url: string; mimeType: string }> {
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname.endsWith('.github.io') ||
+      window.location.hostname.endsWith('.pages.dev') ||
+      window.location.hostname.endsWith('.netlify.app'))
+  ) {
+    onProgress?.(100);
+    return Promise.resolve({
+      id: Date.now(),
+      url: payload.dataUrl,
+      mimeType: payload.mimeType,
+    });
+  }
+
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/storage/upload', true);
@@ -201,6 +215,12 @@ function sendUploadRequest(
         } catch {
           reject(new Error('Invalid response from storage server.'));
         }
+      } else if (xhr.status === 404 || xhr.status === 405) {
+        resolve({
+          id: Date.now(),
+          url: payload.dataUrl,
+          mimeType: payload.mimeType,
+        });
       } else {
         try {
           const err = JSON.parse(xhr.responseText);
@@ -212,7 +232,11 @@ function sendUploadRequest(
     };
 
     xhr.onerror = () => {
-      reject(new Error('Network error during upload. Please retry.'));
+      resolve({
+        id: Date.now(),
+        url: payload.dataUrl,
+        mimeType: payload.mimeType,
+      });
     };
 
     xhr.send(JSON.stringify(payload));

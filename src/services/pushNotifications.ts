@@ -46,9 +46,9 @@ export async function showBrowserSystemNotification(
 
   if (isTopWindow && 'serviceWorker' in navigator) {
     try {
-      let reg = await navigator.serviceWorker.getRegistration('/');
+      let reg = await navigator.serviceWorker.getRegistration();
       if (!reg) {
-        reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
       }
       if (reg && typeof reg.showNotification === 'function') {
         if (!('Notification' in window) || Notification.permission === 'granted') {

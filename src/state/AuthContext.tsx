@@ -222,6 +222,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = getAuthToken();
     if (!userProfile || !token) return;
 
+    const handleCustomRealtime = (ev: Event) => {
+      const data = (ev as CustomEvent)?.detail;
+      if (!data) return;
+      setRealtimeEvents((prev) => [...prev.slice(-25), data]);
+      if (data.type === 'boost_bot_message') {
+        setUnreadMessages((c) => c + 1);
+        setUnreadNotifications((c) => c + 1);
+        const msgText = data.payload?.content || 'New message from BOOST BOT';
+        showToast(`BOOST BOT: ${msgText}`, 'info');
+      }
+    };
+
+    window.addEventListener('boosthub:realtime', handleCustomRealtime);
+
+    const isStaticHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.endsWith('.github.io') ||
+        window.location.hostname.endsWith('.pages.dev') ||
+        window.location.hostname.endsWith('.netlify.app'));
+
+    if (isStaticHost) {
+      return () => {
+        window.removeEventListener('boosthub:realtime', handleCustomRealtime);
+      };
+    }
+
     const eventSource = new EventSource(
       `/api/realtime/stream?token=${encodeURIComponent(token)}`
     );
@@ -285,6 +311,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     return () => {
+      window.removeEventListener('boosthub:realtime', handleCustomRealtime);
       eventSource.close();
     };
   }, [userProfile, refreshBadgesCount, showToast]);
