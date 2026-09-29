@@ -538,6 +538,7 @@ export async function handleStaticBackendRequest<T = any>(
       saveStaticDb(db);
       return {
         token: `static_token_${existing.id}`,
+        profile: existing,
         user: existing,
       } as unknown as T;
     }
@@ -587,6 +588,7 @@ export async function handleStaticBackendRequest<T = any>(
     saveStaticDb(db);
     return {
       token: `static_token_${userId}`,
+      profile: newUser,
       user: newUser,
     } as unknown as T;
   }
