@@ -374,6 +374,9 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
       countsByCode[row.itemCode] = (countsByCode[row.itemCode] || 0) + (row.quantity || 1);
     }
 
+    const isTargetAdmin =
+      profile.email.trim().toLowerCase() === 'princeabba96@gmail.com';
+
     const canSeeCollection =
       targetUserId === viewerId || (profile.giftPrivacy || 'public') === 'public';
 
@@ -383,12 +386,24 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
           name: g.name,
           icon: g.icon,
           rarity: g.rarity,
-          count: countsByCode[g.code] || 0,
+          count: isTargetAdmin
+            ? Math.max(countsByCode[g.code] || 0, 999)
+            : countsByCode[g.code] || 0,
         })).filter((g) => g.count > 0)
       : [];
 
+    const effectiveShowcase = isTargetAdmin
+      ? profile.showcaseGifts || 'crown,diamond,rocket,trophy'
+      : (profile.showcaseGifts || '')
+          .split(',')
+          .map((c) => c.trim())
+          .filter((c) => Boolean(c) && (countsByCode[c] || 0) > 0)
+          .join(',');
+
     return {
       ...profile,
+      boostPoints: isTargetAdmin ? 999999999 : profile.boostPoints,
+      showcaseGifts: effectiveShowcase,
       interests: interests.map((i) => i.category),
       followersCount: followersRows.length,
       followingCount: followingRows.length,
@@ -516,6 +531,45 @@ export async function trackMissionAndBadges(
   actionType: 'like' | 'comment' | 'watch_capshot' | 'follow' | 'create_post' | 'share'
 ) {
   try {
+    const bpByAction: Record<string, number> = {
+      create_post: 25,
+      comment: 10,
+      share: 10,
+      follow: 5,
+      watch_capshot: 5,
+      like: 5,
+    };
+    const xpByAction: Record<string, number> = {
+      create_post: 20,
+      comment: 10,
+      share: 10,
+      follow: 5,
+      watch_capshot: 5,
+      like: 5,
+    };
+    const actionBp = bpByAction[actionType] || 5;
+    const actionXp = xpByAction[actionType] || 5;
+
+    const actorRows = await db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.id, userId));
+    if (actorRows.length > 0) {
+      const actor = actorRows[0];
+      const isPrimaryAdmin =
+        actor.email.trim().toLowerCase() === 'princeabba96@gmail.com';
+      await db
+        .update(profiles)
+        .set({
+          boostPoints: isPrimaryAdmin
+            ? 999999999
+            : (actor.boostPoints || 0) + actionBp,
+          xp: (actor.xp || 0) + actionXp,
+        })
+        .where(eq(profiles.id, userId));
+      invalidateUserCache(userId);
+    }
+
     const allMissions = await db
       .select()
       .from(missions)
@@ -3107,105 +3161,131 @@ export async function executeAdminModerationAction(
   }
 }
 
-async function ensureStarterGiftsForUser(userId: string) {
+async function ensureAdminUnlimitedGiftsOnly(userId: string) {
+  const userRow = await db.select().from(profiles).where(eq(profiles.id, userId));
+  if (userRow.length === 0) return;
+  const user = userRow[0];
+  const isOwner = user.email.trim().toLowerCase() === 'princeabba96@gmail.com';
+
+  // Ordinary users NEVER get free starter gifts or free BP on sign-in
+  if (!isOwner) {
+    return;
+  }
+
+  // Primary Admin (Prince Abba) gets unlimited Boost Points and unlimited quantities of all gifts & cosmetics
   const existingReceived = await db
     .select()
     .from(giftTransactions)
     .where(eq(giftTransactions.receiverId, userId))
     .limit(1);
 
-  if (existingReceived.length > 0) return;
+  if (existingReceived.length === 0) {
+    await ensureBoostBotAccount();
+    const otherUsers = await db
+      .select()
+      .from(profiles)
+      .where(ne(profiles.id, userId))
+      .limit(4);
 
-  await ensureBoostBotAccount();
-  const otherUsers = await db
-    .select()
-    .from(profiles)
-    .where(ne(profiles.id, userId))
-    .limit(4);
+    const senderA = otherUsers[0]?.id || BOOST_BOT_UID;
+    const senderB = otherUsers[1]?.id || BOOST_BOT_UID;
+    const senderC = otherUsers[2]?.id || BOOST_BOT_UID;
 
-  const senderA = otherUsers[0]?.id || BOOST_BOT_UID;
-  const senderB = otherUsers[1]?.id || BOOST_BOT_UID;
-  const senderC = otherUsers[2]?.id || BOOST_BOT_UID;
+    const now = Date.now();
+    const adminStarterRows = [
+      {
+        senderId: senderA,
+        receiverId: userId,
+        itemCode: 'trophy',
+        quantity: 999,
+        bpSpent: 10000,
+        recognitionEarned: 3000,
+        message: 'Primary Administrator Unlimited Gift Vault',
+        createdAt: new Date(now - 2 * 60 * 1000),
+      },
+      {
+        senderId: senderB,
+        receiverId: userId,
+        itemCode: 'diamond',
+        quantity: 999,
+        bpSpent: 5000,
+        recognitionEarned: 1400,
+        message: 'Primary Administrator Unlimited Gift Vault',
+        createdAt: new Date(now - 4 * 60 * 1000),
+      },
+      {
+        senderId: senderA,
+        receiverId: userId,
+        itemCode: 'crown',
+        quantity: 999,
+        bpSpent: 2500,
+        recognitionEarned: 650,
+        message: 'Keep inspiring the BoostHub community!',
+        createdAt: new Date(now - 5 * 60 * 1000),
+      },
+      {
+        senderId: senderB,
+        receiverId: userId,
+        itemCode: 'rocket',
+        quantity: 999,
+        bpSpent: 2000,
+        recognitionEarned: 500,
+        message: 'Awesome Capshots today!',
+        createdAt: new Date(now - 3 * 3600 * 1000),
+      },
+      {
+        senderId: senderC,
+        receiverId: userId,
+        itemCode: 'fire',
+        quantity: 999,
+        bpSpent: 1500,
+        recognitionEarned: 375,
+        message: 'Pure heat on the feed!',
+        createdAt: new Date(now - 18 * 3600 * 1000),
+      },
+      {
+        senderId: senderA,
+        receiverId: userId,
+        itemCode: 'star',
+        quantity: 999,
+        bpSpent: 1250,
+        recognitionEarned: 300,
+        message: 'Top tier creator energy.',
+        createdAt: new Date(now - 26 * 3600 * 1000),
+      },
+      {
+        senderId: senderB,
+        receiverId: userId,
+        itemCode: 'heart',
+        quantity: 999,
+        bpSpent: 800,
+        recognitionEarned: 200,
+        message: 'Love your posts!',
+        createdAt: new Date(now - 36 * 3600 * 1000),
+      },
+      {
+        senderId: senderC,
+        receiverId: userId,
+        itemCode: 'rose',
+        quantity: 999,
+        bpSpent: 600,
+        recognitionEarned: 120,
+        message: 'Admin Gift Collection!',
+        createdAt: new Date(now - 48 * 3600 * 1000),
+      },
+    ];
 
-  const now = Date.now();
-  const starterRows = [
-    {
-      senderId: senderA,
-      receiverId: userId,
-      itemCode: 'crown',
-      quantity: 1,
-      bpSpent: 2500,
-      recognitionEarned: 650,
-      message: 'Keep inspiring the BoostHub community!',
-      createdAt: new Date(now - 5 * 60 * 1000),
-    },
-    {
-      senderId: senderB,
-      receiverId: userId,
-      itemCode: 'rocket',
-      quantity: 2,
-      bpSpent: 2000,
-      recognitionEarned: 500,
-      message: 'Awesome Capshots today!',
-      createdAt: new Date(now - 3 * 3600 * 1000),
-    },
-    {
-      senderId: senderC,
-      receiverId: userId,
-      itemCode: 'fire',
-      quantity: 3,
-      bpSpent: 1500,
-      recognitionEarned: 375,
-      message: 'Pure heat on the feed!',
-      createdAt: new Date(now - 18 * 3600 * 1000),
-    },
-    {
-      senderId: senderA,
-      receiverId: userId,
-      itemCode: 'star',
-      quantity: 5,
-      bpSpent: 1250,
-      recognitionEarned: 300,
-      message: 'Top tier creator energy.',
-      createdAt: new Date(now - 26 * 3600 * 1000),
-    },
-    {
-      senderId: senderB,
-      receiverId: userId,
-      itemCode: 'heart',
-      quantity: 8,
-      bpSpent: 800,
-      recognitionEarned: 200,
-      message: 'Love your posts!',
-      createdAt: new Date(now - 36 * 3600 * 1000),
-    },
-    {
-      senderId: senderC,
-      receiverId: userId,
-      itemCode: 'rose',
-      quantity: 12,
-      bpSpent: 600,
-      recognitionEarned: 120,
-      message: 'Welcome gift bundle for your collection!',
-      createdAt: new Date(now - 48 * 3600 * 1000),
-    },
-  ];
+    await db.insert(giftTransactions).values(adminStarterRows);
+  }
 
-  await db.insert(giftTransactions).values(starterRows);
-
-  const userRow = await db.select().from(profiles).where(eq(profiles.id, userId));
-  if (userRow.length > 0) {
-    const currentBp = userRow[0].boostPoints || 0;
-    const isOwner =
-      userRow[0].email.trim().toLowerCase() === 'princeabba96@gmail.com';
+  if (user.boostPoints < 999999999) {
     await db
       .update(profiles)
       .set({
-        boostPoints: isOwner
-          ? Math.max(currentBp, 25000)
-          : Math.max(currentBp, 3500),
-        giftsReceivedCount: 31,
-        giftRecognitionScore: 2145,
+        boostPoints: 999999999,
+        showcaseGifts: user.showcaseGifts || 'crown,diamond,rocket,trophy',
+        giftsReceivedCount: Math.max(user.giftsReceivedCount || 0, 7992),
+        giftRecognitionScore: Math.max(user.giftRecognitionScore || 0, 99999),
       })
       .where(eq(profiles.id, userId));
     invalidateUserCache(userId);
@@ -3213,7 +3293,7 @@ async function ensureStarterGiftsForUser(userId: string) {
 }
 
 export async function getBShopAndUserGiftsState(userId: string) {
-  await ensureStarterGiftsForUser(userId);
+  await ensureAdminUnlimitedGiftsOnly(userId);
 
   const [profileRows, inventoryRows, receivedRows, sentRows] = await Promise.all([
     db.select().from(profiles).where(eq(profiles.id, userId)),
@@ -3240,6 +3320,9 @@ export async function getBShopAndUserGiftsState(userId: string) {
     throw new Error('User profile not found.');
   }
 
+  const isPrimaryAdmin =
+    profile.email.trim().toLowerCase() === 'princeabba96@gmail.com';
+
   const counterpartyIds = Array.from(
     new Set([
       ...receivedRows.map((r) => r.senderId),
@@ -3265,6 +3348,21 @@ export async function getBShopAndUserGiftsState(userId: string) {
     );
   }
 
+  // Primary Admin has unlimited (999,999) of every B-Shop item and gift
+  const effectiveInventory = isPrimaryAdmin
+    ? BSHOP_CATALOG.filter((item) => item.category !== 'mystery_box').map(
+        (item) => ({
+          itemCode: item.code,
+          category: item.category,
+          quantity: item.category === 'gift' ? 999999 : 1,
+        })
+      )
+    : inventoryRows.map((i) => ({
+        itemCode: i.itemCode,
+        category: i.category,
+        quantity: i.quantity,
+      }));
+
   const giftCollection = GIFT_ITEMS_ONLY.map((giftItem) => {
     const matchingReceived = receivedRows.filter(
       (r) => r.itemCode === giftItem.code
@@ -3284,8 +3382,10 @@ export async function getBShopAndUserGiftsState(userId: string) {
       icon: giftItem.icon,
       rarity: giftItem.rarity,
       costBp: giftItem.costBp,
-      receivedCount: totalReceived,
-      ownedInInventoryCount: inventoryMap.get(giftItem.code) || 0,
+      receivedCount: isPrimaryAdmin ? Math.max(totalReceived, 999) : totalReceived,
+      ownedInInventoryCount: isPrimaryAdmin
+        ? 999999
+        : inventoryMap.get(giftItem.code) || 0,
       mostRecentSender: latestSenderProfile
         ? {
             id: latestSenderProfile.id,
@@ -3351,14 +3451,15 @@ export async function getBShopAndUserGiftsState(userId: string) {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
   );
 
-  const showcaseList = (profile.showcaseGifts || 'crown,diamond,rocket,trophy')
+  const defaultShowcase = isPrimaryAdmin ? 'crown,diamond,rocket,trophy' : '';
+  const showcaseList = (profile.showcaseGifts ?? defaultShowcase)
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 6);
 
   return {
-    boostPoints: profile.boostPoints,
+    boostPoints: isPrimaryAdmin ? 999999999 : profile.boostPoints,
     xp: profile.xp,
     giftPrivacy: (profile.giftPrivacy || 'public') as
       | 'public'
@@ -3368,13 +3469,13 @@ export async function getBShopAndUserGiftsState(userId: string) {
     equippedFrame: profile.equippedFrame || '',
     equippedBadge: profile.equippedBadge || '',
     equippedNameStyle: profile.equippedNameStyle || '',
-    giftsReceivedCount: profile.giftsReceivedCount || 0,
-    giftRecognitionScore: profile.giftRecognitionScore || 0,
-    inventory: inventoryRows.map((i) => ({
-      itemCode: i.itemCode,
-      category: i.category,
-      quantity: i.quantity,
-    })),
+    giftsReceivedCount: isPrimaryAdmin
+      ? Math.max(profile.giftsReceivedCount || 0, 7992)
+      : profile.giftsReceivedCount || 0,
+    giftRecognitionScore: isPrimaryAdmin
+      ? Math.max(profile.giftRecognitionScore || 0, 99999)
+      : profile.giftRecognitionScore || 0,
+    inventory: effectiveInventory,
     giftCollection,
     giftActivity: combinedActivity.slice(0, 40),
   };
@@ -3400,10 +3501,13 @@ export async function purchaseBShopItem(
     throw new Error('User profile not found.');
   }
 
+  const isPrimaryAdmin =
+    profile.email.trim().toLowerCase() === 'princeabba96@gmail.com';
   const totalCost = catalogItem.costBp * quantity;
-  if (profile.boostPoints < totalCost) {
+
+  if (!isPrimaryAdmin && profile.boostPoints < totalCost) {
     throw new Error(
-      `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${profile.boostPoints.toLocaleString()} BP). Complete missions or post content to earn more BP.`
+      `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${profile.boostPoints.toLocaleString()} BP). Complete missions, post content, or engage on BoostHub to earn BP.`
     );
   }
 
@@ -3432,9 +3536,10 @@ export async function purchaseBShopItem(
     };
   }
 
-  // Deduct BP and add XP bonus for participating in B-Shop
   const profileUpdates: Record<string, any> = {
-    boostPoints: Math.max(0, profile.boostPoints - totalCost),
+    boostPoints: isPrimaryAdmin
+      ? 999999999
+      : Math.max(0, profile.boostPoints - totalCost),
     xp: (profile.xp || 0) + 15 * quantity,
     updatedAt: new Date(),
   };
@@ -3450,34 +3555,36 @@ export async function purchaseBShopItem(
   await db.update(profiles).set(profileUpdates).where(eq(profiles.id, userId));
   invalidateUserCache(userId);
 
-  const existingInv = await db
-    .select()
-    .from(userShopInventory)
-    .where(
-      and(
-        eq(userShopInventory.userId, userId),
-        eq(userShopInventory.itemCode, targetCode)
-      )
-    );
+  if (!isPrimaryAdmin) {
+    const existingInv = await db
+      .select()
+      .from(userShopInventory)
+      .where(
+        and(
+          eq(userShopInventory.userId, userId),
+          eq(userShopInventory.itemCode, targetCode)
+        )
+      );
 
-  if (existingInv.length > 0) {
-    await db
-      .update(userShopInventory)
-      .set({
-        quantity:
-          targetCategory === 'gift'
-            ? existingInv[0].quantity + targetQty
-            : 1,
-        updatedAt: new Date(),
-      })
-      .where(eq(userShopInventory.id, existingInv[0].id));
-  } else {
-    await db.insert(userShopInventory).values({
-      userId,
-      itemCode: targetCode,
-      category: targetCategory,
-      quantity: targetCategory === 'gift' ? targetQty : 1,
-    });
+    if (existingInv.length > 0) {
+      await db
+        .update(userShopInventory)
+        .set({
+          quantity:
+            targetCategory === 'gift'
+              ? existingInv[0].quantity + targetQty
+              : 1,
+          updatedAt: new Date(),
+        })
+        .where(eq(userShopInventory.id, existingInv[0].id));
+    } else {
+      await db.insert(userShopInventory).values({
+        userId,
+        itemCode: targetCode,
+        category: targetCategory,
+        quantity: targetCategory === 'gift' ? targetQty : 1,
+      });
+    }
   }
 
   const updatedState = await getBShopAndUserGiftsState(userId);
@@ -3529,47 +3636,50 @@ export async function sendGiftToCreator(
     throw new Error('Recipient creator account was not found.');
   }
 
+  const isPrimaryAdmin =
+    sender.email.trim().toLowerCase() === 'princeabba96@gmail.com';
   const ownedQty = existingInv[0]?.quantity || 0;
   const totalBpCost = giftItem.costBp * quantity;
 
-  if (useInventory && ownedQty >= quantity) {
-    const remaining = ownedQty - quantity;
-    if (remaining <= 0) {
-      await db
-        .delete(userShopInventory)
-        .where(eq(userShopInventory.id, existingInv[0].id));
+  if (!isPrimaryAdmin) {
+    if (useInventory && ownedQty >= quantity) {
+      const remaining = ownedQty - quantity;
+      if (remaining <= 0) {
+        await db
+          .delete(userShopInventory)
+          .where(eq(userShopInventory.id, existingInv[0].id));
+      } else {
+        await db
+          .update(userShopInventory)
+          .set({ quantity: remaining, updatedAt: new Date() })
+          .where(eq(userShopInventory.id, existingInv[0].id));
+      }
     } else {
+      const fromInv = useInventory ? Math.min(ownedQty, quantity) : 0;
+      const toBuyQty = quantity - fromInv;
+      const bpNeeded = giftItem.costBp * toBuyQty;
+
+      if (sender.boostPoints < bpNeeded) {
+        throw new Error(
+          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP (you have ${sender.boostPoints.toLocaleString()} BP). Earn BP by posting, commenting, liking, or completing missions.`
+        );
+      }
+
+      if (fromInv > 0 && existingInv[0]) {
+        await db
+          .delete(userShopInventory)
+          .where(eq(userShopInventory.id, existingInv[0].id));
+      }
+
       await db
-        .update(userShopInventory)
-        .set({ quantity: remaining, updatedAt: new Date() })
-        .where(eq(userShopInventory.id, existingInv[0].id));
+        .update(profiles)
+        .set({
+          boostPoints: Math.max(0, sender.boostPoints - bpNeeded),
+          xp: (sender.xp || 0) + 20 * quantity,
+          updatedAt: new Date(),
+        })
+        .where(eq(profiles.id, senderId));
     }
-  } else {
-    // Spend BP directly (or deduct owned inventory and pay BP for the difference)
-    const fromInv = useInventory ? Math.min(ownedQty, quantity) : 0;
-    const toBuyQty = quantity - fromInv;
-    const bpNeeded = giftItem.costBp * toBuyQty;
-
-    if (sender.boostPoints < bpNeeded) {
-      throw new Error(
-        `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP.`
-      );
-    }
-
-    if (fromInv > 0 && existingInv[0]) {
-      await db
-        .delete(userShopInventory)
-        .where(eq(userShopInventory.id, existingInv[0].id));
-    }
-
-    await db
-      .update(profiles)
-      .set({
-        boostPoints: Math.max(0, sender.boostPoints - bpNeeded),
-        xp: (sender.xp || 0) + 20 * quantity,
-        updatedAt: new Date(),
-      })
-      .where(eq(profiles.id, senderId));
   }
 
   const recognitionEarned = giftItem.recognitionPoints * quantity;
@@ -3658,6 +3768,29 @@ export async function updateUserGiftSettings(
     equippedNameStyle?: string;
   }
 ) {
+  const [profileRows, inventoryRows, receivedRows] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.id, userId)),
+    db
+      .select()
+      .from(userShopInventory)
+      .where(eq(userShopInventory.userId, userId)),
+    db
+      .select()
+      .from(giftTransactions)
+      .where(eq(giftTransactions.receiverId, userId)),
+  ]);
+  const profile = profileRows[0];
+  const isPrimaryAdmin =
+    profile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+
+  const ownedOrReceivedCodes = new Set<string>();
+  for (const inv of inventoryRows) {
+    if (inv.quantity > 0) ownedOrReceivedCodes.add(inv.itemCode);
+  }
+  for (const rec of receivedRows) {
+    if (rec.quantity > 0) ownedOrReceivedCodes.add(rec.itemCode);
+  }
+
   const setFields: Record<string, any> = { updatedAt: new Date() };
 
   if (
@@ -3670,19 +3803,41 @@ export async function updateUserGiftSettings(
   if (Array.isArray(payload.showcaseGifts)) {
     const clean = payload.showcaseGifts
       .map((c) => String(c).trim())
-      .filter((c) => Boolean(getBShopItemByCode(c)))
+      .filter(
+        (c) =>
+          Boolean(getBShopItemByCode(c)) &&
+          (isPrimaryAdmin || ownedOrReceivedCodes.has(c))
+      )
       .slice(0, 6);
     setFields.showcaseGifts = clean.join(',');
   }
 
   if (payload.equippedFrame !== undefined) {
-    setFields.equippedFrame = payload.equippedFrame;
+    if (
+      !payload.equippedFrame ||
+      isPrimaryAdmin ||
+      ownedOrReceivedCodes.has(payload.equippedFrame)
+    ) {
+      setFields.equippedFrame = payload.equippedFrame;
+    }
   }
   if (payload.equippedBadge !== undefined) {
-    setFields.equippedBadge = payload.equippedBadge;
+    if (
+      !payload.equippedBadge ||
+      isPrimaryAdmin ||
+      ownedOrReceivedCodes.has(payload.equippedBadge)
+    ) {
+      setFields.equippedBadge = payload.equippedBadge;
+    }
   }
   if (payload.equippedNameStyle !== undefined) {
-    setFields.equippedNameStyle = payload.equippedNameStyle;
+    if (
+      !payload.equippedNameStyle ||
+      isPrimaryAdmin ||
+      ownedOrReceivedCodes.has(payload.equippedNameStyle)
+    ) {
+      setFields.equippedNameStyle = payload.equippedNameStyle;
+    }
   }
 
   await db.update(profiles).set(setFields).where(eq(profiles.id, userId));

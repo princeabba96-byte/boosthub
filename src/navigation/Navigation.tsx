@@ -335,7 +335,10 @@ export const DesktopLeftRail: React.FC<{
           <div className="flex items-center justify-between text-xs text-slate-400">
             <span>Boost Points</span>
             <span className="text-purple-400 font-semibold tabular-nums">
-              {userProfile.boostPoints} BP
+              {userProfile.email?.trim().toLowerCase() ===
+              'princeabba96@gmail.com'
+                ? '∞ Unlimited BP'
+                : `${(userProfile.boostPoints || 0).toLocaleString()} BP`}
             </span>
           </div>
         </div>

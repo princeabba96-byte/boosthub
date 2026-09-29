@@ -114,9 +114,14 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
     }
   }, [initialRecipient, userProfile?.id]);
 
-  const currentBp = shopState?.boostPoints ?? userProfile?.boostPoints ?? 0;
+  const isOwnerAdmin =
+    userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+  const currentBp = isOwnerAdmin
+    ? 999999999
+    : shopState?.boostPoints ?? userProfile?.boostPoints ?? 0;
 
   const getOwnedCount = (code: string): number => {
+    if (isOwnerAdmin) return 999999;
     if (!shopState) return 0;
     const found = shopState.inventory.find((i) => i.itemCode === code);
     return found?.quantity || 0;
@@ -312,15 +317,20 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-400">Available Balance</span>
               <span className="text-xs text-emerald-400 font-medium">
-                Earned In-App
+                {isOwnerAdmin ? 'Admin Vault' : 'Earned In-App'}
               </span>
             </div>
             <div className="font-display text-3xl font-bold text-white tabular-nums">
-              {currentBp.toLocaleString()}{' '}
+              {isOwnerAdmin ? '∞ Unlimited' : currentBp.toLocaleString()}{' '}
               <span className="text-base font-semibold text-purple-400">BP</span>
             </div>
             <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-white/10">
-              <span>Gifts Received: {shopState?.giftsReceivedCount || 0}</span>
+              <span>
+                Gifts Received:{' '}
+                {isOwnerAdmin
+                  ? '∞ All Gifts'
+                  : shopState?.giftsReceivedCount || 0}
+              </span>
               <span aria-hidden="true">·</span>
               <span>
                 Gift Score:{' '}
@@ -353,6 +363,12 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
               🏆 Trophy · ✨ Imperial Gold
             </span>
           </div>
+          {!isOwnerAdmin && (
+            <span className="text-slate-400">
+              Earn BP to unlock gifts: Publish Post (+25 BP) · Comment (+10 BP) ·
+              Like/Watch (+5 BP) · Daily Missions (+30–100 BP)
+            </span>
+          )}
         </div>
       </section>
 
@@ -368,7 +384,9 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
             { id: 'cosmetics', label: '✨ Frames, Badges & Styles' },
             {
               id: 'inventory',
-              label: `🎒 My Inventory (${shopState?.inventory.reduce((s, i) => s + i.quantity, 0) || 0})`,
+              label: isOwnerAdmin
+                ? '🎒 My Inventory (∞ Unlimited)'
+                : `🎒 My Inventory (${shopState?.inventory.reduce((s, i) => s + i.quantity, 0) || 0})`,
             },
           ] as Array<{ id: ShopFilterTab; label: string }>
         ).map((tab) => (
@@ -447,7 +465,9 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
                     {ownedCount > 0 && (
                       <span className="text-emerald-400 font-semibold tabular-nums">
-                        Owned ×{ownedCount}
+                        {isOwnerAdmin
+                          ? 'Owned ×∞ Unlimited'
+                          : `Owned ×${ownedCount}`}
                       </span>
                     )}
                   </div>

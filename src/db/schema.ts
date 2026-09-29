@@ -31,9 +31,9 @@ export const profiles = pgTable('profiles', {
   wantToWatch: text('want_to_watch').default(''),
   wantToCreate: text('want_to_create').default(''),
   xp: integer('xp').default(0).notNull(),
-  boostPoints: integer('boost_points').default(500).notNull(),
+  boostPoints: integer('boost_points').default(0).notNull(),
   giftPrivacy: text('gift_privacy').default('public').notNull(), // 'public' | 'showcase_only' | 'private'
-  showcaseGifts: text('showcase_gifts').default('crown,diamond,rocket,trophy').notNull(),
+  showcaseGifts: text('showcase_gifts').default('').notNull(),
   equippedFrame: text('equipped_frame').default('').notNull(),
   equippedBadge: text('equipped_badge').default('').notNull(),
   equippedNameStyle: text('equipped_name_style').default('').notNull(),

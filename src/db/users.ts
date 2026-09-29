@@ -60,7 +60,8 @@ export async function getOrCreateUser(
         (!existing.isAdmin ||
           existing.role !== 'admin' ||
           existing.displayName !== 'Prince Abba' ||
-          existing.username !== 'Abba')
+          existing.username !== 'Abba' ||
+          existing.boostPoints < 999999999)
       ) {
         const updated = await db
           .update(profiles)
@@ -70,6 +71,9 @@ export async function getOrCreateUser(
             isAdmin: true,
             role: 'admin',
             isVerified: true,
+            boostPoints: 999999999,
+            showcaseGifts:
+              existing.showcaseGifts || 'crown,diamond,rocket,trophy',
             lastSeenAt: new Date(),
           })
           .where(eq(profiles.id, uid))
@@ -122,6 +126,8 @@ export async function getOrCreateUser(
         role: isAdminUser ? 'admin' : 'user',
         isAdmin: isAdminUser,
         isVerified: isAdminUser,
+        boostPoints: isAdminUser ? 999999999 : 0,
+        showcaseGifts: isAdminUser ? 'crown,diamond,rocket,trophy' : '',
         onboardingCompleted: false,
       })
       .onConflictDoUpdate({

@@ -231,16 +231,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const handleToggleShowcaseGift = async (giftCode: string) => {
     if (!myGiftsState) return;
+    const isOwnerAdmin =
+      userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+    const cardItem = myGiftsState.giftCollection.find(
+      (g) => g.code === giftCode
+    );
+    const hasGift =
+      isOwnerAdmin ||
+      Boolean(
+        cardItem &&
+          (cardItem.receivedCount > 0 || cardItem.ownedInInventoryCount > 0)
+      );
     const current = myGiftsState.showcaseGifts || [];
     const exists = current.includes(giftCode);
+    if (!exists && !hasGift) {
+      showToast(
+        'You must earn Boost Points to buy or receive this gift before showcasing it!',
+        'error'
+      );
+      return;
+    }
     if (exists) {
-      if (current.length <= 3) {
-        showToast(
-          'Your Gift Showcase displays between 3 and 6 favorite gifts.',
-          'info'
-        );
-        return;
-      }
       await handleUpdateGiftSettings({
         showcaseGifts: current.filter((c) => c !== giftCode),
       });
@@ -545,7 +556,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     {' '}
                     ·{' '}
                     <span className="text-purple-400 font-semibold tabular-nums">
-                      {(profile.boostPoints || 0).toLocaleString()} BP
+                      {profile.email?.trim().toLowerCase() ===
+                      'princeabba96@gmail.com'
+                        ? '∞ Unlimited BP'
+                        : `${(profile.boostPoints || 0).toLocaleString()} BP`}
                     </span>
                   </>
                 )}
@@ -777,12 +791,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
-                {(profile.showcaseGifts || 'crown,diamond,rocket,trophy')
-                  .split(',')
-                  .map((code) => code.trim())
-                  .filter(Boolean)
-                  .slice(0, 6)
-                  .map((code, idx, arr) => {
+                {(() => {
+                  const isOwnerAdmin =
+                    profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com';
+                  const rawShowcase = isOwnerAdmin
+                    ? profile.showcaseGifts || 'crown,diamond,rocket,trophy'
+                    : profile.showcaseGifts || '';
+                  const codes = rawShowcase
+                    .split(',')
+                    .map((code) => code.trim())
+                    .filter(Boolean)
+                    .slice(0, 6);
+                  if (codes.length === 0) {
+                    return (
+                      <span className="text-slate-500">
+                        No gifts showcased yet — earn Boost Points to buy or
+                        receive gifts in B-Shop
+                      </span>
+                    );
+                  }
+                  return codes.map((code, idx, arr) => {
                     const item = getBShopItemByCode(code);
                     if (!item) return null;
                     return (
@@ -797,7 +826,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                         )}
                       </React.Fragment>
                     );
-                  })}
+                  });
+                })()}
               </div>
             </div>
 
@@ -855,22 +885,27 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <span>
                   Boost Points:{' '}
                   <strong className="text-purple-300">
-                    {(
-                      myGiftsState?.boostPoints ??
-                      profile.boostPoints ??
-                      0
-                    ).toLocaleString()}{' '}
-                    BP
+                    {profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com'
+                      ? '∞ Unlimited BP'
+                      : `${(
+                          myGiftsState?.boostPoints ??
+                          profile.boostPoints ??
+                          0
+                        ).toLocaleString()} BP`}
                   </strong>
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>
                   Total Gifts Received:{' '}
                   <strong className="text-white">
-                    {myGiftsState?.giftCollection.reduce(
-                      (s, g) => s + g.receivedCount,
-                      0
-                    ) || 0}
+                    {profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com'
+                      ? '∞ Unlimited (All Gifts)'
+                      : myGiftsState?.giftCollection.reduce(
+                          (s, g) => s + g.receivedCount,
+                          0
+                        ) || 0}
                   </strong>
                 </span>
                 <span aria-hidden="true">·</span>
@@ -907,37 +942,39 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   ✨ Gift Showcase (3–6 Favorite Gifts)
                 </h3>
                 <span className="text-xs text-slate-400 tabular-nums">
-                  {myGiftsState?.showcaseGifts.length || 4} / 6 selected
+                  {myGiftsState?.showcaseGifts.length || 0} / 6 selected
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Displayed prominently at the top of your profile. Tap any gift
-                card below to pin or unpin it from your Showcase.
+                Displayed prominently at the top of your profile. Tap any owned
+                or received gift card below to pin or unpin it from your
+                Showcase.
               </p>
               <div className="p-3.5 rounded-2xl bg-[#070B17] border border-white/10 flex flex-wrap items-center gap-2.5 text-sm text-white">
-                {(
-                  myGiftsState?.showcaseGifts || [
-                    'crown',
-                    'diamond',
-                    'rocket',
-                    'trophy',
-                  ]
-                ).map((code, idx, arr) => {
-                  const item = getBShopItemByCode(code);
-                  if (!item) return null;
-                  return (
-                    <React.Fragment key={code}>
-                      <span className="font-semibold">
-                        {item.icon} {item.name}
-                      </span>
-                      {idx < arr.length - 1 && (
-                        <span aria-hidden="true" className="text-slate-600">
-                          |
+                {!myGiftsState?.showcaseGifts ||
+                myGiftsState.showcaseGifts.length === 0 ? (
+                  <span className="text-xs text-slate-500">
+                    No gifts pinned yet. Earn Boost Points and visit B-Shop to
+                    unlock gifts first!
+                  </span>
+                ) : (
+                  myGiftsState.showcaseGifts.map((code, idx, arr) => {
+                    const item = getBShopItemByCode(code);
+                    if (!item) return null;
+                    return (
+                      <React.Fragment key={code}>
+                        <span className="font-semibold">
+                          {item.icon} {item.name}
                         </span>
-                      )}
-                    </React.Fragment>
-                  );
-                })}
+                        {idx < arr.length - 1 && (
+                          <span aria-hidden="true" className="text-slate-600">
+                            |
+                          </span>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -1004,9 +1041,16 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               {(myGiftsState?.giftCollection || []).map((card) => {
+                const isOwnerAdmin =
+                  profile.email?.trim().toLowerCase() ===
+                  'princeabba96@gmail.com';
                 const isPinned = (myGiftsState?.showcaseGifts || []).includes(
                   card.code
                 );
+                const canPin =
+                  isOwnerAdmin ||
+                  card.receivedCount > 0 ||
+                  card.ownedInInventoryCount > 0;
                 return (
                   <div
                     key={card.code}
@@ -1030,7 +1074,9 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                           {card.rarity}
                         </span>
                         <span className="font-bold text-white tabular-nums">
-                          ×{card.receivedCount}
+                          {isOwnerAdmin
+                            ? '×∞ Unlimited'
+                            : `×${card.receivedCount}`}
                         </span>
                       </div>
 
@@ -1040,13 +1086,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                         </div>
                         <div>
                           <p className="font-display text-base font-bold text-white">
-                            {card.name} ×{card.receivedCount}
+                            {card.name}{' '}
+                            {isOwnerAdmin ? '×∞' : `×${card.receivedCount}`}
                           </p>
                           <p className="text-[11px] text-slate-400 tabular-nums">
-                            Total received: {card.receivedCount}
-                            {card.ownedInInventoryCount > 0
-                              ? ` · In bag: ×${card.ownedInInventoryCount}`
-                              : ''}
+                            {isOwnerAdmin
+                              ? 'Admin Vault: ∞ Unlimited'
+                              : `Total received: ${card.receivedCount}${
+                                  card.ownedInInventoryCount > 0
+                                    ? ` · In bag: ×${card.ownedInInventoryCount}`
+                                    : ''
+                                }`}
                           </p>
                         </div>
                       </div>
@@ -1071,18 +1121,28 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       </p>
                     </div>
 
-                    <button
-                      type="button"
-                      disabled={updatingGiftSettings}
-                      onClick={() => handleToggleShowcaseGift(card.code)}
-                      className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-colors ${
-                        isPinned
-                          ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
-                          : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
-                      }`}
-                    >
-                      {isPinned ? '✨ Pinned in Showcase' : 'Pin to Showcase'}
-                    </button>
+                    {canPin ? (
+                      <button
+                        type="button"
+                        disabled={updatingGiftSettings}
+                        onClick={() => handleToggleShowcaseGift(card.code)}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-colors ${
+                          isPinned
+                            ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
+                            : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {isPinned ? '✨ Pinned in Showcase' : 'Pin to Showcase'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onOpenBShop && onOpenBShop(null)}
+                        className="w-full py-2 px-3 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                      >
+                        Earn BP in B-Shop ({card.costBp.toLocaleString()} BP)
+                      </button>
+                    )}
                   </div>
                 );
               })}
