@@ -2764,10 +2764,16 @@ export async function unblockUser(userId: string, targetUserId: string) {
 
 export async function performGlobalSearch(query: string, viewerId: string) {
   try {
-    const q = query.trim();
+    const q = query.trim().replace(/^@+/, '');
     if (!q) {
+      const directoryPeople = await db
+        .select()
+        .from(profiles)
+        .orderBy(desc(profiles.updatedAt))
+        .limit(30);
       return {
-        people: [],
+        people: directoryPeople,
+        users: directoryPeople,
         posts: [],
         videos: [],
         hashtags: [],
@@ -2783,10 +2789,11 @@ export async function performGlobalSearch(query: string, viewerId: string) {
         or(
           ilike(profiles.username, pattern),
           ilike(profiles.displayName, pattern),
+          ilike(profiles.email, pattern),
           ilike(profiles.bio, pattern)
         )
       )
-      .limit(20);
+      .limit(30);
 
     const allFeed = await getPersonalizedFeed(viewerId, 'new', 100, 0);
     const lowerQ = q.toLowerCase();

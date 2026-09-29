@@ -9,6 +9,8 @@ import {
   PackageOpen,
   UserCheck,
   ArrowUpRight,
+  Search,
+  CheckCircle2,
   X,
 } from 'lucide-react';
 import {
@@ -54,6 +56,9 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
   const [selectedRecipientId, setSelectedRecipientId] = useState<string>(
     initialRecipient?.id || ''
   );
+  const [recipientSearchQuery, setRecipientSearchQuery] = useState<string>('');
+  const [searchedUsers, setSearchedUsers] = useState<UserProfile[]>([]);
+  const [searchingUsers, setSearchingUsers] = useState<boolean>(false);
   const [giftQuantity, setGiftQuantity] = useState<number>(1);
   const [giftMessage, setGiftMessage] = useState<string>('');
   const [useOwnedInventory, setUseOwnedInventory] = useState<boolean>(false);
@@ -71,12 +76,16 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
   const loadShopData = useCallback(async () => {
     try {
-      const [stateRes, friendsRes] = await Promise.all([
+      const [stateRes, friendsRes, directoryRes] = await Promise.all([
         apiFetch<BShopUserState>('/api/bshop/state'),
         apiFetch<{
-          friends?: UserProfile[];
+          friends?: Array<UserProfile | { friendshipId?: number; profile?: UserProfile }>;
           suggestions?: UserProfile[];
         }>('/api/friends').catch(() => ({ friends: [], suggestions: [] })),
+        apiFetch<{
+          people?: UserProfile[];
+          users?: UserProfile[];
+        }>('/api/search?q=').catch(() => ({ people: [], users: [] })),
       ]);
       setShopState(stateRes);
 
@@ -84,11 +93,19 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       if (initialRecipient && initialRecipient.id !== userProfile?.id) {
         map.set(initialRecipient.id, initialRecipient);
       }
-      for (const u of [
-        ...(friendsRes?.friends || []),
+      const rawCandidates = [
+        ...(friendsRes?.friends || []).map((f: any) => f?.profile || f),
         ...(friendsRes?.suggestions || []),
-      ]) {
-        if (u && u.id && u.id !== userProfile?.id && u.id !== 'boost_bot_official') {
+        ...(directoryRes?.people || []),
+        ...(directoryRes?.users || []),
+      ];
+      for (const u of rawCandidates) {
+        if (
+          u &&
+          u.id &&
+          u.id !== userProfile?.id &&
+          u.id !== 'boost_bot_official'
+        ) {
           map.set(u.id, u);
         }
       }
@@ -113,6 +130,55 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       setSelectedRecipientId(initialRecipient.id);
     }
   }, [initialRecipient, userProfile?.id]);
+
+  // Live search for users when typing in the Send Gift modal
+  useEffect(() => {
+    if (!selectedGiftModalItem || giftActionMode !== 'send') return;
+    const q = recipientSearchQuery.trim();
+    if (!q) {
+      setSearchedUsers([]);
+      setSearchingUsers(false);
+      return;
+    }
+
+    let cancelled = false;
+    setSearchingUsers(true);
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiFetch<{
+          people?: UserProfile[];
+          users?: UserProfile[];
+        }>(`/api/search?q=${encodeURIComponent(q)}`);
+        if (cancelled) return;
+        const found = (res?.people || res?.users || []).filter(
+          (u) => u && u.id && u.id !== userProfile?.id && u.id !== 'boost_bot_official'
+        );
+        setSearchedUsers(found);
+        if (found.length > 0) {
+          setCreators((prev) => {
+            const merged = new Map<string, UserProfile>();
+            prev.forEach((p) => merged.set(p.id, p));
+            found.forEach((p) => merged.set(p.id, p));
+            return Array.from(merged.values());
+          });
+        }
+      } catch {
+        // ignore search error and rely on local filter
+      } finally {
+        if (!cancelled) setSearchingUsers(false);
+      }
+    }, 200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    giftActionMode,
+    recipientSearchQuery,
+    selectedGiftModalItem,
+    userProfile?.id,
+  ]);
 
   const isOwnerAdmin =
     userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
@@ -143,6 +209,7 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
     const owned = getOwnedCount(item.code);
     setSelectedGiftModalItem(item);
     setGiftActionMode(defaultMode);
+    setRecipientSearchQuery('');
     setGiftQuantity(1);
     setGiftMessage('');
     setUseOwnedInventory(defaultMode === 'send' && owned > 0);
@@ -640,21 +707,148 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
             <form onSubmit={handleConfirmSendGift} className="space-y-4">
               {giftActionMode === 'send' && (
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    Choose Creator Recipient
-                  </label>
-                  <select
-                    value={selectedRecipientId}
-                    onChange={(e) => setSelectedRecipientId(e.target.value)}
-                    className="w-full bg-[#070B17] border border-white/15 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-blue-500"
-                  >
-                    {creators.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.displayName} (@{c.username})
-                      </option>
-                    ))}
-                  </select>
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-medium text-slate-300">
+                      Search & Select Recipient User
+                    </label>
+                    {searchingUsers && (
+                      <span className="text-[11px] text-blue-400">
+                        Searching users...
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={recipientSearchQuery}
+                      onChange={(e) => setRecipientSearchQuery(e.target.value)}
+                      placeholder="Search user by name, @username, or email..."
+                      className="w-full bg-[#070B17] border border-white/15 rounded-2xl pl-10 pr-9 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    />
+                    {recipientSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setRecipientSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Currently Selected Recipient Summary */}
+                  {(() => {
+                    const selectedUser = creators.find(
+                      (c) => c.id === selectedRecipientId
+                    );
+                    if (!selectedUser) return null;
+                    return (
+                      <div className="p-2.5 rounded-2xl bg-blue-600/15 border border-blue-500/40 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Avatar
+                            src={selectedUser.avatarUrl}
+                            name={selectedUser.displayName}
+                            size="sm"
+                          />
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-white truncate flex items-center gap-1">
+                              <span>{selectedUser.displayName}</span>
+                              {selectedUser.isVerified && (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                              )}
+                            </p>
+                            <p className="text-[11px] text-blue-300 truncate">
+                              @{selectedUser.username}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-semibold text-blue-300 shrink-0">
+                          Recipient ✓
+                        </span>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Scrollable Matching Users List */}
+                  <div className="max-h-40 overflow-y-auto rounded-2xl bg-[#070B17] border border-white/10 divide-y divide-white/5">
+                    {(() => {
+                      const cleanQ = recipientSearchQuery
+                        .trim()
+                        .toLowerCase()
+                        .replace(/^@+/, '');
+                      const poolMap = new Map<string, UserProfile>();
+                      creators.forEach((c) => poolMap.set(c.id, c));
+                      searchedUsers.forEach((c) => poolMap.set(c.id, c));
+                      const allPool = Array.from(poolMap.values());
+                      const matchingList = cleanQ
+                        ? allPool.filter(
+                            (u) =>
+                              u.displayName.toLowerCase().includes(cleanQ) ||
+                              u.username.toLowerCase().includes(cleanQ) ||
+                              (u.email || '').toLowerCase().includes(cleanQ)
+                          )
+                        : allPool;
+
+                      if (matchingList.length === 0) {
+                        return (
+                          <div className="p-4 text-center text-xs text-slate-400">
+                            {searchingUsers
+                              ? 'Searching BoostHub users...'
+                              : `No users found matching "${recipientSearchQuery}".`}
+                          </div>
+                        );
+                      }
+
+                      return matchingList.map((u) => {
+                        const isSelected = u.id === selectedRecipientId;
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => setSelectedRecipientId(u.id)}
+                            className={`w-full px-3.5 py-2.5 flex items-center justify-between gap-3 text-left transition-colors ${
+                              isSelected
+                                ? 'bg-blue-600/20 text-white'
+                                : 'hover:bg-white/5 text-slate-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <Avatar
+                                src={u.avatarUrl}
+                                name={u.displayName}
+                                size="sm"
+                              />
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-white truncate flex items-center gap-1">
+                                  <span>{u.displayName}</span>
+                                  {u.isVerified && (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                  )}
+                                </p>
+                                <p className="text-[11px] text-slate-400 truncate">
+                                  @{u.username}
+                                </p>
+                              </div>
+                            </div>
+                            {isSelected ? (
+                              <span className="text-xs font-semibold text-blue-400 shrink-0">
+                                Selected ✓
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 shrink-0">
+                                Select
+                              </span>
+                            )}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
                 </div>
               )}
 

@@ -1948,12 +1948,17 @@ export async function handleStaticBackendRequest<T = any>(
 
   // 11. Search
   if (pathname === '/api/search') {
-    const q = (searchParams.get('q') || '').toLowerCase();
+    const q = (searchParams.get('q') || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^@+/, '');
     const users = Object.values(db.users).filter(
       (u) =>
         !q ||
         u.displayName.toLowerCase().includes(q) ||
-        u.username.toLowerCase().includes(q)
+        u.username.toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
+        (u.bio || '').toLowerCase().includes(q)
     );
     const posts = db.posts.filter(
       (p) =>
@@ -1961,9 +1966,14 @@ export async function handleStaticBackendRequest<T = any>(
         p.caption.toLowerCase().includes(q) ||
         p.hashtags.toLowerCase().includes(q)
     );
+    const videos = posts.filter(
+      (p) => p.postType === 'capshot' || p.postType === 'video'
+    );
     return {
+      people: users,
       users,
       posts,
+      videos,
       hashtags: ['#boosthub', '#capshots', '#creators', '#technology'],
       communities: db.communities,
     } as unknown as T;
