@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "BoostHub Social & Creator Platform",
+  "short_name": "BoostHub",
+  "description": "A complete, modern social media platform featuring personalized feeds, Capshots short videos, stories, real-time messaging, communities, missions, and creator analytics.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#060813",
+  "theme_color": "#060813",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "name": "BoostHub",
+  "description": "A complete, modern social media platform featuring personalized feeds, Capshots short videos, stories, real-time messaging, communities, missions, and creator analytics.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
