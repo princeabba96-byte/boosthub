@@ -60,11 +60,20 @@
         });
       }
 
-      // Register Service Worker for native phone notification tray alerts
+      // In cross-site preview iframes, unregister Service Workers so Partitioned auth cookies work cleanly.
+      // When opened directly on a phone or browser tab (window.self === window.top), register /sw.js for native phone notifications.
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
-          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
-        });
+        if (window.self !== window.top) {
+          navigator.serviceWorker.getRegistrations().then(function (regs) {
+            regs.forEach(function (r) {
+              r.unregister();
+            });
+          });
+        } else {
+          window.addEventListener('load', function () {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+          });
+        }
       }
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

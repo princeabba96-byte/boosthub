@@ -919,34 +919,34 @@ async function startServer() {
   const distIndexHtml = path.join(distPath, 'index.html');
 
   if (fs.existsSync(distIndexHtml)) {
-    // Serve gzipped static JS/CSS bundles on slow networks + immutable cache headers
+    const assetsDir = path.join(distPath, 'assets');
+
+    // If a client requests a previous build's hashed /assets/index-*.js or .css,
+    // fall back to the current bundle in dist/assets so the app never hangs on a stale hash
     app.get('/assets/*', (req, res, next) => {
-      const acceptEncoding = String(req.headers['accept-encoding'] || '');
-      const assetPath = path.join(distPath, req.path);
-      if (
-        acceptEncoding.includes('gzip') &&
-        (req.path.endsWith('.js') || req.path.endsWith('.css')) &&
-        fs.existsSync(assetPath)
-      ) {
-        try {
-          const raw = fs.readFileSync(assetPath);
-          const compressed = zlib.gzipSync(raw);
-          res.setHeader(
-            'Content-Type',
-            req.path.endsWith('.js')
-              ? 'application/javascript; charset=utf-8'
-              : 'text/css; charset=utf-8'
-          );
-          res.setHeader('Content-Encoding', 'gzip');
-          res.setHeader('Vary', 'Accept-Encoding');
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          res.setHeader('Content-Length', String(compressed.length));
-          return res.send(compressed);
-        } catch {
-          return next();
+      const requestedFile = path.join(distPath, req.path);
+      if (fs.existsSync(requestedFile)) {
+        return next();
+      }
+      if (fs.existsSync(assetsDir)) {
+        const files = fs.readdirSync(assetsDir);
+        if (req.path.endsWith('.js')) {
+          const currentJs = files.find((f) => f.startsWith('index-') && f.endsWith('.js'));
+          if (currentJs) {
+            res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            return res.sendFile(path.join(assetsDir, currentJs));
+          }
+        } else if (req.path.endsWith('.css')) {
+          const currentCss = files.find((f) => f.startsWith('index-') && f.endsWith('.css'));
+          if (currentCss) {
+            res.setHeader('Content-Type', 'text/css; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            return res.sendFile(path.join(assetsDir, currentCss));
+          }
         }
       }
-      next();
+      return res.status(404).end();
     });
 
     app.use(

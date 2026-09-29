@@ -42,7 +42,9 @@ export async function showBrowserSystemNotification(
     data: { url },
   };
 
-  if ('serviceWorker' in navigator) {
+  const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
+
+  if (isTopWindow && 'serviceWorker' in navigator) {
     try {
       let reg = await navigator.serviceWorker.getRegistration('/');
       if (!reg) {
@@ -139,8 +141,10 @@ export async function enableBackgroundPushNotifications(
 
   let realPushSubscribed = false;
 
+  const isTopWindow = typeof window !== 'undefined' && window.self === window.top;
+
   if (
-    typeof window !== 'undefined' &&
+    isTopWindow &&
     'serviceWorker' in navigator &&
     'PushManager' in window &&
     permission === 'granted'
