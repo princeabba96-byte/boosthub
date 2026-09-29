@@ -50,7 +50,11 @@ interface AuthContextValue {
     username: string,
     avatarUrl?: string
   ) => Promise<void>;
-  loginWithGoogle: (avatarUrl?: string) => Promise<void>;
+  loginWithGoogle: (
+    avatarUrl?: string,
+    googleEmail?: string,
+    googleDisplayName?: string
+  ) => Promise<void>;
   resetPassword: (email: string, newPassword?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -371,7 +375,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
   };
 
-  const loginWithGoogle = async (avatarUrl?: string) => {
+  const loginWithGoogle = async (
+    avatarUrl?: string,
+    googleEmail?: string,
+    googleDisplayName?: string
+  ) => {
     try {
       const cred = await signInWithPopup(auth, googleAuthProvider);
       const idToken = await cred.user.getIdToken();
@@ -395,6 +403,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (typeof window !== 'undefined' &&
           window.location.hostname.endsWith('.github.io'))
       ) {
+        const cleanEmail = (googleEmail || '').trim().toLowerCase();
+        if (!cleanEmail) {
+          const promptErr: any = new Error('NEEDS_GOOGLE_EMAIL');
+          promptErr.code = 'NEEDS_GOOGLE_EMAIL';
+          throw promptErr;
+        }
+        const localPart = cleanEmail.split('@')[0] || 'user';
+        const cleanName =
+          (googleDisplayName || '').trim() ||
+          localPart.charAt(0).toUpperCase() + localPart.slice(1);
         const res = await apiFetch<{
           token: string;
           profile?: UserProfile;
@@ -402,9 +420,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }>('/api/auth/login', {
           method: 'POST',
           body: JSON.stringify({
-            email: 'princeabba96@gmail.com',
-            displayName: 'Prince Abba',
-            username: 'princeabba',
+            email: cleanEmail,
+            displayName: cleanName,
+            username: localPart.replace(/[^a-z0-9_]/g, ''),
             avatarUrl,
           }),
         });

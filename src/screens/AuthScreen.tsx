@@ -69,6 +69,9 @@ export const AuthScreen: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [googlePromptOpen, setGooglePromptOpen] = useState(false);
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
+  const [googleNameInput, setGoogleNameInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -116,11 +119,40 @@ export const AuthScreen: React.FC = () => {
     setError('');
     setSubmitting(true);
     try {
-      await loginWithGoogle(selectedAvatar || undefined);
-    } catch (err: any) {
-      setError(
-        err.message || 'Google sign-in could not be completed. Please try again.'
+      await loginWithGoogle(
+        selectedAvatar || undefined,
+        email.trim() || undefined,
+        displayName.trim() || undefined
       );
+    } catch (err: any) {
+      if (err?.code === 'NEEDS_GOOGLE_EMAIL' || err?.message === 'NEEDS_GOOGLE_EMAIL') {
+        setGoogleEmailInput(email.trim());
+        setGoogleNameInput(displayName.trim());
+        setGooglePromptOpen(true);
+      } else {
+        setError(
+          err.message || 'Google sign-in could not be completed. Please try again.'
+        );
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleConfirmGoogleEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!googleEmailInput.trim()) return;
+    setError('');
+    setSubmitting(true);
+    try {
+      await loginWithGoogle(
+        selectedAvatar || undefined,
+        googleEmailInput.trim(),
+        googleNameInput.trim() || undefined
+      );
+      setGooglePromptOpen(false);
+    } catch (err: any) {
+      setError(err.message || 'Could not sign in with Google.');
     } finally {
       setSubmitting(false);
     }
@@ -482,6 +514,48 @@ export const AuthScreen: React.FC = () => {
                 </svg>
                 <span>Continue with Google</span>
               </button>
+
+              {googlePromptOpen && (
+                <form
+                  onSubmit={handleConfirmGoogleEmail}
+                  className="p-4 rounded-2xl bg-white/[0.04] border border-blue-500/30 space-y-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-semibold text-white">
+                      Enter your Google email to continue
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setGooglePromptOpen(false)}
+                      className="text-[11px] text-slate-400 hover:text-white"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <input
+                    type="email"
+                    required
+                    value={googleEmailInput}
+                    onChange={(e) => setGoogleEmailInput(e.target.value)}
+                    placeholder="yourname@gmail.com"
+                    className="w-full h-10 px-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                  <input
+                    type="text"
+                    value={googleNameInput}
+                    onChange={(e) => setGoogleNameInput(e.target.value)}
+                    placeholder="Your Display Name (optional)"
+                    className="w-full h-10 px-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
+                  >
+                    Continue as {googleEmailInput || 'Google User'}
+                  </button>
+                </form>
+              )}
             </>
           )}
         </div>
