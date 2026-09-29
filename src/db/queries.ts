@@ -1867,6 +1867,7 @@ export async function sendDirectMessage(
 
     const sender = await db.select().from(profiles).where(eq(profiles.id, senderId));
     const senderName = sender[0]?.displayName || 'Someone';
+    const senderUsername = sender[0]?.username || 'user';
 
     const msgBody = payload.content
       ? payload.content.slice(0, 60)
@@ -1890,7 +1891,61 @@ export async function sendDirectMessage(
       url: '/?tab=friends',
     });
 
-    return inserted[0];
+    let forwardedAdminId: string | null = null;
+    let forwardedAdminMessage: any = null;
+
+    // If a user replies to BOOST BOT, automatically forward their message to Primary Admin (Prince Abba)
+    if (receiverId === 'boost_bot_official') {
+      const adminRows = await db
+        .select()
+        .from(profiles)
+        .where(ilike(profiles.email, 'princeabba96@gmail.com'));
+      const adminProfile = adminRows[0];
+
+      if (adminProfile && adminProfile.id !== senderId) {
+        forwardedAdminId = adminProfile.id;
+        const forwardedText = payload.content
+          ? `🤖 [Reply to BOOST BOT]: ${payload.content}`
+          : '🤖 [Reply to BOOST BOT]: (Sent a media attachment)';
+
+        const [fwdInserted] = await db
+          .insert(messages)
+          .values({
+            senderId,
+            receiverId: adminProfile.id,
+            content: forwardedText,
+            mediaUrl: payload.mediaUrl || '',
+            mediaType: payload.mediaType || '',
+            replyToId: null,
+            sharedPostId: payload.sharedPostId || null,
+          })
+          .returning();
+        forwardedAdminMessage = fwdInserted || null;
+
+        await db.insert(notifications).values({
+          userId: adminProfile.id,
+          actorId: senderId,
+          type: 'message',
+          title: `🤖 BOOST BOT Reply from ${senderName} (@${senderUsername})`,
+          body: msgBody,
+          entityId: senderId,
+        });
+
+        await sendPushNotificationToUser(adminProfile.id, {
+          title: `🤖 BOOST BOT Reply from ${senderName}`,
+          body: msgBody,
+          type: 'boost_bot',
+          entityId: senderId,
+          url: `/?messages=${senderId}`,
+        });
+      }
+    }
+
+    return {
+      ...inserted[0],
+      forwardedAdminId,
+      forwardedAdminMessage,
+    };
   } catch (error) {
     console.error('Database query failed in sendDirectMessage:', error);
     throw new Error('Failed to send message.', { cause: error });
@@ -2922,11 +2977,97 @@ export async function getAdminModerationData() {
       .from(communities)
       .orderBy(desc(communities.createdAt));
 
+    const botMessages = await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          eq(messages.isDeleted, false),
+          or(
+            eq(messages.senderId, BOOST_BOT_UID),
+            eq(messages.receiverId, BOOST_BOT_UID)
+          )
+        )
+      )
+      .orderBy(messages.createdAt);
+
+    const userMap = new Map(allUsers.map((u) => [u.id, u]));
+    const threadsByUser = new Map<
+      string,
+      {
+        user: any;
+        messages: Array<{
+          id: number;
+          senderId: string;
+          receiverId: string;
+          content: string;
+          mediaUrl: string;
+          mediaType: string;
+          createdAt: Date | string | null;
+          isFromUser: boolean;
+        }>;
+        userReplyCount: number;
+        lastMessageAt: string;
+        lastUserReplyAt: string | null;
+      }
+    >();
+
+    for (const msg of botMessages) {
+      const partnerId =
+        msg.senderId === BOOST_BOT_UID ? msg.receiverId : msg.senderId;
+      if (!partnerId || partnerId === BOOST_BOT_UID) continue;
+      const partnerProfile = userMap.get(partnerId);
+      if (!partnerProfile) continue;
+
+      let entry = threadsByUser.get(partnerId);
+      if (!entry) {
+        entry = {
+          user: partnerProfile,
+          messages: [],
+          userReplyCount: 0,
+          lastMessageAt: String(msg.createdAt || new Date().toISOString()),
+          lastUserReplyAt: null,
+        };
+        threadsByUser.set(partnerId, entry);
+      }
+
+      const isFromUser = msg.senderId !== BOOST_BOT_UID;
+      const createdAtStr =
+        msg.createdAt instanceof Date
+          ? msg.createdAt.toISOString()
+          : String(msg.createdAt || new Date().toISOString());
+
+      entry.messages.push({
+        id: msg.id,
+        senderId: msg.senderId,
+        receiverId: msg.receiverId,
+        content: msg.content || '',
+        mediaUrl: msg.mediaUrl || '',
+        mediaType: msg.mediaType || '',
+        createdAt: createdAtStr,
+        isFromUser,
+      });
+      entry.lastMessageAt = createdAtStr;
+      if (isFromUser) {
+        entry.userReplyCount += 1;
+        entry.lastUserReplyAt = createdAtStr;
+      }
+    }
+
+    const boostBotThreads = Array.from(threadsByUser.values()).sort((a, b) => {
+      if (a.userReplyCount > 0 && b.userReplyCount === 0) return -1;
+      if (b.userReplyCount > 0 && a.userReplyCount === 0) return 1;
+      const tA = new Date(a.lastUserReplyAt || a.lastMessageAt).getTime();
+      const tB = new Date(b.lastUserReplyAt || b.lastMessageAt).getTime();
+      return tB - tA;
+    });
+
     return {
       users: allUsers,
       posts: allPosts,
       reports,
       communities: allComms,
+      boostBotThreads,
     };
   } catch (error) {
     console.error('Database query failed in getAdminModerationData:', error);

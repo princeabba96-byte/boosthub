@@ -21,6 +21,11 @@ import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { formatCompactNumber } from '../utils/format';
+import {
+  parseStudioUrlHash,
+  buildCssFilterString,
+  StudioFloatingOverlays,
+} from '../components/StudioMediaEditor';
 
 interface CapshotsScreenProps {
   onOpenComments: (post: PostItem) => void;
@@ -286,20 +291,60 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
         }}
         className="relative w-full max-w-[420px] h-full sm:rounded-3xl overflow-hidden bg-[#060813] border border-white/10 shadow-2xl flex items-center justify-center"
       >
-        {currentVideo.mediaUrl ? (
-          <video
-            ref={videoRef}
-            src={currentVideo.mediaUrl}
-            poster={currentVideo.thumbnailUrl || undefined}
-            autoPlay
-            loop
-            playsInline
-            muted={muted}
-            onClick={togglePlayPause}
-            onEnded={() => flushWatchMetrics(currentVideo, false)}
-            className="w-full h-full object-cover cursor-pointer"
-          />
-        ) : (
+        {currentVideo.mediaUrl ? (() => {
+          const studioMeta = parseStudioUrlHash(currentVideo.mediaUrl);
+          return (
+            <>
+              <video
+                ref={videoRef}
+                src={currentVideo.mediaUrl}
+                poster={currentVideo.thumbnailUrl || undefined}
+                autoPlay
+                loop
+                playsInline
+                muted={muted || Boolean(studioMeta?.muteAudio)}
+                style={
+                  studioMeta
+                    ? {
+                        filter: buildCssFilterString(studioMeta),
+                        transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
+                          (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
+                        }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
+                      }
+                    : undefined
+                }
+                onLoadedMetadata={(e) => {
+                  const vid = e.currentTarget;
+                  if (studioMeta?.playbackSpeed) {
+                    vid.playbackRate = studioMeta.playbackSpeed;
+                  }
+                  if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
+                    vid.currentTime = studioMeta.trimStart;
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  const vid = e.currentTarget;
+                  if (
+                    studioMeta?.trimEnd &&
+                    studioMeta.trimEnd > 0 &&
+                    vid.currentTime >= studioMeta.trimEnd
+                  ) {
+                    vid.currentTime = studioMeta.trimStart || 0;
+                  }
+                }}
+                onClick={togglePlayPause}
+                onEnded={() => flushWatchMetrics(currentVideo, false)}
+                className="w-full h-full object-cover cursor-pointer"
+              />
+              {studioMeta && (
+                <StudioFloatingOverlays
+                  stickers={studioMeta.stickers}
+                  texts={studioMeta.texts}
+                />
+              )}
+            </>
+          );
+        })() : (
           <div
             onClick={togglePlayPause}
             className="w-full h-full flex items-center justify-center p-8 text-center bg-gradient-to-br from-blue-950 via-[#080D21] to-purple-950"

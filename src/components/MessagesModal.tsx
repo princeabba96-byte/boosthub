@@ -51,8 +51,12 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
   const [showEmojiBar, setShowEmojiBar] = useState(false);
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [partnerTyping, setPartnerTyping] = useState(false);
+  const [replyAsBoostBot, setReplyAsBoostBot] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const isOwnerAdmin =
+    userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
 
   const loadConversations = async () => {
     try {
@@ -89,6 +93,19 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
     apiFetch<DirectMessageItem[]>(`/api/messages/${activePartner.id}`)
       .then((thread) => {
         setMessages(thread);
+        if (isOwnerAdmin && activePartner.id !== 'boost_bot_official') {
+          const lastIncoming = [...thread]
+            .reverse()
+            .find((m) => m.senderId === activePartner.id);
+          if (
+            lastIncoming &&
+            lastIncoming.content?.startsWith('🤖 [Reply to BOOST BOT]:')
+          ) {
+            setReplyAsBoostBot(true);
+          } else {
+            setReplyAsBoostBot(false);
+          }
+        }
         refreshBadgesCount();
         loadConversations();
         setTimeout(
@@ -97,7 +114,7 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
         );
       })
       .catch(() => {});
-  }, [activePartner, refreshBadgesCount]);
+  }, [activePartner, refreshBadgesCount, isOwnerAdmin]);
 
   // Listen to SSE realtime messages and typing events
   useEffect(() => {
@@ -157,19 +174,55 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
     setReplyTo(null);
 
     try {
-      const created = await apiFetch<DirectMessageItem>(
-        `/api/messages/${activePartner.id}`,
-        {
+      if (isOwnerAdmin && replyAsBoostBot && activePartner.id !== 'boost_bot_official') {
+        await apiFetch('/api/admin/action', {
           method: 'POST',
           body: JSON.stringify({
-            content: text,
-            replyToId: replyId,
+            action: 'send_boost_bot_message',
+            payload: {
+              targetUserId: activePartner.id,
+              content: text,
+            },
           }),
+        });
+        const created = await apiFetch<DirectMessageItem>(
+          `/api/messages/${activePartner.id}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              content: `🤖 [Replied via BOOST BOT]: ${text}`,
+              replyToId: replyId,
+            }),
+          }
+        );
+        setMessages((prev) =>
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
+        );
+        showToast(
+          `Reply delivered to ${activePartner.displayName} via BOOST BOT!`,
+          'success'
+        );
+      } else {
+        const created = await apiFetch<DirectMessageItem>(
+          `/api/messages/${activePartner.id}`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              content: text,
+              replyToId: replyId,
+            }),
+          }
+        );
+        setMessages((prev) =>
+          prev.some((m) => m.id === created.id) ? prev : [...prev, created]
+        );
+        if (activePartner.id === 'boost_bot_official' && !isOwnerAdmin) {
+          showToast(
+            'Your reply to BOOST BOT was sent directly to Prince Abba!',
+            'success'
+          );
         }
-      );
-      setMessages((prev) =>
-        prev.some((m) => m.id === created.id) ? prev : [...prev, created]
-      );
+      }
       setTimeout(
         () => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }),
         60
@@ -416,7 +469,7 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                     </p>
                     <p className="text-xs text-slate-400">
                       {activePartner.id === 'boost_bot_official'
-                        ? 'Official BoostHub Messenger'
+                        ? 'Official BoostHub Messenger · Replies go directly to Prince Abba'
                         : partnerTyping
                           ? 'Typing...'
                           : onlineUserIds.has(activePartner.id)
@@ -613,6 +666,38 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                 onSubmit={handleSend}
                 className="p-3 bg-[#0B1021] border-t border-white/10"
               >
+                {isOwnerAdmin && activePartner.id !== 'boost_bot_official' && (
+                  <div className="flex items-center justify-between gap-2 mb-2.5 px-2.5 py-1.5 rounded-xl bg-white/[0.03] border border-white/10 text-[11px]">
+                    <span className="text-slate-400 font-medium">
+                      Send Reply Mode:
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setReplyAsBoostBot(false)}
+                        className={`px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                          !replyAsBoostBot
+                            ? 'bg-blue-600 text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        As @Abba
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReplyAsBoostBot(true)}
+                        className={`px-2.5 py-1 rounded-lg font-semibold transition-colors ${
+                          replyAsBoostBot
+                            ? 'bg-purple-600 text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🤖 As BOOST BOT
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {replyTo && (
                   <div className="flex items-center justify-between text-xs text-blue-400 mb-2 px-2">
                     <span className="truncate">

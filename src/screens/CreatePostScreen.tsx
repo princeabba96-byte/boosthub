@@ -11,11 +11,19 @@ import {
   Link2,
   Hash,
   Eye,
+  Sparkles,
 } from 'lucide-react';
 import { INTEREST_CATEGORIES, PostItem } from '../types';
 import { uploadMediaWithProgress } from '../storage/mediaUpload';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
+import {
+  StudioMediaEditor,
+  StudioEditConfig,
+  DEFAULT_STUDIO_CONFIG,
+  encodeStudioUrlHash,
+  renderStudioCompositeToFile,
+} from '../components/StudioMediaEditor';
 
 interface CreatePostScreenProps {
   onPostCreated: (post: PostItem) => void;
@@ -41,10 +49,14 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
   const [uploadError, setUploadError] = useState('');
   const [publishing, setPublishing] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  const [studioConfig, setStudioConfig] = useState<StudioEditConfig>(
+    DEFAULT_STUDIO_CONFIG
+  );
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const studioVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const startMediaUpload = async (file: File) => {
     setSelectedFile(file);
@@ -72,7 +84,12 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
 
       setMediaUrl(uploaded.url);
       setThumbnailUrl(uploaded.thumbnailUrl || '');
-      showToast('Media uploaded to permanent storage!', 'success');
+      setStudioConfig((prev) => ({
+        ...DEFAULT_STUDIO_CONFIG,
+        stickers: prev.stickers,
+        texts: prev.texts,
+      }));
+      showToast('Media loaded into Studio Editor!', 'success');
     } catch (err: any) {
       setUploadError(err.message || 'Upload failed. Please retry.');
     } finally {
@@ -94,26 +111,92 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
     }
   };
 
+  const hasVisualEdits =
+    studioConfig.stickers.length > 0 ||
+    studioConfig.texts.length > 0 ||
+    studioConfig.zoom !== 1 ||
+    studioConfig.rotation !== 0 ||
+    studioConfig.flipH ||
+    studioConfig.flipV ||
+    studioConfig.filterPreset !== 'original' ||
+    studioConfig.brightness !== 100 ||
+    studioConfig.contrast !== 100 ||
+    studioConfig.saturation !== 100 ||
+    studioConfig.aspectRatio !== 'original';
+
   const handlePublish = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (postType !== 'text' && !mediaUrl) {
-      showToast('Please upload a photo or video before publishing.', 'error');
+    const isVideoMode = postType === 'video' || postType === 'capshot';
+    const hasStudioCanvasCard =
+      !mediaUrl &&
+      (studioConfig.stickers.length > 0 || studioConfig.texts.length > 0);
+
+    if (postType !== 'text' && !mediaUrl && !hasStudioCanvasCard) {
+      showToast(
+        'Please upload a photo/video or add stickers/text on the Studio Canvas before publishing.',
+        'error'
+      );
       return;
     }
-    if (postType === 'text' && !caption.trim()) {
-      showToast('Please write a caption for your text post.', 'error');
+    if (postType === 'text' && !caption.trim() && !hasStudioCanvasCard) {
+      showToast('Please write a caption or add text/stickers on the Studio Canvas.', 'error');
       return;
     }
 
     setPublishing(true);
     try {
+      let finalPostType = postType;
+      let finalMediaUrl = mediaUrl;
+      let finalThumbnailUrl = thumbnailUrl;
+
+      if (isVideoMode && mediaUrl) {
+        finalMediaUrl = encodeStudioUrlHash(mediaUrl, studioConfig, true);
+        if (hasVisualEdits) {
+          const thumbFile = await renderStudioCompositeToFile(
+            mediaUrl.split('#')[0],
+            true,
+            studioVideoRef.current,
+            studioConfig
+          );
+          if (thumbFile) {
+            const uploadedThumb = await uploadMediaWithProgress(
+              thumbFile,
+              'posts'
+            );
+            if (uploadedThumb?.url) {
+              finalThumbnailUrl = uploadedThumb.url;
+            }
+          }
+        }
+      } else if ((!isVideoMode && mediaUrl && hasVisualEdits) || hasStudioCanvasCard) {
+        const bakedFile = await renderStudioCompositeToFile(
+          mediaUrl.split('#')[0],
+          false,
+          null,
+          studioConfig
+        );
+        if (bakedFile) {
+          const uploadedBaked = await uploadMediaWithProgress(
+            bakedFile,
+            'posts'
+          );
+          if (uploadedBaked?.url) {
+            finalMediaUrl = uploadedBaked.url;
+            finalThumbnailUrl = uploadedBaked.url;
+            if (finalPostType === 'text') {
+              finalPostType = 'photo';
+            }
+          }
+        }
+      }
+
       const created = await apiFetch<PostItem>('/api/posts', {
         method: 'POST',
         body: JSON.stringify({
-          postType,
+          postType: finalPostType,
           caption: caption.trim(),
-          mediaUrl: postType === 'text' ? '' : mediaUrl,
-          thumbnailUrl: postType === 'text' ? '' : thumbnailUrl,
+          mediaUrl: finalPostType === 'text' ? '' : finalMediaUrl,
+          thumbnailUrl: finalPostType === 'text' ? '' : finalThumbnailUrl,
           hashtags: hashtags.trim(),
           category,
           linkUrl: linkUrl.trim(),
@@ -128,6 +211,7 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
       setThumbnailUrl('');
       setSelectedFile(null);
       setUploadProgress(0);
+      setStudioConfig(DEFAULT_STUDIO_CONFIG);
 
       showToast('Post published to BoostHub!', 'success');
       onPostCreated(created);
@@ -218,117 +302,128 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
           className="hidden"
         />
 
-        {/* Media Upload Box */}
-        {postType !== 'text' && (
-          <div className="space-y-3">
-            {!mediaUrl ? (
-              <div className="p-6 rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] text-center space-y-4">
-                <Upload className="w-8 h-8 text-blue-400 mx-auto" />
-                <div>
-                  <p className="text-sm font-medium text-white">
-                    Select media from Gallery or capture with Camera
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Automatically compressed and stored permanently in cloud storage
-                  </p>
-                </div>
+        {/* Media Upload Box & BoostHub Studio Editing Panel */}
+        <div className="space-y-4">
+          {postType !== 'text' && !mediaUrl && (
+            <div className="p-5 rounded-2xl border-2 border-dashed border-white/15 bg-white/[0.02] text-center space-y-3.5">
+              <Upload className="w-7 h-7 text-blue-400 mx-auto" />
+              <div>
+                <p className="text-sm font-medium text-white">
+                  Select media from Gallery or capture with Camera
+                </p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Then use the Studio Editing Panel below to cut, trim, crop, add stickers, write text & apply filters
+                </p>
+              </div>
 
-                <div className="flex items-center justify-center gap-3">
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-2"
+                >
+                  <ImageIcon className="w-4 h-4" /> Choose from Gallery
+                </button>
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold inline-flex items-center gap-2"
+                >
+                  <Camera className="w-4 h-4" /> Open Camera
+                </button>
+              </div>
+
+              {/* Upload Progress & Cancel */}
+              {uploading && (
+                <div className="max-w-sm mx-auto pt-2 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-300">
+                    <span>Uploading media...</span>
+                    <span className="tabular-nums">{uploadProgress}%</span>
+                  </div>
+                  <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 transition-all"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
                   <button
                     type="button"
-                    disabled={uploading}
-                    onClick={() => galleryInputRef.current?.click()}
-                    className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-2"
+                    onClick={handleCancelUpload}
+                    className="text-xs text-rose-400 hover:underline inline-flex items-center gap-1"
                   >
-                    <ImageIcon className="w-4 h-4" /> Choose from Gallery
-                  </button>
-                  <button
-                    type="button"
-                    disabled={uploading}
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold inline-flex items-center gap-2"
-                  >
-                    <Camera className="w-4 h-4" /> Open Camera
+                    <X className="w-3.5 h-3.5" /> Cancel Upload
                   </button>
                 </div>
+              )}
 
-                {/* Upload Progress & Cancel */}
-                {uploading && (
-                  <div className="max-w-sm mx-auto pt-2 space-y-2">
-                    <div className="flex items-center justify-between text-xs text-slate-300">
-                      <span>Uploading media...</span>
-                      <span className="tabular-nums">{uploadProgress}%</span>
-                    </div>
-                    <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-blue-500 transition-all"
-                        style={{ width: `${uploadProgress}%` }}
-                      />
-                    </div>
+              {/* Upload Error & Retry */}
+              {uploadError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-xs text-rose-300">
+                  <span>{uploadError}</span>
+                  {selectedFile && (
                     <button
                       type="button"
-                      onClick={handleCancelUpload}
-                      className="text-xs text-rose-400 hover:underline inline-flex items-center gap-1"
+                      onClick={handleRetryUpload}
+                      className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-white font-semibold inline-flex items-center gap-1"
                     >
-                      <X className="w-3.5 h-3.5" /> Cancel Upload
+                      <RotateCcw className="w-3.5 h-3.5" /> Retry
                     </button>
-                  </div>
-                )}
-
-                {/* Upload Error & Retry */}
-                {uploadError && (
-                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-between text-xs text-rose-300">
-                    <span>{uploadError}</span>
-                    {selectedFile && (
-                      <button
-                        type="button"
-                        onClick={handleRetryUpload}
-                        className="px-3 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-white font-semibold inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5" /> Retry
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="relative rounded-2xl overflow-hidden bg-black border border-white/10 max-h-80 flex items-center justify-center">
-                  {postType === 'video' || postType === 'capshot' ? (
-                    <video
-                      src={mediaUrl}
-                      poster={thumbnailUrl || undefined}
-                      controls
-                      className="max-h-80 w-full object-contain"
-                    />
-                  ) : (
-                    <img
-                      src={mediaUrl}
-                      alt="Uploaded preview"
-                      referrerPolicy="no-referrer"
-                      className="max-h-80 w-full object-contain"
-                    />
                   )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMediaUrl('');
-                      setThumbnailUrl('');
-                      setSelectedFile(null);
-                    }}
-                    className="absolute top-3 right-3 px-3 py-1.5 rounded-xl bg-black/75 text-xs text-white hover:bg-black"
-                  >
-                    Remove Media
-                  </button>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-emerald-400">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Permanent cloud storage URL verified ({mediaUrl})</span>
-                </div>
+              )}
+            </div>
+          )}
+
+          {mediaUrl && (
+            <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/25 text-xs">
+              <div className="flex items-center gap-2 text-emerald-300 min-w-0">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span className="truncate font-medium">
+                  Media loaded in Studio Editor ({mediaUrl.split('#')[0]})
+                </span>
               </div>
-            )}
-          </div>
-        )}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white font-semibold"
+                >
+                  Change Media
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMediaUrl('');
+                    setThumbnailUrl('');
+                    setSelectedFile(null);
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-semibold"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* BoostHub Studio Editing Panel: Cut, Trim, Crop, Stickers, Write Text & Filters */}
+          <StudioMediaEditor
+            mediaUrl={mediaUrl}
+            isVideo={postType === 'video' || postType === 'capshot'}
+            config={studioConfig}
+            onChangeConfig={setStudioConfig}
+            videoRefExternal={studioVideoRef}
+            onBakeStudioImage={async (bakedFile) => {
+              await startMediaUpload(bakedFile);
+              setStudioConfig(DEFAULT_STUDIO_CONFIG);
+              showToast(
+                'Studio stickers, text & filters baked into your image!',
+                'success'
+              );
+            }}
+          />
+        </div>
 
         <form onSubmit={handlePublish} className="space-y-4">
           <div>

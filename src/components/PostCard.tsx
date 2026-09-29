@@ -19,6 +19,11 @@ import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from './Avatar';
 import { formatRelativeTime, formatCompactNumber } from '../utils/format';
+import {
+  parseStudioUrlHash,
+  buildCssFilterString,
+  StudioFloatingOverlays,
+} from './StudioMediaEditor';
 
 interface PostCardProps {
   post: PostItem;
@@ -273,39 +278,80 @@ export const PostCard: React.FC<PostCardProps> = ({
       )}
 
       {/* Media Slot */}
-      {post.mediaUrl && !mediaError && (
-        <div className="mt-3.5 rounded-2xl overflow-hidden bg-black/60 border border-white/10 max-h-[520px] flex items-center justify-center relative">
-          {post.postType === 'video' || post.postType === 'capshot' ? (
-            <video
-              src={post.mediaUrl}
-              poster={post.thumbnailUrl || undefined}
-              controls
-              playsInline
-              preload="metadata"
-              onPlay={() => {
-                apiFetch(`/api/posts/${post.id}/watch`, {
-                  method: 'POST',
-                  body: JSON.stringify({
-                    watchDurationSeconds: 5,
-                    completionPercentage: 60,
-                    skipped: false,
-                  }),
-                }).catch(() => {});
-              }}
-              className="w-full max-h-[520px] object-contain"
-            />
-          ) : (
-            <img
-              src={post.mediaUrl}
-              alt={post.caption || 'Post image'}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-              onError={() => setMediaError(true)}
-              className="w-full max-h-[520px] object-cover"
-            />
-          )}
-        </div>
-      )}
+      {post.mediaUrl && !mediaError && (() => {
+        const studioMeta = parseStudioUrlHash(post.mediaUrl);
+        return (
+          <div className="mt-3.5 rounded-2xl overflow-hidden bg-black/60 border border-white/10 max-h-[520px] flex items-center justify-center relative">
+            {post.postType === 'video' || post.postType === 'capshot' ? (
+              <video
+                src={post.mediaUrl}
+                poster={post.thumbnailUrl || undefined}
+                controls
+                playsInline
+                preload="metadata"
+                style={
+                  studioMeta
+                    ? {
+                        filter: buildCssFilterString(studioMeta),
+                        transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
+                          (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
+                        }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
+                      }
+                    : undefined
+                }
+                onLoadedMetadata={(e) => {
+                  const vid = e.currentTarget;
+                  if (studioMeta?.playbackSpeed) {
+                    vid.playbackRate = studioMeta.playbackSpeed;
+                  }
+                  if (studioMeta?.muteAudio) {
+                    vid.muted = true;
+                  }
+                  if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
+                    vid.currentTime = studioMeta.trimStart;
+                  }
+                }}
+                onTimeUpdate={(e) => {
+                  const vid = e.currentTarget;
+                  if (
+                    studioMeta?.trimEnd &&
+                    studioMeta.trimEnd > 0 &&
+                    vid.currentTime >= studioMeta.trimEnd
+                  ) {
+                    vid.currentTime = studioMeta.trimStart || 0;
+                  }
+                }}
+                onPlay={() => {
+                  apiFetch(`/api/posts/${post.id}/watch`, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      watchDurationSeconds: 5,
+                      completionPercentage: 60,
+                      skipped: false,
+                    }),
+                  }).catch(() => {});
+                }}
+                className="w-full max-h-[520px] object-contain"
+              />
+            ) : (
+              <img
+                src={post.mediaUrl}
+                alt={post.caption || 'Post image'}
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                onError={() => setMediaError(true)}
+                className="w-full max-h-[520px] object-cover"
+              />
+            )}
+            {studioMeta && (
+              <StudioFloatingOverlays
+                stickers={studioMeta.stickers}
+                texts={studioMeta.texts}
+              />
+            )}
+          </div>
+        );
+      })()}
 
       {/* Interaction Bar */}
       <div className="mt-4 pt-3 border-t border-white/[0.06] flex items-center justify-between text-slate-400">

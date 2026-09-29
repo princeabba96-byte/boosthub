@@ -78,7 +78,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenBShop,
   initialMainMode,
 }) => {
-  const { userProfile, refreshProfile, logout, showToast } = useAuth();
+  const {
+    userProfile,
+    refreshProfile,
+    logout,
+    showToast,
+    realtimeEvents,
+  } = useAuth();
   const targetUserId = viewedUserId || userProfile?.id || '';
   const isMe = targetUserId === userProfile?.id;
 
@@ -131,6 +137,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [botSelectedUserId, setBotSelectedUserId] = useState<string>('');
   const [botMessageContent, setBotMessageContent] = useState<string>('');
   const [sendingBotMessage, setSendingBotMessage] = useState<boolean>(false);
+  const [selectedBotReplyUserId, setSelectedBotReplyUserId] =
+    useState<string>('');
+  const [botQuickReplyText, setBotQuickReplyText] = useState<string>('');
+  const [sendingBotQuickReply, setSendingBotQuickReply] =
+    useState<boolean>(false);
+  const [botInboxFilter, setBotInboxFilter] = useState<'replies' | 'all'>(
+    'replies'
+  );
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -203,10 +217,41 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
     ) {
       apiFetch('/api/admin/overview')
-        .then(setAdminData)
+        .then((data: any) => {
+          setAdminData(data);
+          if (
+            !selectedBotReplyUserId &&
+            Array.isArray(data?.boostBotThreads) &&
+            data.boostBotThreads.length > 0
+          ) {
+            const firstWithReply =
+              data.boostBotThreads.find((t: any) => t.userReplyCount > 0) ||
+              data.boostBotThreads[0];
+            if (firstWithReply?.user?.id) {
+              setSelectedBotReplyUserId(firstWithReply.user.id);
+            }
+          }
+        })
         .catch(() => {});
     }
   }, [isMe, activeMainMode, userProfile?.email]);
+
+  useEffect(() => {
+    if (
+      !isMe ||
+      activeMainMode !== 'admin' ||
+      userProfile?.email?.trim().toLowerCase() !== 'princeabba96@gmail.com' ||
+      realtimeEvents.length === 0
+    ) {
+      return;
+    }
+    const latest = realtimeEvents[realtimeEvents.length - 1];
+    if (latest.type === 'direct_message') {
+      apiFetch('/api/admin/overview')
+        .then(setAdminData)
+        .catch(() => {});
+    }
+  }, [realtimeEvents, isMe, activeMainMode, userProfile?.email]);
 
   const handleUpdateGiftSettings = async (payload: {
     giftPrivacy?: 'public' | 'showcase_only' | 'private';
@@ -442,6 +487,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         }),
       });
       setBotMessageContent('');
+      const refreshed = await apiFetch('/api/admin/overview').catch(() => null);
+      if (refreshed) setAdminData(refreshed);
       showToast(
         `BOOST BOT message delivered to ${res?.sentCount || 1} ${
           (res?.sentCount || 1) === 1 ? 'user' : 'users'
@@ -452,6 +499,39 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       showToast(err.message || 'Failed to send BOOST BOT message.', 'error');
     } finally {
       setSendingBotMessage(false);
+    }
+  };
+
+  const handleSendQuickBotReply = async (
+    e: React.FormEvent,
+    targetUser: UserProfile
+  ) => {
+    e.preventDefault();
+    const replyContent = botQuickReplyText.trim();
+    if (!replyContent || !targetUser?.id) return;
+    setSendingBotQuickReply(true);
+    try {
+      await apiFetch('/api/admin/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'send_boost_bot_message',
+          payload: {
+            targetUserId: targetUser.id,
+            content: replyContent,
+          },
+        }),
+      });
+      setBotQuickReplyText('');
+      const refreshed = await apiFetch('/api/admin/overview').catch(() => null);
+      if (refreshed) setAdminData(refreshed);
+      showToast(
+        `Replied to ${targetUser.displayName} (@${targetUser.username}) via BOOST BOT!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send BOOST BOT reply.', 'error');
+    } finally {
+      setSendingBotQuickReply(false);
     }
   };
 
@@ -1820,6 +1900,246 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   </span>
                 </button>
               </form>
+
+              {/* 📥 BOOST BOT User Replies & Two-Way Inbox */}
+              <div className="pt-6 mt-6 border-t border-white/10 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>📥 User Replies to BOOST BOT (Two-Way Inbox)</span>
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Every message a user replies to BOOST BOT is forwarded to your inbox and shown here so you can reply right back to them.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setBotInboxFilter('replies')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        botInboxFilter === 'replies'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      User Replies (
+                      {(adminData.boostBotThreads || []).filter(
+                        (t: any) => t.userReplyCount > 0
+                      ).length}
+                      )
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBotInboxFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        botInboxFilter === 'all'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All Bot Threads (
+                      {(adminData.boostBotThreads || []).length})
+                    </button>
+                  </div>
+                </div>
+
+                {(() => {
+                  const allThreads = Array.isArray(adminData.boostBotThreads)
+                    ? adminData.boostBotThreads
+                    : [];
+                  const visibleThreads =
+                    botInboxFilter === 'replies'
+                      ? allThreads.filter((t: any) => t.userReplyCount > 0)
+                      : allThreads;
+                  const activeThread =
+                    visibleThreads.find(
+                      (t: any) => t.user?.id === selectedBotReplyUserId
+                    ) ||
+                    visibleThreads[0] ||
+                    null;
+
+                  if (visibleThreads.length === 0) {
+                    return (
+                      <div className="p-5 rounded-2xl bg-[#070B17] border border-white/10 text-center space-y-2">
+                        <p className="text-xs font-semibold text-slate-300">
+                          {botInboxFilter === 'replies'
+                            ? 'No user replies to BOOST BOT yet.'
+                            : 'No BOOST BOT conversations yet.'}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          When any user replies to BOOST BOT in Messages, their message is automatically sent to your Direct Messages and appears here for instant 2-way reply.
+                        </p>
+                        {botInboxFilter === 'replies' && allThreads.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setBotInboxFilter('all')}
+                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-purple-300 font-semibold"
+                          >
+                            View All {allThreads.length} BOOST BOT Threads
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 bg-[#070B17] border border-white/10 rounded-2xl overflow-hidden">
+                      {/* Left Column: Users who replied / conversed */}
+                      <div className="md:col-span-5 border-b md:border-b-0 md:border-r border-white/10 max-h-96 overflow-y-auto divide-y divide-white/5">
+                        {visibleThreads.map((thread: any) => {
+                          const u: UserProfile = thread.user;
+                          const isSelected = activeThread?.user?.id === u.id;
+                          const lastMsg =
+                            thread.messages?.[thread.messages.length - 1];
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => setSelectedBotReplyUserId(u.id)}
+                              className={`w-full p-3.5 text-left flex items-start gap-3 transition-colors ${
+                                isSelected
+                                  ? 'bg-purple-600/20'
+                                  : 'hover:bg-white/[0.04]'
+                              }`}
+                            >
+                              <Avatar
+                                src={u.avatarUrl}
+                                name={u.displayName}
+                                size="sm"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-xs font-bold text-white truncate">
+                                    {u.displayName}
+                                  </p>
+                                  {thread.userReplyCount > 0 && (
+                                    <span className="text-[10px] font-semibold text-emerald-300 shrink-0">
+                                      {thread.userReplyCount}{' '}
+                                      {thread.userReplyCount === 1
+                                        ? 'reply'
+                                        : 'replies'}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-400 truncate">
+                                  @{u.username}
+                                </p>
+                                {lastMsg && (
+                                  <p className="text-xs text-slate-300 truncate mt-1">
+                                    {lastMsg.isFromUser ? '💬 ' : '🤖 '}
+                                    {lastMsg.content}
+                                  </p>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Right Column: Active Thread & Reply Composer */}
+                      <div className="md:col-span-7 flex flex-col max-h-96">
+                        {activeThread ? (
+                          <>
+                            <div className="p-3.5 border-b border-white/10 flex items-center justify-between gap-2 bg-white/[0.02]">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Avatar
+                                  src={activeThread.user.avatarUrl}
+                                  name={activeThread.user.displayName}
+                                  size="sm"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-white truncate">
+                                    {activeThread.user.displayName} (@
+                                    {activeThread.user.username})
+                                  </p>
+                                  <p className="text-[11px] text-slate-400 truncate">
+                                    {activeThread.user.email}
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onOpenMessage(activeThread.user)}
+                                className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-[11px] font-semibold shrink-0"
+                              >
+                                Open Personal DM
+                              </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5">
+                              {activeThread.messages.map((m: any) => (
+                                <div
+                                  key={m.id}
+                                  className={`flex flex-col ${
+                                    m.isFromUser ? 'items-start' : 'items-end'
+                                  }`}
+                                >
+                                  <div
+                                    className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs ${
+                                      m.isFromUser
+                                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-white'
+                                        : 'bg-purple-600/25 border border-purple-500/30 text-slate-100'
+                                    }`}
+                                  >
+                                    <p
+                                      className={`text-[10px] font-bold mb-0.5 ${
+                                        m.isFromUser
+                                          ? 'text-emerald-300'
+                                          : 'text-amber-300'
+                                      }`}
+                                    >
+                                      {m.isFromUser
+                                        ? `${activeThread.user.displayName} (@${activeThread.user.username})`
+                                        : '🤖 BOOST BOT (You)'}
+                                    </p>
+                                    <p className="whitespace-pre-wrap break-words">
+                                      {m.content}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 mt-1 text-right">
+                                      {formatRelativeTime(m.createdAt)}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <form
+                              onSubmit={(e) =>
+                                handleSendQuickBotReply(e, activeThread.user)
+                              }
+                              className="p-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2"
+                            >
+                              <input
+                                type="text"
+                                value={botQuickReplyText}
+                                onChange={(e) =>
+                                  setBotQuickReplyText(e.target.value)
+                                }
+                                placeholder={`Reply back to @${activeThread.user.username} as BOOST BOT...`}
+                                className="flex-1 bg-[#0B1021] border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                              />
+                              <button
+                                type="submit"
+                                disabled={
+                                  sendingBotQuickReply ||
+                                  !botQuickReplyText.trim()
+                                }
+                                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>
+                                  {sendingBotQuickReply ? 'Sending...' : 'Reply'}
+                                </span>
+                              </button>
+                            </form>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
 
             {/* Reports Queue */}

@@ -624,7 +624,7 @@ async function startServer() {
 
   app.post('/api/messages/:partnerId', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const msg = await sendDirectMessage(
+      const msg: any = await sendDirectMessage(
         req.user!.uid,
         req.params.partnerId,
         req.body
@@ -633,6 +633,13 @@ async function startServer() {
         req.params.partnerId,
         req.user!.uid,
       ]);
+      if (msg?.forwardedAdminId && msg?.forwardedAdminMessage) {
+        broadcastRealtimeEvent(
+          'direct_message',
+          msg.forwardedAdminMessage,
+          [msg.forwardedAdminId]
+        );
+      }
       res.json(msg);
     } catch (error: any) {
       res.status(400).json({ error: 'Failed to send message.' });

@@ -1758,6 +1758,45 @@ export async function handleStaticBackendRequest<T = any>(
         createdAt: new Date().toISOString(),
       };
       db.messages.push(created);
+
+      // If someone replies to BOOST BOT, automatically forward their message to Prince Abba
+      if (partnerId === 'boost_bot_official') {
+        const adminProfile =
+          Object.values(db.users).find((u) => isStrictAdminEmail(u.email)) ||
+          db.users['bh_owner_abba'];
+        if (adminProfile && adminProfile.id !== currentUser.id) {
+          const forwardedText = body.content
+            ? `🤖 [Reply to BOOST BOT]: ${body.content}`
+            : '🤖 [Reply to BOOST BOT]: (Sent a media attachment)';
+          db.messages.push({
+            id: Date.now() + 1,
+            senderId: currentUser.id,
+            receiverId: adminProfile.id,
+            content: forwardedText,
+            mediaUrl: body.mediaUrl || '',
+            mediaType: body.mediaType || '',
+            replyToId: null,
+            sharedPostId: body.sharedPostId || null,
+            reaction: '',
+            isRead: false,
+            isDeleted: false,
+            createdAt: new Date().toISOString(),
+          });
+          db.notifications.unshift({
+            id: Date.now() + 2,
+            userId: adminProfile.id,
+            actorId: currentUser.id,
+            type: 'message',
+            title: `🤖 BOOST BOT Reply from ${currentUser.displayName} (@${currentUser.username})`,
+            body: String(body.content || 'Sent a media attachment'),
+            entityId: currentUser.id,
+            isRead: false,
+            createdAt: new Date().toISOString(),
+            actor: currentUser,
+          });
+        }
+      }
+
       saveStaticDb(db);
       return created as unknown as T;
     }
@@ -1800,6 +1839,79 @@ export async function handleStaticBackendRequest<T = any>(
     const allUsers = Object.values(db.users).filter(
       (u) => u.id !== 'boost_bot_official'
     );
+
+    const botMessages = db.messages.filter(
+      (m) =>
+        !m.isDeleted &&
+        (m.senderId === 'boost_bot_official' ||
+          m.receiverId === 'boost_bot_official')
+    );
+
+    const threadsByUser = new Map<
+      string,
+      {
+        user: UserProfile;
+        messages: Array<{
+          id: number;
+          senderId: string;
+          receiverId: string;
+          content: string;
+          mediaUrl: string;
+          mediaType: string;
+          createdAt: string;
+          isFromUser: boolean;
+        }>;
+        userReplyCount: number;
+        lastMessageAt: string;
+        lastUserReplyAt: string | null;
+      }
+    >();
+
+    for (const msg of botMessages) {
+      const partnerId =
+        msg.senderId === 'boost_bot_official' ? msg.receiverId : msg.senderId;
+      if (!partnerId || partnerId === 'boost_bot_official') continue;
+      const partnerProfile = db.users[partnerId];
+      if (!partnerProfile) continue;
+
+      let entry = threadsByUser.get(partnerId);
+      if (!entry) {
+        entry = {
+          user: partnerProfile,
+          messages: [],
+          userReplyCount: 0,
+          lastMessageAt: msg.createdAt,
+          lastUserReplyAt: null,
+        };
+        threadsByUser.set(partnerId, entry);
+      }
+
+      const isFromUser = msg.senderId !== 'boost_bot_official';
+      entry.messages.push({
+        id: msg.id,
+        senderId: msg.senderId,
+        receiverId: msg.receiverId,
+        content: msg.content || '',
+        mediaUrl: msg.mediaUrl || '',
+        mediaType: msg.mediaType || '',
+        createdAt: msg.createdAt,
+        isFromUser,
+      });
+      entry.lastMessageAt = msg.createdAt;
+      if (isFromUser) {
+        entry.userReplyCount += 1;
+        entry.lastUserReplyAt = msg.createdAt;
+      }
+    }
+
+    const boostBotThreads = Array.from(threadsByUser.values()).sort((a, b) => {
+      if (a.userReplyCount > 0 && b.userReplyCount === 0) return -1;
+      if (b.userReplyCount > 0 && a.userReplyCount === 0) return 1;
+      const tA = new Date(a.lastUserReplyAt || a.lastMessageAt).getTime();
+      const tB = new Date(b.lastUserReplyAt || b.lastMessageAt).getTime();
+      return tB - tA;
+    });
+
     return {
       metrics: {
         totalUsers: allUsers.length,
@@ -1811,7 +1923,10 @@ export async function handleStaticBackendRequest<T = any>(
         openReports: db.reports.length,
       },
       users: allUsers,
+      posts: db.posts,
       reports: db.reports,
+      communities: db.communities,
+      boostBotThreads,
       auditLogs: [
         {
           id: 1,
@@ -1830,11 +1945,15 @@ export async function handleStaticBackendRequest<T = any>(
     if (!isStrictAdminEmail(currentUser.email)) {
       throw new Error('Forbidden: Admin access is restricted to Prince Abba.');
     }
-    const { action, targetId, content } = body;
+    const { action } = body;
+    const payload = body.payload || body;
+    const targetId = payload.targetUserId || payload.userId || body.targetId;
+    const content = payload.content ?? body.content;
+
     if (action === 'send_boost_bot_message') {
       const msgText = String(content || '').trim();
       const recipients =
-        targetId === 'all'
+        !targetId || targetId === 'all'
           ? Object.values(db.users).filter((u) => u.id !== 'boost_bot_official')
           : [db.users[targetId] || currentUser];
 
@@ -1895,16 +2014,24 @@ export async function handleStaticBackendRequest<T = any>(
 
       return {
         ok: true,
+        sentCount: recipients.length,
         recipientCount: recipients.length,
         pushDeliveredCount: recipients.length,
       } as unknown as T;
     }
 
     if (targetId && db.users[targetId]) {
-      if (action === 'verify_user') db.users[targetId].isVerified = true;
+      if (action === 'verify_user' || action === 'toggle_verify_user') {
+        db.users[targetId].isVerified = !db.users[targetId].isVerified;
+      }
+      if (action === 'set_user_role' && payload.role) {
+        db.users[targetId].role = payload.role;
+      }
       if (action === 'promote_creator') db.users[targetId].role = 'creator';
       if (action === 'promote_moderator') db.users[targetId].role = 'moderator';
-      if (action === 'suspend_user') db.users[targetId].isSuspended = true;
+      if (action === 'suspend_user' || action === 'toggle_suspend_user') {
+        db.users[targetId].isSuspended = !db.users[targetId].isSuspended;
+      }
       if (action === 'unsuspend_user') db.users[targetId].isSuspended = false;
       saveStaticDb(db);
     }
