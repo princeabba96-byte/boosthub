@@ -28,12 +28,21 @@ import {
   BellRing,
   BellOff,
   Send,
+  Gift,
+  ShoppingBag,
+  Lock,
 } from 'lucide-react';
 import {
+  BShopUserState,
   INTEREST_CATEGORIES,
   PostItem,
   UserProfile,
 } from '../types';
+import {
+  getBShopItemByCode,
+  getFrameRingClasses,
+  getNameStyleClasses,
+} from '../data/bshopCatalog';
 import { apiFetch } from '../services/api';
 import {
   getBrowserPushPermissionState,
@@ -55,6 +64,8 @@ interface ProfileScreenProps {
   onOpenComments: (post: PostItem) => void;
   onOpenShare: (post: PostItem) => void;
   onOpenMessageWith: (partner: UserProfile) => void;
+  onOpenBShop?: (recipient?: UserProfile | null) => void;
+  initialMainMode?: 'profile' | 'dashboard' | 'gifts' | 'settings' | 'admin';
 }
 
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({
@@ -64,6 +75,8 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   onOpenComments,
   onOpenShare,
   onOpenMessageWith,
+  onOpenBShop,
+  initialMainMode,
 }) => {
   const { userProfile, refreshProfile, logout, showToast } = useAuth();
   const targetUserId = viewedUserId || userProfile?.id || '';
@@ -73,8 +86,10 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [userPosts, setUserPosts] = useState<PostItem[]>([]);
   const [savedPosts, setSavedPosts] = useState<PostItem[]>([]);
   const [activeMainMode, setActiveMainMode] = useState<
-    'profile' | 'dashboard' | 'settings' | 'admin'
-  >('profile');
+    'profile' | 'dashboard' | 'gifts' | 'settings' | 'admin'
+  >(initialMainMode || 'profile');
+  const [myGiftsState, setMyGiftsState] = useState<BShopUserState | null>(null);
+  const [updatingGiftSettings, setUpdatingGiftSettings] = useState(false);
   const [contentTab, setContentTab] = useState<
     'posts' | 'videos' | 'photos' | 'saved' | 'about'
   >('posts');
@@ -150,10 +165,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   };
 
   useEffect(() => {
-    setActiveMainMode('profile');
+    if (initialMainMode && isMe) {
+      setActiveMainMode(initialMainMode);
+    } else {
+      setActiveMainMode('profile');
+    }
     setContentTab('posts');
     loadProfileAndPosts();
-  }, [targetUserId]);
+  }, [targetUserId, initialMainMode]);
 
   useEffect(() => {
     if (isMe && contentTab === 'saved') {
@@ -164,7 +183,11 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }, [isMe, contentTab]);
 
   useEffect(() => {
-    if (isMe && activeMainMode === 'settings') {
+    if (isMe && activeMainMode === 'gifts') {
+      apiFetch<BShopUserState>('/api/bshop/state')
+        .then(setMyGiftsState)
+        .catch(() => {});
+    } else if (isMe && activeMainMode === 'settings') {
       apiFetch<UserProfile[]>('/api/blocked-users')
         .then(setBlockedUsers)
         .catch(() => {});
@@ -184,6 +207,56 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         .catch(() => {});
     }
   }, [isMe, activeMainMode, userProfile?.email]);
+
+  const handleUpdateGiftSettings = async (payload: {
+    giftPrivacy?: 'public' | 'showcase_only' | 'private';
+    showcaseGifts?: string[];
+  }) => {
+    setUpdatingGiftSettings(true);
+    try {
+      const updated = await apiFetch<BShopUserState>('/api/bshop/settings', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      setMyGiftsState(updated);
+      await refreshProfile();
+      await loadProfileAndPosts();
+      showToast('Gift preferences saved!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Could not update gift settings.', 'error');
+    } finally {
+      setUpdatingGiftSettings(false);
+    }
+  };
+
+  const handleToggleShowcaseGift = async (giftCode: string) => {
+    if (!myGiftsState) return;
+    const current = myGiftsState.showcaseGifts || [];
+    const exists = current.includes(giftCode);
+    if (exists) {
+      if (current.length <= 3) {
+        showToast(
+          'Your Gift Showcase displays between 3 and 6 favorite gifts.',
+          'info'
+        );
+        return;
+      }
+      await handleUpdateGiftSettings({
+        showcaseGifts: current.filter((c) => c !== giftCode),
+      });
+    } else {
+      if (current.length >= 6) {
+        showToast(
+          'You can showcase up to 6 gifts. Unpin one first to add another.',
+          'info'
+        );
+        return;
+      }
+      await handleUpdateGiftSettings({
+        showcaseGifts: [...current, giftCode],
+      });
+    }
+  };
 
   const openFollowModal = async (type: 'followers' | 'following') => {
     setFollowModalType(type);
@@ -406,11 +479,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
           <div className="flex items-center gap-5">
             <div className="relative">
-              <Avatar
-                src={profile.avatarUrl}
-                name={profile.displayName}
-                size="xl"
-              />
+              <div
+                className={`rounded-full ${getFrameRingClasses(profile.equippedFrame)}`}
+              >
+                <Avatar
+                  src={profile.avatarUrl}
+                  name={profile.displayName}
+                  size="xl"
+                />
+              </div>
               {isMe && (
                 <>
                   <input
@@ -433,13 +510,24 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
 
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h1 className="font-display text-xl sm:text-2xl font-bold text-white">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1
+                  className={`font-display text-xl sm:text-2xl font-bold ${getNameStyleClasses(
+                    profile.equippedNameStyle
+                  )}`}
+                >
                   {profile.displayName}
                 </h1>
                 {profile.isVerified && (
                   <CheckCircle2 className="w-5 h-5 text-blue-400" />
                 )}
+                {profile.equippedBadge &&
+                  getBShopItemByCode(profile.equippedBadge) && (
+                    <span className="text-xs text-amber-300 font-medium">
+                      {getBShopItemByCode(profile.equippedBadge)?.icon}{' '}
+                      {getBShopItemByCode(profile.equippedBadge)?.name}
+                    </span>
+                  )}
               </div>
               <p className="text-xs text-slate-400">
                 @{profile.username} ·{' '}
@@ -452,6 +540,15 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 <span className="text-blue-400 tabular-nums">
                   {profile.xp} XP
                 </span>
+                {isMe && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <span className="text-purple-400 font-semibold tabular-nums">
+                      {(profile.boostPoints || 0).toLocaleString()} BP
+                    </span>
+                  </>
+                )}
               </p>
               {profile.bio && (
                 <p className="text-sm text-slate-200 pt-1 max-w-md">
@@ -474,6 +571,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               >
                 Profile
               </button>
+              <button
+                onClick={() => setActiveMainMode('gifts')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                  activeMainMode === 'gifts'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                <Gift className="w-3.5 h-3.5 text-pink-400" /> 🎁 My Gifts
+              </button>
+              {onOpenBShop && (
+                <button
+                  onClick={() => onOpenBShop(null)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-white/5 text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5 text-purple-400" /> 🛍️
+                  B-Shop
+                </button>
+              )}
               <button
                 onClick={() => setActiveMainMode('dashboard')}
                 className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
@@ -511,6 +627,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
+              {onOpenBShop && (
+                <button
+                  onClick={() => onOpenBShop(profile)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white transition-colors"
+                >
+                  <Gift className="w-4 h-4" /> Send Gift
+                </button>
+              )}
               <button
                 onClick={handleToggleFollow}
                 className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
@@ -632,7 +756,448 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             <p className="text-xs text-slate-400">Views</p>
           </div>
         </div>
+
+        {/* Public Profile ✨ Gift Showcase & 🎁 Gift Collection Summary */}
+        {(isMe || (profile.giftPrivacy || 'public') !== 'private') && (
+          <div className="pt-4 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            {/* ✨ Gift Showcase (3–6 favorite/rare gifts) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="font-semibold text-amber-300">
+                  ✨ Gift Showcase
+                </span>
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveMainMode('gifts')}
+                    className="text-blue-400 hover:underline"
+                  >
+                    Customize
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
+                {(profile.showcaseGifts || 'crown,diamond,rocket,trophy')
+                  .split(',')
+                  .map((code) => code.trim())
+                  .filter(Boolean)
+                  .slice(0, 6)
+                  .map((code, idx, arr) => {
+                    const item = getBShopItemByCode(code);
+                    if (!item) return null;
+                    return (
+                      <React.Fragment key={code}>
+                        <span className="font-medium text-white">
+                          {item.icon} {item.name}
+                        </span>
+                        {idx < arr.length - 1 && (
+                          <span aria-hidden="true" className="text-slate-600">
+                            |
+                          </span>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* 🎁 Gift Collection Summary (Visible when giftPrivacy is public or viewing own profile) */}
+            {(isMe || (profile.giftPrivacy || 'public') === 'public') &&
+              profile.publicGiftCollection &&
+              profile.publicGiftCollection.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span className="font-semibold text-purple-300">
+                      🎁 Gift Collection
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">
+                      {profile.publicGiftCollection.reduce(
+                        (s, g) => s + g.count,
+                        0
+                      )}{' '}
+                      total received
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-white tabular-nums">
+                    {profile.publicGiftCollection.map((g) => (
+                      <span
+                        key={g.code}
+                        title={`${g.name} (${g.rarity})`}
+                        className="inline-flex items-center gap-1"
+                      >
+                        <span className="text-sm">{g.icon}</span>
+                        <span className="font-semibold">{g.count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+          </div>
+        )}
       </section>
+
+      {/* MODE: 🎁 MY GIFTS (Collection, Showcase, Activity & Privacy) */}
+      {isMe && activeMainMode === 'gifts' && (
+        <div className="space-y-6">
+          {/* Top Overview & B-Shop CTA */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="font-display text-xl font-bold text-white">
+                🎁 My Gifts & Showcase
+              </h2>
+              <p className="text-xs text-slate-400">
+                Manage your received Gift Collection, choose 3–6 showcase gifts
+                for your profile, review gift activity, and control gift
+                privacy.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-300 tabular-nums">
+                <span>
+                  Boost Points:{' '}
+                  <strong className="text-purple-300">
+                    {(
+                      myGiftsState?.boostPoints ??
+                      profile.boostPoints ??
+                      0
+                    ).toLocaleString()}{' '}
+                    BP
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Total Gifts Received:{' '}
+                  <strong className="text-white">
+                    {myGiftsState?.giftCollection.reduce(
+                      (s, g) => s + g.receivedCount,
+                      0
+                    ) || 0}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Gift Recognition Score:{' '}
+                  <strong className="text-blue-400">
+                    {(
+                      myGiftsState?.giftRecognitionScore ??
+                      profile.giftRecognitionScore ??
+                      0
+                    ).toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            {onOpenBShop && (
+              <button
+                type="button"
+                onClick={() => onOpenBShop(null)}
+                className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-2 self-start sm:self-auto transition-colors"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Visit 🛍️ B-Shop</span>
+              </button>
+            )}
+          </div>
+
+          {/* ✨ Gift Showcase & 🔒 Gift Privacy Controls */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-bold text-white">
+                  ✨ Gift Showcase (3–6 Favorite Gifts)
+                </h3>
+                <span className="text-xs text-slate-400 tabular-nums">
+                  {myGiftsState?.showcaseGifts.length || 4} / 6 selected
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Displayed prominently at the top of your profile. Tap any gift
+                card below to pin or unpin it from your Showcase.
+              </p>
+              <div className="p-3.5 rounded-2xl bg-[#070B17] border border-white/10 flex flex-wrap items-center gap-2.5 text-sm text-white">
+                {(
+                  myGiftsState?.showcaseGifts || [
+                    'crown',
+                    'diamond',
+                    'rocket',
+                    'trophy',
+                  ]
+                ).map((code, idx, arr) => {
+                  const item = getBShopItemByCode(code);
+                  if (!item) return null;
+                  return (
+                    <React.Fragment key={code}>
+                      <span className="font-semibold">
+                        {item.icon} {item.name}
+                      </span>
+                      {idx < arr.length - 1 && (
+                        <span aria-hidden="true" className="text-slate-600">
+                          |
+                        </span>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-bold text-white flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-blue-400" />
+                  <span>Gift Privacy Setting</span>
+                </h3>
+                <span className="text-xs text-slate-400">
+                  Activity log is always private
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Choose what visitors see on your public profile. Individual
+                sender transactions are never exposed publicly.
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {(
+                  [
+                    { id: 'public', label: 'Collection & Showcase' },
+                    { id: 'showcase_only', label: 'Showcase Only' },
+                    { id: 'private', label: 'Private (Only Me)' },
+                  ] as const
+                ).map((opt) => {
+                  const active =
+                    (myGiftsState?.giftPrivacy ||
+                      profile.giftPrivacy ||
+                      'public') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={updatingGiftSettings}
+                      onClick={() =>
+                        handleUpdateGiftSettings({ giftPrivacy: opt.id })
+                      }
+                      className={`py-2.5 px-2 rounded-xl text-xs font-semibold transition-colors ${
+                        active
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white/5 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 🎁 Gift Collection Cards */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-lg font-bold text-white">
+                  🎁 Gift Collection
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Every virtual gift you have received or collected on BoostHub.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {(myGiftsState?.giftCollection || []).map((card) => {
+                const isPinned = (myGiftsState?.showcaseGifts || []).includes(
+                  card.code
+                );
+                return (
+                  <div
+                    key={card.code}
+                    className="bg-[#070B17] border border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-4 transition-transform duration-150 hover:-translate-y-0.5"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span
+                          className={
+                            card.rarity === 'Mythic'
+                              ? 'text-amber-300 font-semibold'
+                              : card.rarity === 'Legendary'
+                                ? 'text-cyan-300 font-semibold'
+                                : card.rarity === 'Epic'
+                                  ? 'text-purple-300 font-semibold'
+                                  : card.rarity === 'Rare'
+                                    ? 'text-blue-300 font-semibold'
+                                    : 'text-slate-300'
+                          }
+                        >
+                          {card.rarity}
+                        </span>
+                        <span className="font-bold text-white tabular-nums">
+                          ×{card.receivedCount}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl select-none">
+                          {card.icon}
+                        </div>
+                        <div>
+                          <p className="font-display text-base font-bold text-white">
+                            {card.name} ×{card.receivedCount}
+                          </p>
+                          <p className="text-[11px] text-slate-400 tabular-nums">
+                            Total received: {card.receivedCount}
+                            {card.ownedInInventoryCount > 0
+                              ? ` · In bag: ×${card.ownedInInventoryCount}`
+                              : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-400 truncate">
+                        {card.mostRecentSender ? (
+                          <>
+                            Most recent:{' '}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onSelectUser(card.mostRecentSender!.id)
+                              }
+                              className="text-blue-400 hover:underline font-medium"
+                            >
+                              {card.mostRecentSender.displayName}
+                            </button>
+                          </>
+                        ) : (
+                          'Not received yet'
+                        )}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={updatingGiftSettings}
+                      onClick={() => handleToggleShowcaseGift(card.code)}
+                      className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-colors ${
+                        isPinned
+                          ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
+                          : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {isPinned ? '✨ Pinned in Showcase' : 'Pin to Showcase'}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 🔔 Gift Activity History */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+            <div>
+              <h3 className="font-display text-lg font-bold text-white">
+                🔔 Gift Activity
+              </h3>
+              <p className="text-xs text-slate-400">
+                Private chronological history of gifts you have received and
+                sent.
+              </p>
+            </div>
+
+            {!myGiftsState?.giftActivity ||
+            myGiftsState.giftActivity.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">
+                No gift activity yet. Visit B-Shop to send your first gift!
+              </p>
+            ) : (
+              <div className="divide-y divide-white/10">
+                {myGiftsState.giftActivity.map((act) => {
+                  const plural =
+                    act.quantity > 1
+                      ? act.itemName === 'Trophy'
+                        ? 'Trophies'
+                        : `${act.itemName}s`
+                      : act.itemName;
+                  return (
+                    <div
+                      key={act.id}
+                      className="py-3.5 flex items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-xl shrink-0">
+                          {act.itemIcon}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">
+                            {act.direction === 'received' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSelectUser(act.counterparty.id)
+                                  }
+                                  className="font-bold hover:text-blue-400"
+                                >
+                                  {act.counterparty.displayName}
+                                </button>{' '}
+                                sent you{' '}
+                                <span className="font-semibold text-purple-300">
+                                  {act.quantity > 1
+                                    ? `${act.quantity} ${plural}`
+                                    : `a ${act.itemName}`}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                You sent{' '}
+                                <span className="font-semibold text-purple-300">
+                                  {act.quantity > 1
+                                    ? `${act.quantity} ${plural}`
+                                    : `a ${act.itemName}`}
+                                </span>{' '}
+                                to{' '}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSelectUser(act.counterparty.id)
+                                  }
+                                  className="font-bold hover:text-blue-400"
+                                >
+                                  {act.counterparty.displayName}
+                                </button>
+                              </>
+                            )}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                            <span>{formatRelativeTime(act.createdAt)}</span>
+                            {act.message && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-slate-300 truncate">
+                                  “{act.message}”
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0 text-xs tabular-nums">
+                        {act.direction === 'received' ? (
+                          <span className="text-emerald-400 font-semibold">
+                            +{act.recognitionEarned} Gift Score
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">
+                            {act.bpSpent.toLocaleString()} BP
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* MODE 1: PROFILE CONTENT TABS + EMBEDDED CREATOR DASHBOARD */}
       {activeMainMode === 'profile' && (

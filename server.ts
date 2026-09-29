@@ -55,6 +55,10 @@ import {
   getPermanentMediaById,
   getAdminModerationData,
   executeAdminModerationAction,
+  getBShopAndUserGiftsState,
+  purchaseBShopItem,
+  sendGiftToCreator,
+  updateUserGiftSettings,
 } from './src/db/queries.ts';
 import {
   getPublicVapidKey,
@@ -866,6 +870,76 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       res.status(400).json({ error: 'Failed to unblock user.' });
+    }
+  });
+
+  // --- B-SHOP & GIFT ECONOMY ROUTES ---
+  app.get('/api/bshop/state', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const state = await getBShopAndUserGiftsState(req.user!.uid);
+      res.json(state);
+    } catch (error: any) {
+      res.status(500).json({
+        error: error.message || 'Failed to load B-Shop state.',
+      });
+    }
+  });
+
+  app.post('/api/bshop/buy', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { itemCode, quantity } = req.body;
+      const result = await purchaseBShopItem(
+        req.user!.uid,
+        String(itemCode || ''),
+        Number(quantity) || 1
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({
+        error: error.message || 'Could not complete B-Shop purchase.',
+      });
+    }
+  });
+
+  app.post('/api/bshop/send-gift', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { receiverId, itemCode, quantity, message, useInventory } = req.body;
+      const result = await sendGiftToCreator(
+        req.user!.uid,
+        String(receiverId || ''),
+        String(itemCode || ''),
+        Number(quantity) || 1,
+        String(message || ''),
+        Boolean(useInventory)
+      );
+      if (receiverId) {
+        broadcastRealtimeEvent(
+          'gift_received',
+          {
+            senderId: req.user!.uid,
+            receiverId,
+            itemCode,
+            quantity: Number(quantity) || 1,
+          },
+          [String(receiverId)]
+        );
+      }
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({
+        error: error.message || 'Could not send gift.',
+      });
+    }
+  });
+
+  app.put('/api/bshop/settings', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const updated = await updateUserGiftSettings(req.user!.uid, req.body || {});
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({
+        error: error.message || 'Could not update gift settings.',
+      });
     }
   });
 

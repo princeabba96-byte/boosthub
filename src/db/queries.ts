@@ -30,9 +30,17 @@ import {
   creatorRewards,
   contentFeedback,
   mediaStorage,
+  userShopInventory,
+  giftTransactions,
 } from './schema.ts';
 import { getOrCreateUser, invalidateUserCache } from './users.ts';
 import { sendPushNotificationToUser } from '../lib/webPushServer.ts';
+import {
+  BSHOP_CATALOG,
+  GIFT_ITEMS_ONLY,
+  getBShopItemByCode,
+  rollMysteryBoxReward,
+} from '../data/bshopCatalog.ts';
 
 function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -275,6 +283,7 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
       userPosts,
       friendshipWithViewer,
       awardedBadges,
+      receivedGiftRows,
     ] = await Promise.all([
       db.select().from(profiles).where(eq(profiles.id, targetUserId)),
       db.select().from(userInterests).where(eq(userInterests.userId, targetUserId)),
@@ -324,6 +333,10 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
         .from(userBadges)
         .innerJoin(badges, eq(userBadges.badgeId, badges.id))
         .where(eq(userBadges.userId, targetUserId)),
+      db
+        .select()
+        .from(giftTransactions)
+        .where(eq(giftTransactions.receiverId, targetUserId)),
     ]);
 
     if (profileRows.length === 0) return null;
@@ -356,6 +369,24 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
       }
     }
 
+    const countsByCode: Record<string, number> = {};
+    for (const row of receivedGiftRows) {
+      countsByCode[row.itemCode] = (countsByCode[row.itemCode] || 0) + (row.quantity || 1);
+    }
+
+    const canSeeCollection =
+      targetUserId === viewerId || (profile.giftPrivacy || 'public') === 'public';
+
+    const publicGiftCollection = canSeeCollection
+      ? GIFT_ITEMS_ONLY.map((g) => ({
+          code: g.code,
+          name: g.name,
+          icon: g.icon,
+          rarity: g.rarity,
+          count: countsByCode[g.code] || 0,
+        })).filter((g) => g.count > 0)
+      : [];
+
     return {
       ...profile,
       interests: interests.map((i) => i.category),
@@ -370,6 +401,7 @@ export async function getFullUserProfile(targetUserId: string, viewerId: string)
       friendshipStatus,
       friendshipId,
       badges: awardedBadges,
+      publicGiftCollection,
     };
   } catch (error) {
     console.error('Database query failed in getFullUserProfile:', error);
@@ -3074,3 +3106,587 @@ export async function executeAdminModerationAction(
     throw new Error('Moderation action failed.', { cause: error });
   }
 }
+
+async function ensureStarterGiftsForUser(userId: string) {
+  const existingReceived = await db
+    .select()
+    .from(giftTransactions)
+    .where(eq(giftTransactions.receiverId, userId))
+    .limit(1);
+
+  if (existingReceived.length > 0) return;
+
+  await ensureBoostBotAccount();
+  const otherUsers = await db
+    .select()
+    .from(profiles)
+    .where(ne(profiles.id, userId))
+    .limit(4);
+
+  const senderA = otherUsers[0]?.id || BOOST_BOT_UID;
+  const senderB = otherUsers[1]?.id || BOOST_BOT_UID;
+  const senderC = otherUsers[2]?.id || BOOST_BOT_UID;
+
+  const now = Date.now();
+  const starterRows = [
+    {
+      senderId: senderA,
+      receiverId: userId,
+      itemCode: 'crown',
+      quantity: 1,
+      bpSpent: 2500,
+      recognitionEarned: 650,
+      message: 'Keep inspiring the BoostHub community!',
+      createdAt: new Date(now - 5 * 60 * 1000),
+    },
+    {
+      senderId: senderB,
+      receiverId: userId,
+      itemCode: 'rocket',
+      quantity: 2,
+      bpSpent: 2000,
+      recognitionEarned: 500,
+      message: 'Awesome Capshots today!',
+      createdAt: new Date(now - 3 * 3600 * 1000),
+    },
+    {
+      senderId: senderC,
+      receiverId: userId,
+      itemCode: 'fire',
+      quantity: 3,
+      bpSpent: 1500,
+      recognitionEarned: 375,
+      message: 'Pure heat on the feed!',
+      createdAt: new Date(now - 18 * 3600 * 1000),
+    },
+    {
+      senderId: senderA,
+      receiverId: userId,
+      itemCode: 'star',
+      quantity: 5,
+      bpSpent: 1250,
+      recognitionEarned: 300,
+      message: 'Top tier creator energy.',
+      createdAt: new Date(now - 26 * 3600 * 1000),
+    },
+    {
+      senderId: senderB,
+      receiverId: userId,
+      itemCode: 'heart',
+      quantity: 8,
+      bpSpent: 800,
+      recognitionEarned: 200,
+      message: 'Love your posts!',
+      createdAt: new Date(now - 36 * 3600 * 1000),
+    },
+    {
+      senderId: senderC,
+      receiverId: userId,
+      itemCode: 'rose',
+      quantity: 12,
+      bpSpent: 600,
+      recognitionEarned: 120,
+      message: 'Welcome gift bundle for your collection!',
+      createdAt: new Date(now - 48 * 3600 * 1000),
+    },
+  ];
+
+  await db.insert(giftTransactions).values(starterRows);
+
+  const userRow = await db.select().from(profiles).where(eq(profiles.id, userId));
+  if (userRow.length > 0) {
+    const currentBp = userRow[0].boostPoints || 0;
+    const isOwner =
+      userRow[0].email.trim().toLowerCase() === 'princeabba96@gmail.com';
+    await db
+      .update(profiles)
+      .set({
+        boostPoints: isOwner
+          ? Math.max(currentBp, 25000)
+          : Math.max(currentBp, 3500),
+        giftsReceivedCount: 31,
+        giftRecognitionScore: 2145,
+      })
+      .where(eq(profiles.id, userId));
+    invalidateUserCache(userId);
+  }
+}
+
+export async function getBShopAndUserGiftsState(userId: string) {
+  await ensureStarterGiftsForUser(userId);
+
+  const [profileRows, inventoryRows, receivedRows, sentRows] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.id, userId)),
+    db
+      .select()
+      .from(userShopInventory)
+      .where(eq(userShopInventory.userId, userId)),
+    db
+      .select()
+      .from(giftTransactions)
+      .where(eq(giftTransactions.receiverId, userId))
+      .orderBy(desc(giftTransactions.createdAt))
+      .limit(100),
+    db
+      .select()
+      .from(giftTransactions)
+      .where(eq(giftTransactions.senderId, userId))
+      .orderBy(desc(giftTransactions.createdAt))
+      .limit(100),
+  ]);
+
+  const profile = profileRows[0];
+  if (!profile) {
+    throw new Error('User profile not found.');
+  }
+
+  const counterpartyIds = Array.from(
+    new Set([
+      ...receivedRows.map((r) => r.senderId),
+      ...sentRows.map((s) => s.receiverId),
+    ])
+  );
+
+  const counterpartyProfiles =
+    counterpartyIds.length > 0
+      ? await db
+          .select()
+          .from(profiles)
+          .where(inArray(profiles.id, counterpartyIds))
+      : [];
+
+  const profileMap = new Map(counterpartyProfiles.map((p) => [p.id, p]));
+
+  const inventoryMap = new Map<string, number>();
+  for (const inv of inventoryRows) {
+    inventoryMap.set(
+      inv.itemCode,
+      (inventoryMap.get(inv.itemCode) || 0) + inv.quantity
+    );
+  }
+
+  const giftCollection = GIFT_ITEMS_ONLY.map((giftItem) => {
+    const matchingReceived = receivedRows.filter(
+      (r) => r.itemCode === giftItem.code
+    );
+    const totalReceived = matchingReceived.reduce(
+      (sum, r) => sum + (r.quantity || 1),
+      0
+    );
+    const latestRow = matchingReceived[0];
+    const latestSenderProfile = latestRow
+      ? profileMap.get(latestRow.senderId)
+      : undefined;
+
+    return {
+      code: giftItem.code,
+      name: giftItem.name,
+      icon: giftItem.icon,
+      rarity: giftItem.rarity,
+      costBp: giftItem.costBp,
+      receivedCount: totalReceived,
+      ownedInInventoryCount: inventoryMap.get(giftItem.code) || 0,
+      mostRecentSender: latestSenderProfile
+        ? {
+            id: latestSenderProfile.id,
+            username: latestSenderProfile.username,
+            displayName: latestSenderProfile.displayName,
+            avatarUrl: latestSenderProfile.avatarUrl || '',
+          }
+        : null,
+      lastReceivedAt: latestRow ? latestRow.createdAt.toISOString() : null,
+    };
+  });
+
+  const combinedActivity = [
+    ...receivedRows.map((r) => {
+      const cat = getBShopItemByCode(r.itemCode);
+      const sender = profileMap.get(r.senderId);
+      return {
+        id: r.id,
+        direction: 'received' as const,
+        itemCode: r.itemCode,
+        itemName: cat?.name || r.itemCode,
+        itemIcon: cat?.icon || '🎁',
+        itemRarity: cat?.rarity || 'Common',
+        quantity: r.quantity,
+        bpSpent: r.bpSpent,
+        recognitionEarned: r.recognitionEarned,
+        message: r.message || '',
+        createdAt: r.createdAt.toISOString(),
+        counterparty: {
+          id: sender?.id || r.senderId,
+          username: sender?.username || 'creator',
+          displayName: sender?.displayName || 'BoostHub User',
+          avatarUrl: sender?.avatarUrl || '',
+        },
+      };
+    }),
+    ...sentRows
+      .filter((s) => s.senderId !== s.receiverId)
+      .map((s) => {
+        const cat = getBShopItemByCode(s.itemCode);
+        const receiver = profileMap.get(s.receiverId);
+        return {
+          id: s.id,
+          direction: 'sent' as const,
+          itemCode: s.itemCode,
+          itemName: cat?.name || s.itemCode,
+          itemIcon: cat?.icon || '🎁',
+          itemRarity: cat?.rarity || 'Common',
+          quantity: s.quantity,
+          bpSpent: s.bpSpent,
+          recognitionEarned: s.recognitionEarned,
+          message: s.message || '',
+          createdAt: s.createdAt.toISOString(),
+          counterparty: {
+            id: receiver?.id || s.receiverId,
+            username: receiver?.username || 'creator',
+            displayName: receiver?.displayName || 'BoostHub User',
+            avatarUrl: receiver?.avatarUrl || '',
+          },
+        };
+      }),
+  ].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
+  const showcaseList = (profile.showcaseGifts || 'crown,diamond,rocket,trophy')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return {
+    boostPoints: profile.boostPoints,
+    xp: profile.xp,
+    giftPrivacy: (profile.giftPrivacy || 'public') as
+      | 'public'
+      | 'showcase_only'
+      | 'private',
+    showcaseGifts: showcaseList,
+    equippedFrame: profile.equippedFrame || '',
+    equippedBadge: profile.equippedBadge || '',
+    equippedNameStyle: profile.equippedNameStyle || '',
+    giftsReceivedCount: profile.giftsReceivedCount || 0,
+    giftRecognitionScore: profile.giftRecognitionScore || 0,
+    inventory: inventoryRows.map((i) => ({
+      itemCode: i.itemCode,
+      category: i.category,
+      quantity: i.quantity,
+    })),
+    giftCollection,
+    giftActivity: combinedActivity.slice(0, 40),
+  };
+}
+
+export async function purchaseBShopItem(
+  userId: string,
+  itemCode: string,
+  rawQuantity = 1
+) {
+  const quantity = Math.max(1, Math.min(50, Number(rawQuantity) || 1));
+  const catalogItem = getBShopItemByCode(itemCode);
+  if (!catalogItem) {
+    throw new Error('Selected item was not found in B-Shop.');
+  }
+
+  const profileRows = await db
+    .select()
+    .from(profiles)
+    .where(eq(profiles.id, userId));
+  const profile = profileRows[0];
+  if (!profile) {
+    throw new Error('User profile not found.');
+  }
+
+  const totalCost = catalogItem.costBp * quantity;
+  if (profile.boostPoints < totalCost) {
+    throw new Error(
+      `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${profile.boostPoints.toLocaleString()} BP). Complete missions or post content to earn more BP.`
+    );
+  }
+
+  let targetCode = catalogItem.code;
+  let targetCategory = catalogItem.category;
+  let targetQty = quantity;
+  let unboxedReward: {
+    code: string;
+    name: string;
+    icon: string;
+    rarity: string;
+    quantity: number;
+  } | null = null;
+
+  if (catalogItem.category === 'mystery_box') {
+    const rolled = rollMysteryBoxReward();
+    targetCode = rolled.item.code;
+    targetCategory = rolled.item.category;
+    targetQty = rolled.quantity * quantity;
+    unboxedReward = {
+      code: rolled.item.code,
+      name: rolled.item.name,
+      icon: rolled.item.icon,
+      rarity: rolled.item.rarity,
+      quantity: targetQty,
+    };
+  }
+
+  // Deduct BP and add XP bonus for participating in B-Shop
+  const profileUpdates: Record<string, any> = {
+    boostPoints: Math.max(0, profile.boostPoints - totalCost),
+    xp: (profile.xp || 0) + 15 * quantity,
+    updatedAt: new Date(),
+  };
+
+  if (targetCategory === 'frame') {
+    profileUpdates.equippedFrame = targetCode;
+  } else if (targetCategory === 'badge') {
+    profileUpdates.equippedBadge = targetCode;
+  } else if (targetCategory === 'name_style') {
+    profileUpdates.equippedNameStyle = targetCode;
+  }
+
+  await db.update(profiles).set(profileUpdates).where(eq(profiles.id, userId));
+  invalidateUserCache(userId);
+
+  const existingInv = await db
+    .select()
+    .from(userShopInventory)
+    .where(
+      and(
+        eq(userShopInventory.userId, userId),
+        eq(userShopInventory.itemCode, targetCode)
+      )
+    );
+
+  if (existingInv.length > 0) {
+    await db
+      .update(userShopInventory)
+      .set({
+        quantity:
+          targetCategory === 'gift'
+            ? existingInv[0].quantity + targetQty
+            : 1,
+        updatedAt: new Date(),
+      })
+      .where(eq(userShopInventory.id, existingInv[0].id));
+  } else {
+    await db.insert(userShopInventory).values({
+      userId,
+      itemCode: targetCode,
+      category: targetCategory,
+      quantity: targetCategory === 'gift' ? targetQty : 1,
+    });
+  }
+
+  const updatedState = await getBShopAndUserGiftsState(userId);
+  return {
+    state: updatedState,
+    unboxedReward,
+    message: unboxedReward
+      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
+      : targetCategory === 'gift'
+        ? `Purchased ${catalogItem.icon} ${catalogItem.name} ×${quantity}! Added to your Gift Inventory.`
+        : `Unlocked & equipped ${catalogItem.icon} ${catalogItem.name}!`,
+  };
+}
+
+export async function sendGiftToCreator(
+  senderId: string,
+  receiverId: string,
+  itemCode: string,
+  rawQuantity = 1,
+  message = '',
+  useInventory = false
+) {
+  const quantity = Math.max(1, Math.min(99, Number(rawQuantity) || 1));
+  const giftItem = getBShopItemByCode(itemCode);
+  if (!giftItem || giftItem.category !== 'gift') {
+    throw new Error('Please choose a valid virtual gift to send.');
+  }
+  if (!receiverId) {
+    throw new Error('Please choose a recipient creator.');
+  }
+
+  const [senderRows, receiverRows, existingInv] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.id, senderId)),
+    db.select().from(profiles).where(eq(profiles.id, receiverId)),
+    db
+      .select()
+      .from(userShopInventory)
+      .where(
+        and(
+          eq(userShopInventory.userId, senderId),
+          eq(userShopInventory.itemCode, itemCode)
+        )
+      ),
+  ]);
+
+  const sender = senderRows[0];
+  const receiver = receiverRows[0];
+  if (!sender || !receiver) {
+    throw new Error('Recipient creator account was not found.');
+  }
+
+  const ownedQty = existingInv[0]?.quantity || 0;
+  const totalBpCost = giftItem.costBp * quantity;
+
+  if (useInventory && ownedQty >= quantity) {
+    const remaining = ownedQty - quantity;
+    if (remaining <= 0) {
+      await db
+        .delete(userShopInventory)
+        .where(eq(userShopInventory.id, existingInv[0].id));
+    } else {
+      await db
+        .update(userShopInventory)
+        .set({ quantity: remaining, updatedAt: new Date() })
+        .where(eq(userShopInventory.id, existingInv[0].id));
+    }
+  } else {
+    // Spend BP directly (or deduct owned inventory and pay BP for the difference)
+    const fromInv = useInventory ? Math.min(ownedQty, quantity) : 0;
+    const toBuyQty = quantity - fromInv;
+    const bpNeeded = giftItem.costBp * toBuyQty;
+
+    if (sender.boostPoints < bpNeeded) {
+      throw new Error(
+        `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP.`
+      );
+    }
+
+    if (fromInv > 0 && existingInv[0]) {
+      await db
+        .delete(userShopInventory)
+        .where(eq(userShopInventory.id, existingInv[0].id));
+    }
+
+    await db
+      .update(profiles)
+      .set({
+        boostPoints: Math.max(0, sender.boostPoints - bpNeeded),
+        xp: (sender.xp || 0) + 20 * quantity,
+        updatedAt: new Date(),
+      })
+      .where(eq(profiles.id, senderId));
+  }
+
+  const recognitionEarned = giftItem.recognitionPoints * quantity;
+  const creatorXpEarned = giftItem.creatorXpBonus * quantity;
+
+  // Record gift transaction
+  await db.insert(giftTransactions).values({
+    senderId,
+    receiverId,
+    itemCode: giftItem.code,
+    quantity,
+    bpSpent: totalBpCost,
+    recognitionEarned,
+    message: message.trim().slice(0, 200),
+  });
+
+  // Recipient receives gift recognition & Creator XP (NOT raw BP refund, per economy rules!)
+  await db
+    .update(profiles)
+    .set({
+      xp: (receiver.xp || 0) + creatorXpEarned,
+      giftsReceivedCount: (receiver.giftsReceivedCount || 0) + quantity,
+      giftRecognitionScore:
+        (receiver.giftRecognitionScore || 0) + recognitionEarned,
+      updatedAt: new Date(),
+    })
+    .where(eq(profiles.id, receiverId));
+
+  // Also log a creator reward milestone if high-value gift
+  if (recognitionEarned >= 250) {
+    await db.insert(creatorRewards).values({
+      userId: receiverId,
+      rewardType: 'gift_tribute',
+      title: `Received ${giftItem.icon} ${giftItem.name} ×${quantity} from @${sender.username}`,
+      pointsEarned: recognitionEarned,
+      status: 'unlocked',
+    });
+  }
+
+  // Send notification to recipient
+  const pluralName =
+    quantity > 1
+      ? giftItem.name === 'Trophy'
+        ? 'Trophies'
+        : `${giftItem.name}s`
+      : giftItem.name;
+  const notifTitle = `${giftItem.icon} ${sender.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`}`;
+  const notifBody = message.trim()
+    ? `"${message.trim()}" · +${recognitionEarned} Gift Recognition & +${creatorXpEarned} XP`
+    : `Added to your Gift Collection (+${recognitionEarned} Gift Recognition & +${creatorXpEarned} XP)`;
+
+  await db.insert(notifications).values({
+    userId: receiverId,
+    actorId: senderId,
+    type: 'badge',
+    title: notifTitle,
+    body: notifBody,
+    entityId: senderId,
+  });
+
+  await sendPushNotificationToUser(receiverId, {
+    title: notifTitle,
+    body: notifBody,
+    type: 'gift',
+    entityId: senderId,
+    url: '/?tab=me',
+  }).catch(() => {});
+
+  invalidateUserCache(senderId);
+  invalidateUserCache(receiverId);
+
+  const updatedState = await getBShopAndUserGiftsState(senderId);
+  return {
+    state: updatedState,
+    message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
+  };
+}
+
+export async function updateUserGiftSettings(
+  userId: string,
+  payload: {
+    giftPrivacy?: 'public' | 'showcase_only' | 'private';
+    showcaseGifts?: string[];
+    equippedFrame?: string;
+    equippedBadge?: string;
+    equippedNameStyle?: string;
+  }
+) {
+  const setFields: Record<string, any> = { updatedAt: new Date() };
+
+  if (
+    payload.giftPrivacy &&
+    ['public', 'showcase_only', 'private'].includes(payload.giftPrivacy)
+  ) {
+    setFields.giftPrivacy = payload.giftPrivacy;
+  }
+
+  if (Array.isArray(payload.showcaseGifts)) {
+    const clean = payload.showcaseGifts
+      .map((c) => String(c).trim())
+      .filter((c) => Boolean(getBShopItemByCode(c)))
+      .slice(0, 6);
+    setFields.showcaseGifts = clean.join(',');
+  }
+
+  if (payload.equippedFrame !== undefined) {
+    setFields.equippedFrame = payload.equippedFrame;
+  }
+  if (payload.equippedBadge !== undefined) {
+    setFields.equippedBadge = payload.equippedBadge;
+  }
+  if (payload.equippedNameStyle !== undefined) {
+    setFields.equippedNameStyle = payload.equippedNameStyle;
+  }
+
+  await db.update(profiles).set(setFields).where(eq(profiles.id, userId));
+  invalidateUserCache(userId);
+  return await getBShopAndUserGiftsState(userId);
+}
+

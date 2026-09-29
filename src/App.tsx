@@ -15,6 +15,7 @@ import { FriendsScreen } from './screens/FriendsScreen';
 import { CreatePostScreen } from './screens/CreatePostScreen';
 import { NotificationsScreen } from './screens/NotificationsScreen';
 import { ProfileScreen } from './screens/ProfileScreen';
+import { BShopScreen } from './screens/BShopScreen';
 import { CommentsDrawer } from './components/CommentsDrawer';
 import { ShareModal } from './components/ShareModal';
 import { SearchModal } from './components/SearchModal';
@@ -24,6 +25,10 @@ const BoostHubAppShell: React.FC = () => {
   const { userProfile, loading, isOffline, toasts } = useAuth();
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
+  const [profileInitialMode, setProfileInitialMode] = useState<
+    'profile' | 'dashboard' | 'gifts' | 'settings' | 'admin'
+  >('profile');
+  const [bshopRecipient, setBshopRecipient] = useState<UserProfile | null>(null);
   const [activeCommentPost, setActiveCommentPost] = useState<PostItem | null>(
     null
   );
@@ -38,9 +43,15 @@ const BoostHubAppShell: React.FC = () => {
     const tabParam = params.get('tab') as MainTab | null;
     if (
       tabParam &&
-      ['home', 'capshots', 'friends', 'create', 'notifications', 'me'].includes(
-        tabParam
-      )
+      [
+        'home',
+        'capshots',
+        'friends',
+        'bshop',
+        'create',
+        'notifications',
+        'me',
+      ].includes(tabParam)
     ) {
       setActiveTab(tabParam);
     }
@@ -86,12 +97,17 @@ const BoostHubAppShell: React.FC = () => {
 
   const handleSelectUser = (userId: string) => {
     setViewedUserId(userId);
+    setProfileInitialMode('profile');
     setActiveTab('me');
   };
 
   const handleChangeTab = (tab: MainTab) => {
     if (tab === 'me') {
       setViewedUserId(null);
+      setProfileInitialMode('profile');
+    }
+    if (tab === 'bshop') {
+      setBshopRecipient(null);
     }
     setActiveTab(tab);
   };
@@ -171,6 +187,18 @@ const BoostHubAppShell: React.FC = () => {
             />
           )}
 
+          {activeTab === 'bshop' && (
+            <BShopScreen
+              initialRecipient={bshopRecipient}
+              onSelectUser={handleSelectUser}
+              onGoToMyGifts={() => {
+                setViewedUserId(null);
+                setProfileInitialMode('gifts');
+                setActiveTab('me');
+              }}
+            />
+          )}
+
           {activeTab === 'create' && (
             <CreatePostScreen
               onPostCreated={() => {
@@ -186,13 +214,21 @@ const BoostHubAppShell: React.FC = () => {
           {activeTab === 'me' && (
             <ProfileScreen
               viewedUserId={viewedUserId}
-              onBackToMyProfile={() => setViewedUserId(null)}
+              initialMainMode={profileInitialMode}
+              onBackToMyProfile={() => {
+                setViewedUserId(null);
+                setProfileInitialMode('profile');
+              }}
               onSelectUser={handleSelectUser}
               onOpenComments={(post) => setActiveCommentPost(post)}
               onOpenShare={(post) => setActiveSharePost(post)}
               onOpenMessageWith={(partner) => {
                 setMessagePartner(partner);
                 setMessagesOpen(true);
+              }}
+              onOpenBShop={(recipient) => {
+                setBshopRecipient(recipient || null);
+                setActiveTab('bshop');
               }}
             />
           )}

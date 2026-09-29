@@ -8,6 +8,7 @@ import {
   User,
   Search,
   MessageSquare,
+  ShoppingBag,
 } from 'lucide-react';
 import { MainTab } from '../types';
 import { useAuth } from '../state/AuthContext';
@@ -69,6 +70,16 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
           }`}
         >
           Friends
+        </button>
+        <button
+          onClick={() => onChangeTab('bshop')}
+          className={`py-1 transition-colors whitespace-nowrap ${
+            activeTab === 'bshop'
+              ? 'text-white underline underline-offset-8 decoration-blue-500 decoration-2'
+              : 'hover:text-white'
+          }`}
+        >
+          B-Shop
         </button>
         <button
           onClick={() => onChangeTab('create')}
@@ -156,6 +167,7 @@ export const BottomNavigationBar: React.FC<{
     { id: 'home', label: 'Home', icon: Home },
     { id: 'capshots', label: 'Capshots', icon: PlaySquare },
     { id: 'friends', label: 'Friends', icon: Users },
+    { id: 'bshop', label: 'B-Shop', icon: ShoppingBag },
     { id: 'create', label: 'Create', icon: PlusSquare },
     {
       id: 'notifications',
@@ -167,7 +179,7 @@ export const BottomNavigationBar: React.FC<{
   ];
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-15 bg-[#080C1A]/95 backdrop-blur-md border-t border-white/10 grid grid-cols-6 items-center px-1">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-15 bg-[#080C1A]/95 backdrop-blur-md border-t border-white/10 grid grid-cols-7 items-center px-1">
       {items.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
@@ -222,6 +234,7 @@ export const DesktopLeftRail: React.FC<{
     { id: 'home', label: 'Home Feed', icon: Home },
     { id: 'capshots', label: 'Capshots', icon: PlaySquare },
     { id: 'friends', label: 'Friends & Communities', icon: Users },
+    { id: 'bshop', label: '🛍️ B-Shop', icon: ShoppingBag },
     { id: 'create', label: 'Create Post', icon: PlusSquare },
     {
       id: 'notifications',

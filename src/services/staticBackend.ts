@@ -1,4 +1,5 @@
 import {
+  BShopUserState,
   CommentItem,
   CommunityItem,
   ConversationSummary,
@@ -9,9 +10,26 @@ import {
   StoryItem,
   UserProfile,
 } from '../types';
+import {
+  GIFT_ITEMS_ONLY,
+  getBShopItemByCode,
+  rollMysteryBoxReward,
+} from '../data/bshopCatalog';
 import { showBrowserSystemNotification } from './pushNotifications';
 
 const STATIC_DB_KEY = 'boosthub_static_db_v1';
+
+interface StaticGiftTx {
+  id: number;
+  senderId: string;
+  receiverId: string;
+  itemCode: string;
+  quantity: number;
+  bpSpent: number;
+  recognitionEarned: number;
+  message: string;
+  createdAt: string;
+}
 
 interface StaticDbState {
   users: Record<string, UserProfile & { password?: string }>;
@@ -26,6 +44,11 @@ interface StaticDbState {
   likedPostIds: Record<string, number[]>;
   follows: Record<string, string[]>;
   blockedUsers: Record<string, string[]>;
+  shopInventory?: Record<
+    string,
+    Array<{ itemCode: string; category: string; quantity: number }>
+  >;
+  giftTransactions?: StaticGiftTx[];
   reports: Array<{
     id: number;
     reporterId: string;
@@ -643,9 +666,127 @@ export async function handleStaticBackendRequest<T = any>(
   const currentUserId = getUserIdFromToken(token, db);
   const currentUser = db.users[currentUserId] || db.users.creator_maya;
 
+  if (!db.shopInventory) db.shopInventory = {};
+  if (!db.giftTransactions) db.giftTransactions = [];
+
+  const ensureUserStarterGifts = (uid: string) => {
+    const hasReceived = db.giftTransactions!.some((t) => t.receiverId === uid);
+    if (hasReceived) return;
+    const now = Date.now();
+    const starterTxs: StaticGiftTx[] = [
+      {
+        id: now - 5000,
+        senderId: 'creator_maya',
+        receiverId: uid,
+        itemCode: 'crown',
+        quantity: 1,
+        bpSpent: 2500,
+        recognitionEarned: 650,
+        message: 'Keep inspiring the BoostHub community!',
+        createdAt: new Date(now - 5 * 60 * 1000).toISOString(),
+      },
+      {
+        id: now - 4000,
+        senderId: 'creator_devon',
+        receiverId: uid,
+        itemCode: 'rocket',
+        quantity: 2,
+        bpSpent: 2000,
+        recognitionEarned: 500,
+        message: 'Awesome Capshots today!',
+        createdAt: new Date(now - 3 * 3600 * 1000).toISOString(),
+      },
+      {
+        id: now - 3000,
+        senderId: 'creator_zara',
+        receiverId: uid,
+        itemCode: 'fire',
+        quantity: 3,
+        bpSpent: 1500,
+        recognitionEarned: 375,
+        message: 'Pure heat on the feed!',
+        createdAt: new Date(now - 18 * 3600 * 1000).toISOString(),
+      },
+      {
+        id: now - 2500,
+        senderId: 'creator_maya',
+        receiverId: uid,
+        itemCode: 'star',
+        quantity: 5,
+        bpSpent: 1250,
+        recognitionEarned: 300,
+        message: 'Top tier creator energy.',
+        createdAt: new Date(now - 26 * 3600 * 1000).toISOString(),
+      },
+      {
+        id: now - 2000,
+        senderId: 'creator_devon',
+        receiverId: uid,
+        itemCode: 'heart',
+        quantity: 8,
+        bpSpent: 800,
+        recognitionEarned: 200,
+        message: 'Love your posts!',
+        createdAt: new Date(now - 36 * 3600 * 1000).toISOString(),
+      },
+      {
+        id: now - 1000,
+        senderId: 'creator_zara',
+        receiverId: uid,
+        itemCode: 'rose',
+        quantity: 12,
+        bpSpent: 600,
+        recognitionEarned: 120,
+        message: 'Welcome gift bundle for your collection!',
+        createdAt: new Date(now - 48 * 3600 * 1000).toISOString(),
+      },
+    ];
+    db.giftTransactions!.unshift(...starterTxs);
+    const targetUser = db.users[uid];
+    if (targetUser) {
+      targetUser.boostPoints = Math.max(
+        targetUser.boostPoints || 0,
+        isStrictAdminEmail(targetUser.email) ? 25000 : 3500
+      );
+      targetUser.giftPrivacy = targetUser.giftPrivacy || 'public';
+      targetUser.showcaseGifts =
+        targetUser.showcaseGifts || 'crown,diamond,rocket,trophy';
+      targetUser.giftsReceivedCount = 31;
+      targetUser.giftRecognitionScore = 2145;
+    }
+    saveStaticDb(db);
+  };
+
+  const computePublicGiftCollection = (targetUid: string, viewerUid: string) => {
+    ensureUserStarterGifts(targetUid);
+    const targetProfile = db.users[targetUid];
+    const privacy = targetProfile?.giftPrivacy || 'public';
+    if (targetUid !== viewerUid && privacy !== 'public') {
+      return [];
+    }
+    const counts: Record<string, number> = {};
+    for (const tx of db.giftTransactions || []) {
+      if (tx.receiverId === targetUid) {
+        counts[tx.itemCode] = (counts[tx.itemCode] || 0) + (tx.quantity || 1);
+      }
+    }
+    return GIFT_ITEMS_ONLY.map((g) => ({
+      code: g.code,
+      name: g.name,
+      icon: g.icon,
+      rarity: g.rarity,
+      count: counts[g.code] || 0,
+    })).filter((g) => g.count > 0);
+  };
+
   // 2. Current User Profile
   if (pathname === '/api/me') {
     sanitizeUsersAdminStatus(db.users);
+    ensureUserStarterGifts(currentUser.id);
+    currentUser.publicGiftCollection = computePublicGiftCollection(
+      currentUser.id,
+      currentUser.id
+    );
     saveStaticDb(db);
     return currentUser as unknown as T;
   }
@@ -739,9 +880,348 @@ export async function handleStaticBackendRequest<T = any>(
     const isFollowing = (db.follows[currentUser.id] || []).includes(found.id);
     return {
       ...found,
+      publicGiftCollection: computePublicGiftCollection(
+        found.id,
+        currentUser.id
+      ),
       isFollowing,
       friendshipStatus: 'friends',
     } as unknown as T;
+  }
+
+  // 3b. B-Shop & Gift Economy Endpoints
+  const buildStaticBShopState = (uid: string): BShopUserState => {
+    ensureUserStarterGifts(uid);
+    const u = db.users[uid] || currentUser;
+    const userInv = db.shopInventory![uid] || [];
+    const invMap = new Map<string, number>();
+    userInv.forEach((item) => {
+      invMap.set(item.itemCode, (invMap.get(item.itemCode) || 0) + item.quantity);
+    });
+
+    const receivedTxs = (db.giftTransactions || []).filter(
+      (t) => t.receiverId === uid
+    );
+    const sentTxs = (db.giftTransactions || []).filter((t) => t.senderId === uid);
+
+    const giftCollection = GIFT_ITEMS_ONLY.map((giftItem) => {
+      const matching = receivedTxs.filter((r) => r.itemCode === giftItem.code);
+      const totalReceived = matching.reduce(
+        (sum, r) => sum + (r.quantity || 1),
+        0
+      );
+      const latest = matching[0];
+      const latestSender = latest ? db.users[latest.senderId] : undefined;
+      return {
+        code: giftItem.code,
+        name: giftItem.name,
+        icon: giftItem.icon,
+        rarity: giftItem.rarity,
+        costBp: giftItem.costBp,
+        receivedCount: totalReceived,
+        ownedInInventoryCount: invMap.get(giftItem.code) || 0,
+        mostRecentSender: latestSender
+          ? {
+              id: latestSender.id,
+              username: latestSender.username,
+              displayName: latestSender.displayName,
+              avatarUrl: latestSender.avatarUrl,
+            }
+          : null,
+        lastReceivedAt: latest ? latest.createdAt : null,
+      };
+    });
+
+    const giftActivity = [
+      ...receivedTxs.map((r) => {
+        const cat = getBShopItemByCode(r.itemCode);
+        const sender = db.users[r.senderId] || BOOST_BOT_PROFILE;
+        return {
+          id: r.id,
+          direction: 'received' as const,
+          itemCode: r.itemCode,
+          itemName: cat?.name || r.itemCode,
+          itemIcon: cat?.icon || '🎁',
+          itemRarity: cat?.rarity || 'Common',
+          quantity: r.quantity,
+          bpSpent: r.bpSpent,
+          recognitionEarned: r.recognitionEarned,
+          message: r.message || '',
+          createdAt: r.createdAt,
+          counterparty: {
+            id: sender.id,
+            username: sender.username,
+            displayName: sender.displayName,
+            avatarUrl: sender.avatarUrl,
+          },
+        };
+      }),
+      ...sentTxs
+        .filter((s) => s.senderId !== s.receiverId)
+        .map((s) => {
+          const cat = getBShopItemByCode(s.itemCode);
+          const receiver = db.users[s.receiverId] || BOOST_BOT_PROFILE;
+          return {
+            id: s.id,
+            direction: 'sent' as const,
+            itemCode: s.itemCode,
+            itemName: cat?.name || s.itemCode,
+            itemIcon: cat?.icon || '🎁',
+            itemRarity: cat?.rarity || 'Common',
+            quantity: s.quantity,
+            bpSpent: s.bpSpent,
+            recognitionEarned: s.recognitionEarned,
+            message: s.message || '',
+            createdAt: s.createdAt,
+            counterparty: {
+              id: receiver.id,
+              username: receiver.username,
+              displayName: receiver.displayName,
+              avatarUrl: receiver.avatarUrl,
+            },
+          };
+        }),
+    ].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    const showcaseList = (u.showcaseGifts || 'crown,diamond,rocket,trophy')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 6);
+
+    return {
+      boostPoints: u.boostPoints || 0,
+      xp: u.xp || 0,
+      giftPrivacy: u.giftPrivacy || 'public',
+      showcaseGifts: showcaseList,
+      equippedFrame: u.equippedFrame || '',
+      equippedBadge: u.equippedBadge || '',
+      equippedNameStyle: u.equippedNameStyle || '',
+      giftsReceivedCount: u.giftsReceivedCount || 0,
+      giftRecognitionScore: u.giftRecognitionScore || 0,
+      inventory: userInv,
+      giftCollection,
+      giftActivity: giftActivity.slice(0, 40),
+    };
+  };
+
+  if (pathname === '/api/bshop/state') {
+    return buildStaticBShopState(currentUser.id) as unknown as T;
+  }
+
+  if (pathname === '/api/bshop/buy' && method === 'POST') {
+    ensureUserStarterGifts(currentUser.id);
+    const quantity = Math.max(1, Math.min(50, Number(body.quantity) || 1));
+    const catalogItem = getBShopItemByCode(String(body.itemCode || ''));
+    if (!catalogItem) {
+      throw new Error('Selected item was not found in B-Shop.');
+    }
+    const totalCost = catalogItem.costBp * quantity;
+    if ((currentUser.boostPoints || 0) < totalCost) {
+      throw new Error(
+        `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${(currentUser.boostPoints || 0).toLocaleString()} BP).`
+      );
+    }
+
+    let targetCode = catalogItem.code;
+    let targetCategory = catalogItem.category;
+    let targetQty = quantity;
+    let unboxedReward: any = null;
+
+    if (catalogItem.category === 'mystery_box') {
+      const rolled = rollMysteryBoxReward();
+      targetCode = rolled.item.code;
+      targetCategory = rolled.item.category;
+      targetQty = rolled.quantity * quantity;
+      unboxedReward = {
+        code: rolled.item.code,
+        name: rolled.item.name,
+        icon: rolled.item.icon,
+        rarity: rolled.item.rarity,
+        quantity: targetQty,
+      };
+    }
+
+    currentUser.boostPoints = Math.max(
+      0,
+      (currentUser.boostPoints || 0) - totalCost
+    );
+    currentUser.xp = (currentUser.xp || 0) + 15 * quantity;
+
+    if (targetCategory === 'frame') {
+      currentUser.equippedFrame = targetCode;
+    } else if (targetCategory === 'badge') {
+      currentUser.equippedBadge = targetCode;
+    } else if (targetCategory === 'name_style') {
+      currentUser.equippedNameStyle = targetCode;
+    }
+
+    if (!db.shopInventory![currentUser.id]) {
+      db.shopInventory![currentUser.id] = [];
+    }
+    const existingEntry = db.shopInventory![currentUser.id].find(
+      (i) => i.itemCode === targetCode
+    );
+    if (existingEntry) {
+      existingEntry.quantity =
+        targetCategory === 'gift' ? existingEntry.quantity + targetQty : 1;
+    } else {
+      db.shopInventory![currentUser.id].push({
+        itemCode: targetCode,
+        category: targetCategory,
+        quantity: targetCategory === 'gift' ? targetQty : 1,
+      });
+    }
+
+    db.users[currentUser.id] = currentUser;
+    saveStaticDb(db);
+
+    return {
+      state: buildStaticBShopState(currentUser.id),
+      unboxedReward,
+      message: unboxedReward
+        ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
+        : targetCategory === 'gift'
+          ? `Purchased ${catalogItem.icon} ${catalogItem.name} ×${quantity}! Added to your Gift Inventory.`
+          : `Unlocked & equipped ${catalogItem.icon} ${catalogItem.name}!`,
+    } as unknown as T;
+  }
+
+  if (pathname === '/api/bshop/send-gift' && method === 'POST') {
+    ensureUserStarterGifts(currentUser.id);
+    const receiverId = String(body.receiverId || '');
+    const itemCode = String(body.itemCode || '');
+    const quantity = Math.max(1, Math.min(99, Number(body.quantity) || 1));
+    const message = String(body.message || '').trim();
+    const useInventory = Boolean(body.useInventory);
+
+    const giftItem = getBShopItemByCode(itemCode);
+    if (!giftItem || giftItem.category !== 'gift') {
+      throw new Error('Please choose a valid virtual gift to send.');
+    }
+    const receiver = db.users[receiverId];
+    if (!receiver) {
+      throw new Error('Recipient creator was not found.');
+    }
+
+    if (!db.shopInventory![currentUser.id]) {
+      db.shopInventory![currentUser.id] = [];
+    }
+    const invList = db.shopInventory![currentUser.id];
+    const invEntry = invList.find((i) => i.itemCode === itemCode);
+    const ownedQty = invEntry?.quantity || 0;
+
+    if (useInventory && ownedQty >= quantity) {
+      invEntry!.quantity -= quantity;
+      if (invEntry!.quantity <= 0) {
+        db.shopInventory![currentUser.id] = invList.filter(
+          (i) => i.itemCode !== itemCode
+        );
+      }
+    } else {
+      const fromInv = useInventory ? Math.min(ownedQty, quantity) : 0;
+      const toBuy = quantity - fromInv;
+      const bpNeeded = giftItem.costBp * toBuy;
+      if ((currentUser.boostPoints || 0) < bpNeeded) {
+        throw new Error(
+          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP.`
+        );
+      }
+      if (fromInv > 0) {
+        db.shopInventory![currentUser.id] = invList.filter(
+          (i) => i.itemCode !== itemCode
+        );
+      }
+      currentUser.boostPoints = Math.max(
+        0,
+        (currentUser.boostPoints || 0) - bpNeeded
+      );
+      currentUser.xp = (currentUser.xp || 0) + 20 * quantity;
+    }
+
+    const recognitionEarned = giftItem.recognitionPoints * quantity;
+    const creatorXpEarned = giftItem.creatorXpBonus * quantity;
+
+    db.giftTransactions!.unshift({
+      id: Date.now(),
+      senderId: currentUser.id,
+      receiverId: receiver.id,
+      itemCode: giftItem.code,
+      quantity,
+      bpSpent: giftItem.costBp * quantity,
+      recognitionEarned,
+      message: message.slice(0, 200),
+      createdAt: new Date().toISOString(),
+    });
+
+    // Economy Rule: recipient receives recognition & Creator XP, not raw BP refund
+    receiver.xp = (receiver.xp || 0) + creatorXpEarned;
+    receiver.giftsReceivedCount = (receiver.giftsReceivedCount || 0) + quantity;
+    receiver.giftRecognitionScore =
+      (receiver.giftRecognitionScore || 0) + recognitionEarned;
+
+    const pluralName =
+      quantity > 1
+        ? giftItem.name === 'Trophy'
+          ? 'Trophies'
+          : `${giftItem.name}s`
+        : giftItem.name;
+    const notifTitle = `${giftItem.icon} ${currentUser.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`}`;
+    const notifBody = message
+      ? `"${message}" · +${recognitionEarned} Gift Recognition & +${creatorXpEarned} XP`
+      : `Added to your Gift Collection (+${recognitionEarned} Gift Recognition & +${creatorXpEarned} XP)`;
+
+    db.notifications.unshift({
+      id: Date.now() + 1,
+      userId: receiver.id,
+      actorId: currentUser.id,
+      type: 'badge',
+      title: notifTitle,
+      body: notifBody,
+      entityId: currentUser.id,
+      isRead: false,
+      createdAt: new Date().toISOString(),
+      actor: currentUser,
+    });
+
+    db.users[currentUser.id] = currentUser;
+    db.users[receiver.id] = receiver;
+    saveStaticDb(db);
+
+    return {
+      state: buildStaticBShopState(currentUser.id),
+      message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
+    } as unknown as T;
+  }
+
+  if (pathname === '/api/bshop/settings' && method === 'PUT') {
+    if (
+      body.giftPrivacy &&
+      ['public', 'showcase_only', 'private'].includes(body.giftPrivacy)
+    ) {
+      currentUser.giftPrivacy = body.giftPrivacy;
+    }
+    if (Array.isArray(body.showcaseGifts)) {
+      currentUser.showcaseGifts = body.showcaseGifts
+        .map((c: any) => String(c).trim())
+        .filter((c: string) => Boolean(getBShopItemByCode(c)))
+        .slice(0, 6)
+        .join(',');
+    }
+    if (body.equippedFrame !== undefined) {
+      currentUser.equippedFrame = body.equippedFrame;
+    }
+    if (body.equippedBadge !== undefined) {
+      currentUser.equippedBadge = body.equippedBadge;
+    }
+    if (body.equippedNameStyle !== undefined) {
+      currentUser.equippedNameStyle = body.equippedNameStyle;
+    }
+    db.users[currentUser.id] = currentUser;
+    saveStaticDb(db);
+    return buildStaticBShopState(currentUser.id) as unknown as T;
   }
 
   // 4. Posts & Capshots

@@ -31,7 +31,14 @@ export const profiles = pgTable('profiles', {
   wantToWatch: text('want_to_watch').default(''),
   wantToCreate: text('want_to_create').default(''),
   xp: integer('xp').default(0).notNull(),
-  boostPoints: integer('boost_points').default(0).notNull(),
+  boostPoints: integer('boost_points').default(500).notNull(),
+  giftPrivacy: text('gift_privacy').default('public').notNull(), // 'public' | 'showcase_only' | 'private'
+  showcaseGifts: text('showcase_gifts').default('crown,diamond,rocket,trophy').notNull(),
+  equippedFrame: text('equipped_frame').default('').notNull(),
+  equippedBadge: text('equipped_badge').default('').notNull(),
+  equippedNameStyle: text('equipped_name_style').default('').notNull(),
+  giftsReceivedCount: integer('gifts_received_count').default(0).notNull(),
+  giftRecognitionScore: integer('gift_recognition_score').default(0).notNull(),
   whoCanMessage: text('who_can_message').default('everyone').notNull(), // 'everyone' | 'friends' | 'nobody'
   commentControl: text('comment_control').default('everyone').notNull(), // 'everyone' | 'followers' | 'nobody'
   isPrivate: boolean('is_private').default(false).notNull(),
@@ -384,6 +391,33 @@ export const pushSubscriptions = pgTable('push_subscriptions', {
   p256dh: text('p256dh').notNull(),
   auth: text('auth').notNull(),
   userAgent: text('user_agent').default(''),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+export const userShopInventory = pgTable('user_shop_inventory', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id')
+    .references(() => profiles.id)
+    .notNull(),
+  itemCode: text('item_code').notNull(),
+  category: text('category').default('gift').notNull(), // 'gift' | 'frame' | 'badge' | 'name_style'
+  quantity: integer('quantity').default(1).notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const giftTransactions = pgTable('gift_transactions', {
+  id: serial('id').primaryKey(),
+  senderId: text('sender_id')
+    .references(() => profiles.id)
+    .notNull(),
+  receiverId: text('receiver_id')
+    .references(() => profiles.id)
+    .notNull(),
+  itemCode: text('item_code').notNull(),
+  quantity: integer('quantity').default(1).notNull(),
+  bpSpent: integer('bp_spent').default(0).notNull(),
+  recognitionEarned: integer('recognition_earned').default(0).notNull(),
+  message: text('message').default('').notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 

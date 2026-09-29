@@ -25,9 +25,66 @@ export type MainTab =
   | 'home'
   | 'capshots'
   | 'friends'
+  | 'bshop'
   | 'create'
   | 'notifications'
   | 'me';
+
+export interface GiftCollectionCardItem {
+  code: string;
+  name: string;
+  icon: string;
+  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic';
+  costBp: number;
+  receivedCount: number;
+  ownedInInventoryCount: number;
+  mostRecentSender: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+  } | null;
+  lastReceivedAt: string | null;
+}
+
+export interface GiftActivityEntry {
+  id: number;
+  direction: 'received' | 'sent';
+  itemCode: string;
+  itemName: string;
+  itemIcon: string;
+  itemRarity: string;
+  quantity: number;
+  bpSpent: number;
+  recognitionEarned: number;
+  message: string;
+  createdAt: string;
+  counterparty: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+  };
+}
+
+export interface BShopUserState {
+  boostPoints: number;
+  xp: number;
+  giftPrivacy: 'public' | 'showcase_only' | 'private';
+  showcaseGifts: string[];
+  equippedFrame: string;
+  equippedBadge: string;
+  equippedNameStyle: string;
+  giftsReceivedCount: number;
+  giftRecognitionScore: number;
+  inventory: Array<{
+    itemCode: string;
+    category: string;
+    quantity: number;
+  }>;
+  giftCollection: GiftCollectionCardItem[];
+  giftActivity: GiftActivityEntry[];
+}
 
 export interface UserBadge {
   id: number;
@@ -57,6 +114,20 @@ export interface UserProfile {
   wantToCreate: string;
   xp: number;
   boostPoints: number;
+  giftPrivacy?: 'public' | 'showcase_only' | 'private';
+  showcaseGifts?: string;
+  equippedFrame?: string;
+  equippedBadge?: string;
+  equippedNameStyle?: string;
+  giftsReceivedCount?: number;
+  giftRecognitionScore?: number;
+  publicGiftCollection?: Array<{
+    code: string;
+    name: string;
+    icon: string;
+    rarity: string;
+    count: number;
+  }>;
   whoCanMessage: 'everyone' | 'friends' | 'nobody';
   commentControl: 'everyone' | 'followers' | 'nobody';
   isPrivate: boolean;
