@@ -1,5 +1,5 @@
 {
-  "packageId": "app.boosthub.twa",
+  "packageId": "app.boosthub.social",
   "host": "princeabba96-byte.github.io",
   "name": "BoostHub",
   "launcherName": "BoostHub",
@@ -20,8 +20,8 @@
     "path": "./android.keystore",
     "alias": "boosthub-key"
   },
-  "appVersionName": "1.0.0",
-  "appVersionCode": 1,
+  "appVersionName": "1.0.1",
+  "appVersionCode": 2,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://princeabba96-byte.github.io/boosthub/manifest.json",
@@ -34,12 +34,8 @@
       "enabled": false
     }
   },
-  "alphaDependencies": {
-    "enabled": false
-  },
   "enableSiteSettingsShortcut": true,
   "isChromeOSOnly": false,
-  "isMetaQuest": false,
   "fullScopeUrl": "https://princeabba96-byte.github.io/boosthub/",
   "minSdkVersion": 21,
   "orientation": "portrait",

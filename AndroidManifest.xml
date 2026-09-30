@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="app.boosthub.social">
+
+    <!-- BoostHub is a Social & Creator Platform (Capshots, Stories, Messaging, B-Shop). -->
+    <!-- Explicitly strip any ARCore / Google Play Services for AR requirements so APK installs on all Android devices -->
+    <uses-feature
+        android:name="android.hardware.camera.ar"
+        android:required="false"
+        tools:node="remove" />
+    <uses-feature
+        android:name="com.google.ar.core.depth"
+        android:required="false"
+        tools:node="remove" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="true"
+        android:label="BoostHub"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.NoTitleBar">
+
+        <!-- Ensure com.google.ar.core metadata is never merged into the APK -->
+        <meta-data
+            android:name="com.google.ar.core"
+            tools:node="remove" />
+
+        <meta-data
+            android:name="asset_statements"
+            android:resource="@string/asset_statements" />
+
+        <activity
+            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:exported="true"
+            android:label="BoostHub"
+            android:screenOrientation="portrait">
+            <meta-data
+                android:name="android.support.customtabs.trusted.DEFAULT_URL"
+                android:value="https://princeabba96-byte.github.io/boosthub/" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
+                android:resource="@color/colorPrimary" />
+            <meta-data
+                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
+                android:resource="@color/navigationColor" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="princeabba96-byte.github.io"
+                    android:pathPrefix="/boosthub" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

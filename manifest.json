@@ -1,16 +1,15 @@
 {
-  "id": "/",
+  "id": "./",
   "name": "BoostHub",
   "short_name": "BoostHub",
-  "description": "BoostHub Social & Creator Platform — Capshots short videos, stories, real-time messaging, B-Shop virtual gifts, and creator missions.",
+  "description": "BoostHub — Social & Creator Platform featuring Capshots, 24-hour stories, real-time messaging, and B-Shop.",
   "display": "standalone",
-  "display_override": ["standalone", "window-controls-overlay"],
   "orientation": "portrait",
   "background_color": "#0A0A0A",
   "theme_color": "#0A84FF",
   "start_url": "./",
   "scope": "./",
-  "categories": ["social", "entertainment", "photo", "video"],
+  "categories": ["social"],
   "prefer_related_applications": false,
   "icons": [
     {
