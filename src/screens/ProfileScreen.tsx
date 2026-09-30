@@ -1640,15 +1640,24 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 >
                   <span>Install PWA App</span>
                 </button>
+                <a
+                  href="./BoostHub.apk"
+                  download="BoostHub.apk"
+                  className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>⬇ Download APK</span>
+                </a>
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard?.writeText('https://da.gd/boosthub');
-                    showToast('Short PWA link (https://da.gd/boosthub) copied!', 'success');
+                    navigator.clipboard?.writeText(
+                      'https://princeabba96-byte.github.io/boosthub/BoostHub.apk'
+                    );
+                    showToast('Direct APK download link copied!', 'success');
                   }}
                   className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
                 >
-                  Copy Short Link
+                  Copy APK Link
                 </button>
               </div>
             </div>
