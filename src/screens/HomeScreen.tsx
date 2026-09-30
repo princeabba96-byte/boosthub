@@ -10,6 +10,7 @@ import {
   Target,
   CheckCircle2,
   PlusSquare,
+  Play,
 } from 'lucide-react';
 import {
   PostItem,
@@ -193,43 +194,101 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             </button>
           </div>
 
-          <div className="flex items-center gap-4 overflow-x-auto no-scrollbar pb-1">
-            {/* Create Story Trigger */}
+          <div className="flex items-stretch gap-3 overflow-x-auto no-scrollbar pb-1">
+            {/* Create Story Trigger Card */}
             <button
               onClick={() => setCreatingStory(true)}
-              className="flex flex-col items-center gap-1.5 shrink-0 group"
+              className="relative w-[112px] sm:w-[122px] h-[184px] rounded-2xl overflow-hidden bg-[#11182E] border border-white/10 hover:border-blue-500/50 shrink-0 group flex flex-col justify-between text-left transition-all"
             >
-              <div className="relative">
-                <Avatar
-                  src={userProfile?.avatarUrl}
-                  name={userProfile?.displayName}
-                  size="lg"
-                />
-                <span className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center ring-2 ring-[#0B1021]">
-                  <Plus className="w-3.5 h-3.5" />
+              <div className="relative flex-1 w-full bg-gradient-to-b from-blue-600/20 via-[#0B1021] to-[#0B1021] flex items-center justify-center overflow-hidden">
+                {userProfile?.avatarUrl ? (
+                  <img
+                    src={userProfile.avatarUrl}
+                    alt={userProfile.displayName}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover opacity-85 group-hover:scale-105 transition-transform duration-300"
+                  />
+                ) : (
+                  <Avatar
+                    src={userProfile?.avatarUrl}
+                    name={userProfile?.displayName}
+                    size="lg"
+                  />
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-[#0B1021] via-transparent to-transparent" />
+              </div>
+
+              <div className="relative z-10 px-2.5 pb-3 pt-4 bg-[#0B1021] flex flex-col items-center text-center">
+                <span className="-mt-7 mb-1.5 w-8 h-8 rounded-full bg-blue-600 group-hover:bg-blue-500 text-white flex items-center justify-center ring-4 ring-[#0B1021] shadow-md transition-colors">
+                  <Plus className="w-4 h-4 stroke-[2.5]" />
+                </span>
+                <span className="text-[11px] font-semibold text-white truncate w-full">
+                  Create Story
                 </span>
               </div>
-              <span className="text-[11px] font-medium text-slate-300 group-hover:text-white truncate max-w-[68px]">
-                Your Story
-              </span>
             </button>
 
+            {/* Rectangular Story Content Cards */}
             {stories.map((story, idx) => (
               <button
                 key={story.id}
                 onClick={() => setViewerStoryIndex(idx)}
-                className="flex flex-col items-center gap-1.5 shrink-0 group"
+                className={`relative w-[112px] sm:w-[122px] h-[184px] rounded-2xl overflow-hidden shrink-0 group text-left border transition-all ${
+                  story.hasViewed
+                    ? 'border-white/15 hover:border-white/30'
+                    : 'border-blue-500/80 shadow-[0_0_16px_rgba(10,132,255,0.25)] hover:border-cyan-400'
+                }`}
               >
-                <Avatar
-                  src={story.author.avatarUrl}
-                  name={story.author.displayName}
-                  size="lg"
-                  hasStory
-                  storyViewed={story.hasViewed}
-                />
-                <span className="text-[11px] font-medium text-slate-300 group-hover:text-white truncate max-w-[68px]">
-                  {story.author.displayName}
-                </span>
+                {/* Story Content Preview (Picture shows normal; Video shows preview frame and plays when tapped) */}
+                {story.mediaType === 'video' ? (
+                  <>
+                    <video
+                      src={story.mediaUrl}
+                      muted
+                      playsInline
+                      preload="metadata"
+                      className="w-full h-full object-cover bg-black group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <span className="w-9 h-9 rounded-full bg-black/55 backdrop-blur-sm border border-white/25 text-white flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
+                        <Play className="w-4 h-4 fill-white ml-0.5" />
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <img
+                    src={story.mediaUrl}
+                    alt={story.caption || `${story.author.displayName}'s story`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover bg-black group-hover:scale-105 transition-transform duration-300"
+                  />
+                )}
+
+                {/* Subtle top & bottom gradient for readability */}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/80 pointer-events-none" />
+
+                {/* Normal Profile Picture Avatar in Top-Left */}
+                <div className="absolute top-2.5 left-2.5 z-10">
+                  <Avatar
+                    src={story.author.avatarUrl}
+                    name={story.author.displayName}
+                    size="sm"
+                    hasStory
+                    storyViewed={story.hasViewed}
+                  />
+                </div>
+
+                {/* Author Name & Optional Caption at Bottom */}
+                <div className="absolute bottom-2.5 left-2.5 right-2.5 z-10">
+                  <p className="text-[11px] font-semibold text-white truncate drop-shadow">
+                    {story.author.displayName}
+                  </p>
+                  {story.caption && (
+                    <p className="text-[10px] text-slate-200/90 truncate mt-0.5 drop-shadow">
+                      {story.caption}
+                    </p>
+                  )}
+                </div>
               </button>
             ))}
           </div>

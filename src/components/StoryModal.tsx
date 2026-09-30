@@ -36,12 +36,23 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   const [progress, setProgress] = useState(0);
   const [replyText, setReplyText] = useState('');
   const [showViewers, setShowViewers] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const currentStory = stories[currentIndex];
+
+  const advanceToNextStory = () => {
+    if (currentIndex < stories.length - 1) {
+      setCurrentIndex((i) => i + 1);
+      setProgress(0);
+    } else {
+      onClose();
+    }
+  };
 
   useEffect(() => {
     if (!currentStory) return;
     setProgress(0);
+    setPaused(false);
     apiFetch(`/api/stories/${currentStory.id}/interact`, {
       method: 'POST',
       body: JSON.stringify({ action: 'view' }),
@@ -49,7 +60,16 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   }, [currentStory]);
 
   useEffect(() => {
-    if (!currentStory || paused || showViewers) return;
+    if (!currentStory || currentStory.mediaType !== 'video' || !videoRef.current) return;
+    if (paused || showViewers) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play().catch(() => {});
+    }
+  }, [currentStory, paused, showViewers]);
+
+  useEffect(() => {
+    if (!currentStory || paused || showViewers || currentStory.mediaType === 'video') return;
     const interval = setInterval(() => {
       setProgress((prev) => {
         if (prev >= 100) {
@@ -183,15 +203,25 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
         <div className="relative flex-1 flex items-center justify-center bg-black overflow-hidden">
           {currentStory.mediaType === 'video' ? (
             <video
+              ref={videoRef}
+              key={currentStory.id}
               src={currentStory.mediaUrl}
               autoPlay
               playsInline
-              loop
               muted={false}
-              className="w-full h-full object-contain"
+              onClick={() => setPaused((p) => !p)}
+              onTimeUpdate={(e) => {
+                const vid = e.currentTarget;
+                if (vid.duration && Number.isFinite(vid.duration)) {
+                  setProgress(Math.min(100, (vid.currentTime / vid.duration) * 100));
+                }
+              }}
+              onEnded={advanceToNextStory}
+              className="w-full h-full object-contain cursor-pointer"
             />
           ) : (
             <img
+              key={currentStory.id}
               src={currentStory.mediaUrl}
               alt={currentStory.caption || 'Story'}
               referrerPolicy="no-referrer"
