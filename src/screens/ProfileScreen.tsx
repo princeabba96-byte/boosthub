@@ -1582,6 +1582,77 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               </label>
             </div>
 
+            {/* Install BoostHub as Standalone PWA Card (Inside Settings, off the Home Page) */}
+            <div className="p-4 rounded-2xl bg-[#0A0A0A] border border-[#0A84FF]/35 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <img
+                  src="./icons/icon-192x192.png"
+                  alt="BoostHub PWA"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = './icon.svg';
+                  }}
+                  className="w-11 h-11 rounded-2xl border border-[#00E5FF]/40 shadow-[0_0_16px_rgba(10,132,255,0.4)] shrink-0 object-cover"
+                />
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-white">
+                    BoostHub Progressive Web App (PWA) ·{' '}
+                    <span className="text-[#00E5FF]">
+                      {typeof window !== 'undefined' &&
+                      (window.matchMedia('(display-mode: standalone)').matches ||
+                        (window.navigator as any).standalone === true)
+                        ? 'Installed (Standalone Mode)'
+                        : 'Ready to Install'}
+                    </span>
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Install BoostHub directly onto your phone or desktop home screen as a standalone full-screen app (no ARCore required).
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const deferred = (window as any).__deferredPwaPrompt;
+                    if (deferred) {
+                      try {
+                        await deferred.prompt();
+                        const choice = await deferred.userChoice;
+                        if (choice?.outcome === 'accepted') {
+                          (window as any).__deferredPwaPrompt = null;
+                          showToast('BoostHub PWA installed on your device!', 'success');
+                        }
+                      } catch {
+                        showToast(
+                          'Tap your browser menu (⋮ or Share) → "Add to Home Screen" / "Install App".',
+                          'info'
+                        );
+                      }
+                    } else {
+                      showToast(
+                        'Open https://da.gd/boosthub in Chrome/Safari and tap "Install App" or "Add to Home Screen"!',
+                        'info'
+                      );
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_0_16px_rgba(10,132,255,0.35)]"
+                >
+                  <span>Install PWA App</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText('https://da.gd/boosthub');
+                    showToast('Short PWA link (https://da.gd/boosthub) copied!', 'success');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
+                >
+                  Copy Short Link
+                </button>
+              </div>
+            </div>
+
             {/* Background Web Push Device Subscription Card */}
             <div className="p-4 rounded-2xl bg-[#111830] border border-blue-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="space-y-1">
