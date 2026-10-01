@@ -10,12 +10,14 @@ import {
   setAuthToken,
   getAuthToken,
   setCachedProfile,
+  updateCachedPostStats,
 } from '../services/api';
 import {
   showBrowserSystemNotification,
   enableBackgroundPushNotifications,
 } from '../services/pushNotifications';
 import { supabase, ADMIN_ABBA_UUID } from '../lib/supabase';
+import { mapSupabaseRowToUserProfile } from '../services/staticBackend';
 import { UserProfile } from '../types';
 
 interface ToastMessage {
@@ -85,8 +87,24 @@ function normalizeUserAdminState(
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [userProfile, setUserProfileState] = useState<UserProfile | null>(() =>
+    normalizeUserAdminState(
+      mapSupabaseRowToUserProfile({
+        id: ADMIN_ABBA_UUID,
+        username: 'Abba',
+        display_name: 'Prince Abba',
+        xp: 100200,
+        followers: 1400,
+        likes: 4200,
+        views: 18500,
+        engagement: 310,
+        boost_points: 999999999,
+        is_admin: true,
+        creator_of_week: true,
+      })
+    )
+  );
+  const [loading, setLoading] = useState<boolean>(false);
   const [isOffline, setIsOffline] = useState<boolean>(
     typeof navigator !== 'undefined' ? !navigator.onLine : false
   );
@@ -176,10 +194,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     const loadInitialSupabaseSession = async () => {
       try {
-        const { data: authData } = await supabase.auth.getUser();
-        if (authData?.user?.id) {
-          setAuthToken(`sb_user_${authData.user.id}`);
-        } else if (!getAuthToken()) {
+        if (!getAuthToken()) {
           setAuthToken(`sb_user_${ADMIN_ABBA_UUID}`);
         }
 
@@ -202,12 +217,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     loadInitialSupabaseSession();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      (_event, session) => {
         if (session?.user?.id) {
-          setAuthToken(`sb_user_${session.user.id}`);
-          const profile = await apiFetch<UserProfile>('/api/me');
-          if (isMounted) setUserProfile(profile);
-          refreshBadgesCount();
+          window.setTimeout(async () => {
+            setAuthToken(`sb_user_${session.user.id}`);
+            try {
+              const profile = await apiFetch<UserProfile>('/api/me');
+              if (isMounted) setUserProfile(profile);
+              refreshBadgesCount();
+            } catch {
+              // ignore
+            }
+          }, 0);
         }
       }
     );
@@ -240,7 +261,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     };
 
     const channel = supabase
-      .channel('boosthub-global-realtime')
+      .channel('boosthub-global-realtime', {
+        config: { broadcast: { self: false } },
+      })
+      .on('broadcast', { event: 'sync' }, (msg) => {
+        const data = msg?.payload || {};
+        if (data.type === 'post_comment' && data.postId) {
+          if (typeof data.commentsCount === 'number') {
+            updateCachedPostStats(data.postId, {
+              commentsCount: data.commentsCount,
+            });
+          }
+          pushEvent('post_comment', data);
+          refreshBadgesCount();
+        } else if (data.type === 'post_like' && data.postId) {
+          if (typeof data.likesCount === 'number') {
+            updateCachedPostStats(data.postId, {
+              likesCount: data.likesCount,
+            });
+          }
+          pushEvent('post_like', data);
+          refreshProfile();
+          refreshBadgesCount();
+        }
+      })
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },
@@ -267,7 +311,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'post_comments' },
         (payload) => {
-          pushEvent('post_comment', payload.new);
+          pushEvent('post_comment', payload.new || payload.old);
+          refreshBadgesCount();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'comments' },
+        (payload) => {
+          pushEvent('post_comment', payload.new || payload.old);
           refreshBadgesCount();
         }
       )
@@ -275,7 +327,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         'postgres_changes',
         { event: '*', schema: 'public', table: 'post_likes' },
         (payload) => {
-          pushEvent('post_like', payload.new);
+          pushEvent('post_like', payload.new || payload.old);
           refreshProfile();
           refreshBadgesCount();
         }

@@ -17,7 +17,7 @@ import {
   Plus,
 } from 'lucide-react';
 import { PostItem, MainTab } from '../types';
-import { apiFetch } from '../services/api';
+import { apiFetch, updateCachedPostStats } from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { formatCompactNumber } from '../utils/format';
@@ -40,7 +40,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   onSelectUser,
   onChangeTab,
 }) => {
-  const { userProfile, showToast } = useAuth();
+  const { userProfile, realtimeEvents, showToast } = useAuth();
   const [capshots, setCapshots] = useState<PostItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -61,6 +61,40 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    const handlePostStatSync = (e: Event) => {
+      const custom = e as CustomEvent<{
+        postId: string;
+        patch: Partial<PostItem>;
+      }>;
+      if (!custom.detail) return;
+      const { postId, patch } = custom.detail;
+      setCapshots((prev) =>
+        prev.map((c) => (String(c.id) === String(postId) ? { ...c, ...patch } : c))
+      );
+    };
+    window.addEventListener('boosthub:post-updated', handlePostStatSync);
+    return () => {
+      window.removeEventListener('boosthub:post-updated', handlePostStatSync);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (realtimeEvents.length === 0) return;
+    const latest = realtimeEvents[realtimeEvents.length - 1];
+    if (
+      latest.type === 'post_like' ||
+      latest.type === 'post_comment' ||
+      latest.type === 'posts_changed'
+    ) {
+      apiFetch<PostItem[]>('/api/capshots?limit=30&offset=0')
+        .then((list) => {
+          setCapshots(list);
+        })
+        .catch(() => {});
+    }
+  }, [realtimeEvents]);
 
   const currentVideo = capshots[currentIndex];
   const nextVideo = capshots[currentIndex + 1];
@@ -128,6 +162,9 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
     const prevLiked = currentVideo.isLiked;
     const prevCount = currentVideo.likesCount;
     const nextLiked = !prevLiked;
+    const optimisticCount = nextLiked
+      ? prevCount + 1
+      : Math.max(0, prevCount - 1);
 
     setCapshots((list) =>
       list.map((item, idx) =>
@@ -135,33 +172,40 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
           ? {
               ...item,
               isLiked: nextLiked,
-              likesCount: nextLiked ? prevCount + 1 : Math.max(0, prevCount - 1),
+              likesCount: optimisticCount,
             }
           : item
       )
     );
+    updateCachedPostStats(currentVideo.id, {
+      isLiked: nextLiked,
+      likesCount: optimisticCount,
+    });
 
     try {
       const res = await apiFetch<{ liked?: boolean; likesCount?: number }>(
         `/api/posts/${currentVideo.id}/like`,
         { method: 'POST' }
       );
+      const finalLiked =
+        typeof res?.liked === 'boolean' ? res.liked : nextLiked;
+      const finalCount =
+        typeof res?.likesCount === 'number' ? res.likesCount : optimisticCount;
       setCapshots((list) =>
         list.map((item, idx) =>
           idx === currentIndex
             ? {
                 ...item,
-                isLiked: typeof res?.liked === 'boolean' ? res.liked : nextLiked,
-                likesCount:
-                  typeof res?.likesCount === 'number'
-                    ? res.likesCount
-                    : nextLiked
-                      ? prevCount + 1
-                      : Math.max(0, prevCount - 1),
+                isLiked: finalLiked,
+                likesCount: finalCount,
               }
             : item
         )
       );
+      updateCachedPostStats(currentVideo.id, {
+        isLiked: finalLiked,
+        likesCount: finalCount,
+      });
     } catch {
       setCapshots((list) =>
         list.map((item, idx) =>
@@ -170,6 +214,10 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
             : item
         )
       );
+      updateCachedPostStats(currentVideo.id, {
+        isLiked: prevLiked,
+        likesCount: prevCount,
+      });
     } finally {
       likeBusyRef.current = false;
     }

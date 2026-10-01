@@ -241,6 +241,18 @@ export async function ensureAdminUserSeededInSupabase(): Promise<void> {
 }
 
 async function resolveCurrentUserId(token: string | null): Promise<string> {
+  if (token && token.startsWith('sb_user_')) {
+    const rawId = token.replace('sb_user_', '').trim();
+    if (
+      !rawId ||
+      rawId === 'bh_5c82dc8e3aa243a28413' ||
+      rawId.toLowerCase() === 'abba'
+    ) {
+      return ADMIN_ABBA_UUID;
+    }
+    return rawId;
+  }
+
   try {
     const { data } = await supabase.auth.getUser();
     if (data?.user?.id) {
@@ -248,17 +260,6 @@ async function resolveCurrentUserId(token: string | null): Promise<string> {
     }
   } catch {
     // ignore
-  }
-
-  if (token && token.startsWith('sb_user_')) {
-    const rawId = token.replace('sb_user_', '');
-    if (
-      rawId === 'bh_5c82dc8e3aa243a28413' ||
-      rawId.toLowerCase() === 'abba'
-    ) {
-      return ADMIN_ABBA_UUID;
-    }
-    return rawId;
   }
 
   return ADMIN_ABBA_UUID;
@@ -365,20 +366,25 @@ function mapSupabasePostToPostItem(
 
   const postIdStr = String(row.id);
   const postLikes = likesRows.filter((l) => String(l.post_id) === postIdStr);
+  const uniqueLikedUsers = new Set(
+    postLikes.map((l) => normalizeTargetUserId(String(l.user_id || '')))
+  );
   const postComments = commentsRows.filter(
     (c) => String(c.post_id) === postIdStr
   );
+  const uniqueCommentIds = new Set(postComments.map((c) => String(c.id)));
   const postShares = sharesRows.filter((s) => String(s.post_id) === postIdStr);
   const postSaves = savesRows.filter((s) => String(s.post_id) === postIdStr);
 
-  const dbLikes = Number(row.likes || 0);
-  const likesCount = Math.max(dbLikes, postLikes.length);
-  const isLiked = postLikes.some((l) => String(l.user_id) === currentUserId);
-  const isSaved = postSaves.some((s) => String(s.user_id) === currentUserId);
+  const likesCount = uniqueLikedUsers.size;
+  const isLiked = uniqueLikedUsers.has(currentUserId);
+  const isSaved = postSaves.some(
+    (s) => normalizeTargetUserId(String(s.user_id || '')) === currentUserId
+  );
   const isFollowingAuthor = followsRows.some(
     (f) =>
-      String(f.follower_id) === currentUserId &&
-      String(f.following_id) === authorId
+      normalizeTargetUserId(String(f.follower_id || '')) === currentUserId &&
+      normalizeTargetUserId(String(f.following_id || '')) === authorId
   );
 
   return {
@@ -418,7 +424,7 @@ function mapSupabasePostToPostItem(
       role: isAbbaAuthor || authorRow?.is_admin ? 'admin' : 'creator',
     },
     likesCount,
-    commentsCount: postComments.length,
+    commentsCount: uniqueCommentIds.size,
     sharesCount: postShares.length,
     savesCount: postSaves.length,
     isLiked,
@@ -1022,63 +1028,102 @@ export async function handleStaticBackendRequest<T = any>(
         .eq('id', authorId)
         .maybeSingle();
 
-      if (existingLikes && existingLikes.length > 0) {
+      const alreadyLiked = Boolean(existingLikes && existingLikes.length > 0);
+      let isNowLiked = !alreadyLiked;
+
+      if (alreadyLiked) {
+        // Delete ALL like rows for this (post_id, user_id) so duplicates are impossible
         await supabase
           .from('post_likes')
           .delete()
-          .eq('id', existingLikes[0].id);
-        const newLikes = Math.max(0, Number(postRow.likes || 1) - 1);
-        await supabase
-          .from('posts')
-          .update({ likes: newLikes })
-          .eq('id', postId);
-        if (authorProf) {
-          await supabase
-            .from('profiles')
-            .update({ likes: Math.max(0, Number(authorProf.likes || 1) - 1) })
-            .eq('id', authorId);
-        }
-        return { liked: false, likesCount: newLikes } as unknown as T;
+          .eq('post_id', postId)
+          .eq('user_id', currentUserId);
+        isNowLiked = false;
       } else {
         await supabase.from('post_likes').insert({
           post_id: postId,
           user_id: currentUserId,
         });
-        const newLikes = Number(postRow.likes || 0) + 1;
-        await supabase
-          .from('posts')
-          .update({ likes: newLikes })
-          .eq('id', postId);
-        if (authorProf) {
-          await supabase
-            .from('profiles')
-            .update({
-              likes: Number(authorProf.likes || 0) + 1,
-              xp: Number(authorProf.xp || 0) + 10,
-            })
-            .eq('id', authorId);
-        }
-
-        if (authorId !== currentUserId) {
-          const { data: meProf } = await supabase
-            .from('profiles')
-            .select('display_name, username')
-            .eq('id', currentUserId)
-            .maybeSingle();
-          const actorName =
-            meProf?.display_name || meProf?.username || 'Someone';
-          await supabase.from('notifications').insert({
-            target_user: authorId,
-            actor_user: currentUserId,
-            type: 'like',
-            title: 'New Like',
-            body: `${actorName} liked your post.`,
-            post_id: postId,
-            is_read: false,
-          });
-        }
-        return { liked: true, likesCount: newLikes } as unknown as T;
+        isNowLiked = true;
       }
+
+      // Recount exact unique users who liked this post directly from Supabase
+      const { data: allPostLikes } = await supabase
+        .from('post_likes')
+        .select('id, user_id')
+        .eq('post_id', postId);
+
+      const seenUsers = new Set<string>();
+      const duplicateRowIds: string[] = [];
+      (allPostLikes || []).forEach((rowItem) => {
+        const uid = normalizeTargetUserId(String(rowItem.user_id || ''));
+        if (seenUsers.has(uid)) {
+          duplicateRowIds.push(String(rowItem.id));
+        } else {
+          seenUsers.add(uid);
+        }
+      });
+
+      if (duplicateRowIds.length > 0) {
+        await supabase.from('post_likes').delete().in('id', duplicateRowIds);
+      }
+
+      const exactLikesCount = seenUsers.size;
+      await supabase
+        .from('posts')
+        .update({ likes: exactLikesCount })
+        .eq('id', postId);
+
+      if (authorProf) {
+        const nextAuthorLikes = isNowLiked
+          ? Number(authorProf.likes || 0) + 1
+          : Math.max(0, Number(authorProf.likes || 1) - 1);
+        const nextAuthorXp = isNowLiked
+          ? Number(authorProf.xp || 0) + 10
+          : Number(authorProf.xp || 0);
+        await supabase
+          .from('profiles')
+          .update({
+            likes: nextAuthorLikes,
+            xp: nextAuthorXp,
+          })
+          .eq('id', authorId);
+      }
+
+      if (isNowLiked && authorId !== currentUserId) {
+        const { data: meProf } = await supabase
+          .from('profiles')
+          .select('display_name, username')
+          .eq('id', currentUserId)
+          .maybeSingle();
+        const actorName =
+          meProf?.display_name || meProf?.username || 'Someone';
+        await supabase.from('notifications').insert({
+          target_user: authorId,
+          actor_user: currentUserId,
+          type: 'like',
+          title: 'New Like',
+          body: `${actorName} liked your post.`,
+          post_id: postId,
+          is_read: false,
+        });
+      }
+
+      try {
+        supabase.channel('boosthub-global-realtime').send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            type: 'post_like',
+            postId,
+            likesCount: exactLikesCount,
+          },
+        });
+      } catch {
+        // ignore broadcast error
+      }
+
+      return { liked: isNowLiked, likesCount: exactLikesCount } as unknown as T;
     }
 
     if (action === 'save') {
@@ -1254,7 +1299,16 @@ export async function handleStaticBackendRequest<T = any>(
         });
       }
 
-      const createdItem: CommentItem = {
+      const [pcCountRes, legacyCountRes] = await Promise.all([
+        supabase.from('post_comments').select('id').eq('post_id', postId),
+        supabase.from('comments').select('id').eq('post_id', postId),
+      ]);
+      const exactCommentsCount = new Set([
+        ...(pcCountRes.data || []).map((r) => String(r.id)),
+        ...(legacyCountRes.data || []).map((r) => String(r.id)),
+      ]).size;
+
+      const createdItem: CommentItem & { commentsCount?: number } = {
         id: inserted.id,
         postId,
         userId: currentUserId,
@@ -1273,7 +1327,24 @@ export async function handleStaticBackendRequest<T = any>(
           avatarUrl: String(uRow?.avatar_url || ''),
           isVerified: Boolean(isAbba),
         },
+        commentsCount: exactCommentsCount,
       };
+
+      try {
+        supabase.channel('boosthub-global-realtime').send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            type: 'post_comment',
+            postId,
+            commentsCount: exactCommentsCount,
+            comment: createdItem,
+          },
+        });
+      } catch {
+        // ignore broadcast error
+      }
+
       return createdItem as unknown as T;
     }
   }
@@ -1282,9 +1353,43 @@ export async function handleStaticBackendRequest<T = any>(
   if (commentItemMatch && method === 'PUT') {
     const commentId = decodeURIComponent(commentItemMatch[1]);
     if (body.action === 'delete') {
+      const { data: existingC } = await supabase
+        .from('post_comments')
+        .select('post_id')
+        .eq('id', commentId)
+        .maybeSingle();
+      const targetPostId = existingC?.post_id;
       await supabase.from('post_comments').delete().eq('id', commentId);
       await supabase.from('comments').delete().eq('id', commentId);
-      return { ok: true } as unknown as T;
+
+      let exactCommentsCount: number | undefined;
+      if (targetPostId) {
+        const [pcCountRes, legacyCountRes] = await Promise.all([
+          supabase
+            .from('post_comments')
+            .select('id')
+            .eq('post_id', targetPostId),
+          supabase.from('comments').select('id').eq('post_id', targetPostId),
+        ]);
+        exactCommentsCount = new Set([
+          ...(pcCountRes.data || []).map((r) => String(r.id)),
+          ...(legacyCountRes.data || []).map((r) => String(r.id)),
+        ]).size;
+        try {
+          supabase.channel('boosthub-global-realtime').send({
+            type: 'broadcast',
+            event: 'sync',
+            payload: {
+              type: 'post_comment',
+              postId: targetPostId,
+              commentsCount: exactCommentsCount,
+            },
+          });
+        } catch {
+          // ignore
+        }
+      }
+      return { ok: true, commentsCount: exactCommentsCount } as unknown as T;
     }
     if (body.action === 'edit' && body.content) {
       const { data: updated } = await supabase
@@ -1303,6 +1408,17 @@ export async function handleStaticBackendRequest<T = any>(
 
   // 6. 24-Hour Stories (/api/stories, /api/stories/:id/interact)
   if (pathname === '/api/stories' && method === 'GET') {
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const cutoff24hMs = nowMs - 24 * 60 * 60 * 1000;
+    const cutoff24hIso = new Date(cutoff24hMs).toISOString();
+
+    // Automatically purge any stories older than 24 hours from Supabase
+    await Promise.all([
+      supabase.from('stories').delete().lte('expires_at', nowIso),
+      supabase.from('stories').delete().lte('created_at', cutoff24hIso),
+    ]).catch(() => {});
+
     const [
       { byId },
       storiesRes,
@@ -1317,7 +1433,8 @@ export async function handleStaticBackendRequest<T = any>(
       supabase
         .from('stories')
         .select('*')
-        .gt('expires_at', new Date().toISOString())
+        .gt('expires_at', nowIso)
+        .gt('created_at', cutoff24hIso)
         .order('created_at', { ascending: false }),
       supabase.from('story_views').select('*'),
       supabase.from('story_reactions').select('*'),
@@ -1332,7 +1449,15 @@ export async function handleStaticBackendRequest<T = any>(
     const repliesList = repliesRes.data || [];
 
     const mapped: StoryItem[] = (storiesRes.data || [])
-      .filter((s) => !String(s.media_url || '').startsWith('blob:'))
+      .filter((s) => {
+        if (String(s.media_url || '').startsWith('blob:')) return false;
+        const createdMs = s.created_at ? new Date(s.created_at).getTime() : nowMs;
+        const expiresMs = s.expires_at
+          ? new Date(s.expires_at).getTime()
+          : createdMs + 24 * 60 * 60 * 1000;
+        // Strictly enforce 24-hour lifespan
+        return expiresMs > nowMs && nowMs - createdMs < 24 * 60 * 60 * 1000;
+      })
       .map((s) => {
         const uid = normalizeTargetUserId(String(s.user_id || ADMIN_ABBA_UUID));
         const uRow = byId.get(uid) || byId.get(ADMIN_ABBA_UUID);

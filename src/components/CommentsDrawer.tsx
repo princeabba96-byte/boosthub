@@ -11,7 +11,12 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { CommentItem, PostItem } from '../types';
-import { apiFetch, getCachedComments, setCachedComments } from '../services/api';
+import {
+  apiFetch,
+  getCachedComments,
+  setCachedComments,
+  updateCachedPostStats,
+} from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from './Avatar';
 import { formatRelativeTime } from '../utils/format';
@@ -19,7 +24,7 @@ import { formatRelativeTime } from '../utils/format';
 interface CommentsDrawerProps {
   post: PostItem | null;
   onClose: () => void;
-  onCommentCountChange?: (postId: number, delta: number) => void;
+  onCommentCountChange?: (postId: any, delta: number) => void;
   onSelectUser?: (userId: string) => void;
 }
 
@@ -29,12 +34,12 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   onCommentCountChange,
   onSelectUser,
 }) => {
-  const { userProfile, showToast } = useAuth();
+  const { userProfile, realtimeEvents, showToast } = useAuth();
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
   const [replyTo, setReplyTo] = useState<CommentItem | null>(null);
-  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<any | null>(null);
   const [editContent, setEditContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -49,41 +54,68 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
       setLoading(true);
     }
 
-    // 2. Load fresh comments in background
+    // 2. Load fresh comments from Supabase and sync count
     let mounted = true;
-    apiFetch<CommentItem[]>(`/api/posts/${post.id}/comments`)
-      .then((fresh) => {
-        if (!mounted) return;
-        setComments(fresh);
-        setCachedComments(post.id, fresh);
-      })
-      .catch(() => {
-        // retain cached
-      })
-      .finally(() => {
-        if (mounted) setLoading(false);
-      });
+    const syncFreshComments = () => {
+      apiFetch<CommentItem[]>(`/api/posts/${post.id}/comments`)
+        .then((fresh) => {
+          if (!mounted) return;
+          setComments(fresh);
+          setCachedComments(post.id, fresh);
+          updateCachedPostStats(post.id, { commentsCount: fresh.length });
+        })
+        .catch(() => {
+          // retain cached
+        })
+        .finally(() => {
+          if (mounted) setLoading(false);
+        });
+    };
+
+    syncFreshComments();
+    const pollTimer = window.setInterval(syncFreshComments, 3500);
 
     return () => {
       mounted = false;
+      window.clearInterval(pollTimer);
     };
-  }, [post]);
+  }, [post?.id]);
+
+  // Refetch immediately when another device posts a comment via Supabase Realtime
+  useEffect(() => {
+    if (!post || realtimeEvents.length === 0) return;
+    const latest = realtimeEvents[realtimeEvents.length - 1];
+    if (latest.type === 'post_comment') {
+      apiFetch<CommentItem[]>(`/api/posts/${post.id}/comments`)
+        .then((fresh) => {
+          setComments(fresh);
+          setCachedComments(post.id, fresh);
+          updateCachedPostStats(post.id, { commentsCount: fresh.length });
+        })
+        .catch(() => {});
+    }
+  }, [realtimeEvents, post?.id]);
 
   if (!post) return null;
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    const content = text.trim();
-    if (!content || submitting || !userProfile) return;
+    const rawContent = text.trim();
+    if (!rawContent || submitting || !userProfile) return;
+
+    const content =
+      replyTo && !rawContent.startsWith(`@${replyTo.author.username}`)
+        ? `@${replyTo.author.username} ${rawContent}`
+        : rawContent;
 
     setSubmitting(true);
-    // Optimistic insertion
-    const tempId = Date.now();
+    // Optimistic insertion & immediate count increment
+    const tempId = `temp_${Date.now()}`;
     const optimisticComment: CommentItem = {
-      id: tempId,
+      id: tempId as any,
       postId: post.id,
       userId: userProfile.id,
-      parentId: replyTo ? replyTo.id : null,
+      parentId: null,
       content,
       isPinned: false,
       reactionsCount: 0,
@@ -103,24 +135,34 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
     setCachedComments(post.id, nextList);
     setText('');
     setReplyTo(null);
+    updateCachedPostStats(post.id, { commentsCount: nextList.length });
     onCommentCountChange?.(post.id, 1);
 
     try {
-      const created = await apiFetch<CommentItem>(`/api/posts/${post.id}/comments`, {
-        method: 'POST',
-        body: JSON.stringify({
-          content,
-          parentId: optimisticComment.parentId,
-        }),
-      });
+      const created = await apiFetch<CommentItem & { commentsCount?: number }>(
+        `/api/posts/${post.id}/comments`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            content,
+            parentId: null,
+          }),
+        }
+      );
       const updatedList = nextList.map((c) => (c.id === tempId ? created : c));
       setComments(updatedList);
       setCachedComments(post.id, updatedList);
+      const exactCount =
+        typeof created.commentsCount === 'number'
+          ? created.commentsCount
+          : updatedList.length;
+      updateCachedPostStats(post.id, { commentsCount: exactCount });
     } catch (err: any) {
       // Rollback
       const rolledBack = comments.filter((c) => c.id !== tempId);
       setComments(rolledBack);
       setCachedComments(post.id, rolledBack);
+      updateCachedPostStats(post.id, { commentsCount: rolledBack.length });
       onCommentCountChange?.(post.id, -1);
       showToast(err.message || 'Could not post comment.', 'error');
     } finally {
@@ -138,11 +180,18 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
         const filtered = comments.filter((c) => c.id !== comment.id);
         setComments(filtered);
         setCachedComments(post.id, filtered);
+        updateCachedPostStats(post.id, { commentsCount: filtered.length });
         onCommentCountChange?.(post.id, -1);
-        await apiFetch(`/api/comments/${comment.id}`, {
-          method: 'PUT',
-          body: JSON.stringify({ action: 'delete' }),
-        });
+        const res = await apiFetch<{ ok?: boolean; commentsCount?: number }>(
+          `/api/comments/${comment.id}`,
+          {
+            method: 'PUT',
+            body: JSON.stringify({ action: 'delete' }),
+          }
+        );
+        if (typeof res?.commentsCount === 'number') {
+          updateCachedPostStats(post.id, { commentsCount: res.commentsCount });
+        }
         showToast('Comment deleted', 'info');
         return;
       }
@@ -181,7 +230,7 @@ export const CommentsDrawer: React.FC<CommentsDrawerProps> = ({
   };
 
   const rootComments = comments.filter((c) => !c.parentId);
-  const getReplies = (parentId: number) =>
+  const getReplies = (parentId: any) =>
     comments.filter((c) => c.parentId === parentId);
 
   return (

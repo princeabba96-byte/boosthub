@@ -766,19 +766,34 @@ export const BEditStudioStageAndTimeline: React.FC<
           </button>
         </div>
 
-        {/* Compact Secondary Track Indicators (Audio, Captions, PiP) */}
+        {/* Compact Secondary Track Indicators (Audio, Voice Cover, Captions, PiP) */}
         <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 pt-1 border-t border-white/5">
           <span className="inline-flex items-center gap-1">
             <Music className="w-3 h-3 text-pink-400" />
             <span>
               Audio:{' '}
               {project.customAudioName
-                ? project.customAudioName.slice(0, 16)
+                ? project.customAudioName.slice(0, 18)
                 : project.soundTrackId !== 'none'
                   ? project.soundTrackId.replace('_', ' ')
                   : 'Original Clip Audio'}
             </span>
           </span>
+          {project.voiceoverAudioUrl && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1 text-emerald-300 font-semibold">
+                <Volume2 className="w-3 h-3" />
+                <span>
+                  Voice: {project.voiceoverName || 'Voice Cover'} (
+                  {project.voicePresetId && project.voicePresetId !== 'original'
+                    ? project.voicePresetId.replace(/_/g, ' ')
+                    : 'Original'}
+                  )
+                </span>
+              </span>
+            </>
+          )}
           <span aria-hidden="true">·</span>
           <span className="inline-flex items-center gap-1">
             <Subtitles className="w-3 h-3 text-amber-400" />

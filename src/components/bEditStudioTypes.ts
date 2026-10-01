@@ -63,7 +63,7 @@ export interface BEditProjectState {
   texts: StudioTextLayer[];
   subtitles: StudioSubtitleCue[];
   pipLayer: BEditPiPLayer | null;
-  // Audio Track
+  // Audio Track & Voice Cover / Voice Changer
   soundTrackId: string;
   customAudioUrl: string;
   customAudioName: string;
@@ -73,6 +73,12 @@ export interface BEditProjectState {
   soundVolume: number;
   soundLoop: boolean;
   soundEffect: StudioSoundEffect;
+  voiceoverAudioUrl?: string;
+  voiceoverRawUrl?: string;
+  voiceoverName?: string;
+  voiceoverDuration?: number;
+  voiceoverVolume?: number;
+  voicePresetId?: string;
   thumbnailDataUrl: string;
 }
 
@@ -146,6 +152,12 @@ export function createDefaultProjectState(): BEditProjectState {
     soundVolume: 85,
     soundLoop: true,
     soundEffect: 'original',
+    voiceoverAudioUrl: '',
+    voiceoverRawUrl: '',
+    voiceoverName: '',
+    voiceoverDuration: 0,
+    voiceoverVolume: 100,
+    voicePresetId: 'original',
     thumbnailDataUrl: '',
   };
 }
@@ -371,6 +383,67 @@ export async function exportBEditProjectToVideoFile(
   }
 
   const stream = canvas.captureStream(30);
+
+  // Mix Voice Cover / Extracted Audio / Custom Music into the MediaRecorder stream
+  let exportAudioCtx: AudioContext | null = null;
+  const activeSources: AudioBufferSourceNode[] = [];
+  try {
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    if (AudioCtx) {
+      exportAudioCtx = new AudioCtx();
+      const dest = exportAudioCtx.createMediaStreamDestination();
+
+      const scheduleAudioUrl = async (
+        url: string | undefined,
+        volPct: number,
+        loop: boolean,
+        trimStart = 0
+      ) => {
+        if (!url) return;
+        try {
+          const res = await fetch(url.split('#')[0]);
+          const arr = await res.arrayBuffer();
+          const buf = await exportAudioCtx!.decodeAudioData(arr.slice(0));
+          const srcNode = exportAudioCtx!.createBufferSource();
+          srcNode.buffer = buf;
+          srcNode.loop = loop;
+          const gainNode = exportAudioCtx!.createGain();
+          gainNode.gain.value = Math.max(0, Math.min(1.5, volPct / 100));
+          srcNode.connect(gainNode);
+          gainNode.connect(dest);
+          srcNode.start(0, Math.max(0, Math.min(buf.duration - 0.1, trimStart)));
+          activeSources.push(srcNode);
+        } catch {
+          // ignore if audio decode fails
+        }
+      };
+
+      await Promise.all([
+        scheduleAudioUrl(
+          project.voiceoverAudioUrl,
+          project.voiceoverVolume ?? 100,
+          false,
+          0
+        ),
+        scheduleAudioUrl(
+          project.customAudioUrl,
+          project.soundVolume ?? 85,
+          Boolean(project.soundLoop),
+          project.soundTrimStart || 0
+        ),
+      ]);
+
+      dest.stream.getAudioTracks().forEach((track) => {
+        stream.addTrack(track);
+      });
+    }
+  } catch {
+    // fallback to video-only stream if AudioContext blocked
+  }
+
   const mimeTypes = [
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8',
@@ -600,6 +673,16 @@ export async function exportBEditProjectToVideoFile(
     await new Promise((r) => window.setTimeout(r, 25));
   }
 
+  activeSources.forEach((s) => {
+    try {
+      s.stop();
+    } catch {
+      // ignore
+    }
+  });
+  if (exportAudioCtx) {
+    exportAudioCtx.close().catch(() => {});
+  }
   recorder.stop();
   const videoBlob = await recordingStopped;
   onProgress(100, 'Export complete!');

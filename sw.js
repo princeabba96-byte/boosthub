@@ -1,4 +1,4 @@
-const CACHE_NAME = 'boosthub-pwa-v26';
+const CACHE_NAME = 'boosthub-pwa-v27';
 
 function getBasePath() {
   try {
@@ -113,6 +113,7 @@ self.addEventListener('activate', (event) => {
 // Network-first fetch with cache fallback for PWA offline support
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  if (!event.request.url.startsWith(self.location.origin)) return;
   event.respondWith(
     fetch(event.request)
       .then((response) => {

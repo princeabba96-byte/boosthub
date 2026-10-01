@@ -1078,11 +1078,23 @@ async function startServer() {
           'package.json',
           'src/App.tsx',
           'src/types/index.ts',
+          'src/lib/supabase.ts',
+          'src/lib/supabase.js',
+          'src/services/api.ts',
+          'src/services/staticBackend.ts',
+          'src/state/AuthContext.tsx',
           'src/navigation/Navigation.tsx',
+          'src/screens/HomeScreen.tsx',
+          'src/screens/CapshotsScreen.tsx',
           'src/screens/MenuScreen.tsx',
           'src/screens/BEditStudioScreen.tsx',
-          'src/components/StudioMediaEditor.tsx',
           'src/screens/ProfileScreen.tsx',
+          'src/components/PostCard.tsx',
+          'src/components/CommentsDrawer.tsx',
+          'src/components/StudioMediaEditor.tsx',
+          'src/components/bEditStudioTypes.ts',
+          'src/components/bEditVoiceEngine.ts',
+          'src/components/BEditStudioStageAndTimeline.tsx',
         ];
 
         const treeItems: Array<{
@@ -1145,7 +1157,7 @@ async function startServer() {
             headers,
             body: JSON.stringify({
               message:
-                'Deploy BoostHub v23: 5-tab Facebook navigation, B-Edit Studio sound cutting & loops, Notification prefs',
+                'Deploy BoostHub v27: Real Supabase sync, exact likes/comments, strict 24h stories, B-Edit Audio Extract + Voice Cover + 52 Voices',
               tree: newTree.sha,
               parents: [latestCommitSha],
             }),
@@ -1180,7 +1192,7 @@ async function startServer() {
           ok: true,
           commitSha: newCommit.sha,
           liveUrl:
-            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=23',
+            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=27',
         });
       } catch (error: any) {
         res.status(400).json({

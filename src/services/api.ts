@@ -84,6 +84,31 @@ export function setCachedMissions(missions: MissionItem[]) {
   missionsMemoryCache = missions;
 }
 
+export function updateCachedPostStats(
+  postId: string | number,
+  patch: Partial<PostItem>
+) {
+  const targetId = String(postId);
+  feedMemoryCache.forEach((list, tab) => {
+    const updated = list.map((p) =>
+      String(p.id) === targetId ? { ...p, ...patch } : p
+    );
+    feedMemoryCache.set(tab, updated);
+  });
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('boosthub:post-updated', {
+        detail: { postId: targetId, patch },
+      })
+    );
+  }
+}
+
+export function clearAllFeedCaches() {
+  feedMemoryCache.clear();
+}
+
 export async function apiFetch<T = any>(
   path: string,
   options: RequestInit = {}

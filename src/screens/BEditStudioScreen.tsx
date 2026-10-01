@@ -28,6 +28,10 @@ import {
   Pause,
   Subtitles,
   Mic,
+  MicOff,
+  FileAudio,
+  Wand2,
+  Search,
   Layers,
   Camera,
   CheckCircle2,
@@ -54,6 +58,15 @@ import {
   STUDIO_BUILTIN_SOUNDS,
   STUDIO_FILTER_PRESETS,
 } from '../components/bEditStudioTypes';
+import {
+  BEDIT_VOICE_CATEGORIES,
+  BEDIT_VOICE_PRESETS,
+  BEditVoiceCategory,
+  decodeMediaToAudioBuffer,
+  extractAudioFromVideoSource,
+  getVoicePresetById,
+  renderVoiceChangedAudio,
+} from '../components/bEditVoiceEngine';
 import { BEditStudioStageAndTimeline } from '../components/BEditStudioStageAndTimeline';
 import {
   STUDIO_BADGE_STICKERS,
@@ -87,6 +100,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   // Hidden file inputs
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
+  const extractVideoInputRef = useRef<HTMLInputElement | null>(null);
   const pipInputRef = useRef<HTMLInputElement | null>(null);
   const thumbInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -94,9 +108,31 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const customAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
   const synthTimerRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const reverseTimerRef = useRef<number | null>(null);
+
+  // Voice Cover & Audio Extraction DSP refs
+  const rawVoiceBufferRef = useRef<AudioBuffer | null>(null);
+  const extractedAudioBufferRef = useRef<AudioBuffer | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<number | null>(null);
+
+  // Audio sub-navigation & Voice Cover / Voice Changer state
+  const [audioSubMode, setAudioSubMode] = useState<
+    'extract_music' | 'voice_cover' | 'voice_changer'
+  >('extract_music');
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [muteVideoDuringRecord, setMuteVideoDuringRecord] = useState(true);
+  const [extractingAudioBusy, setExtractingAudioBusy] = useState(false);
+  const [applyingVoiceBusy, setApplyingVoiceBusy] = useState(false);
+  const [isVoicePreviewing, setIsVoicePreviewing] = useState(false);
+  const [voiceCategoryFilter, setVoiceCategoryFilter] =
+    useState<BEditVoiceCategory>('All');
+  const [voiceSearchQuery, setVoiceSearchQuery] = useState('');
 
   // Project State + Undo/Redo History Stack
   const [project, setProject] = useState<BEditProjectState>(() =>
@@ -286,7 +322,12 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     return () => {
       if (synthTimerRef.current) window.clearInterval(synthTimerRef.current);
       if (reverseTimerRef.current) window.clearInterval(reverseTimerRef.current);
+      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
       if (customAudioRef.current) customAudioRef.current.pause();
+      if (voiceoverAudioRef.current) voiceoverAudioRef.current.pause();
+      if (micStreamRef.current) {
+        micStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
     };
   }, []);
 
@@ -366,9 +407,27 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     if (isPlaying) {
       setIsPlaying(false);
       videoRef.current?.pause();
+      customAudioRef.current?.pause();
+      voiceoverAudioRef.current?.pause();
       return;
     }
     setIsPlaying(true);
+    if (project.voiceoverAudioUrl && voiceoverAudioRef.current) {
+      voiceoverAudioRef.current.currentTime = 0;
+      voiceoverAudioRef.current.volume = Math.max(
+        0,
+        Math.min(1, (project.voiceoverVolume ?? 100) / 100)
+      );
+      voiceoverAudioRef.current.play().catch(() => {});
+    }
+    if (project.customAudioUrl && customAudioRef.current) {
+      customAudioRef.current.currentTime = project.soundTrimStart || 0;
+      customAudioRef.current.volume = Math.max(
+        0,
+        Math.min(1, (project.soundVolume ?? 85) / 100)
+      );
+      customAudioRef.current.play().catch(() => {});
+    }
     if (activeClip?.type === 'video' && videoRef.current) {
       if (activeClip.reversed) {
         if (
@@ -623,6 +682,360 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     }, stepMs);
   };
 
+  // ==================== EXTRACT AUDIO FROM GALLERY VIDEO OR ACTIVE CLIP ====================
+  const handleExtractAudioFromGalleryFile = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setExtractingAudioBusy(true);
+    try {
+      const extracted = await extractAudioFromVideoSource(file, file.name);
+      extractedAudioBufferRef.current = extracted.audioBuffer;
+      rawVoiceBufferRef.current = extracted.audioBuffer;
+
+      let finalAudioUrl = extracted.wavUrl;
+      let finalAudioName = `Extracted: ${file.name}`;
+      if (project.voicePresetId && project.voicePresetId !== 'original') {
+        const preset = getVoicePresetById(project.voicePresetId);
+        const transformed = await renderVoiceChangedAudio(
+          extracted.audioBuffer,
+          preset.id,
+          'extracted_voice'
+        );
+        finalAudioUrl = transformed.wavUrl;
+        finalAudioName = `${preset.name} (${file.name})`;
+      }
+
+      updateProjectWithHistory((prev) => ({
+        ...prev,
+        soundTrackId: 'custom',
+        customAudioUrl: finalAudioUrl,
+        customAudioName: finalAudioName,
+        soundDuration: extracted.duration,
+        soundTrimStart: 0,
+        soundTrimEnd: Math.min(BOOSTHUB_MAX_VIDEO_SECONDS, extracted.duration),
+      }));
+      showToast(
+        `Extracted ${extracted.duration}s audio from "${file.name}"!`,
+        'success'
+      );
+    } catch {
+      showToast(
+        'Could not extract audio track (this video may have no sound stream).',
+        'error'
+      );
+    } finally {
+      setExtractingAudioBusy(false);
+    }
+  };
+
+  const handleExtractAudioFromActiveClip = async () => {
+    if (!activeClip || activeClip.type !== 'video' || !activeClip.url) {
+      showToast('Select a video clip on the timeline first.', 'info');
+      return;
+    }
+    setExtractingAudioBusy(true);
+    try {
+      const rawFile = clipFilesMapRef.current.get(activeClip.url);
+      const extracted = await extractAudioFromVideoSource(
+        rawFile || activeClip.url,
+        activeClip.name
+      );
+      extractedAudioBufferRef.current = extracted.audioBuffer;
+      rawVoiceBufferRef.current = extracted.audioBuffer;
+
+      let finalAudioUrl = extracted.wavUrl;
+      let finalAudioName = `Extracted: ${activeClip.name}`;
+      if (project.voicePresetId && project.voicePresetId !== 'original') {
+        const preset = getVoicePresetById(project.voicePresetId);
+        const transformed = await renderVoiceChangedAudio(
+          extracted.audioBuffer,
+          preset.id,
+          'clip_voice'
+        );
+        finalAudioUrl = transformed.wavUrl;
+        finalAudioName = `${preset.name} (${activeClip.name})`;
+      }
+
+      updateProjectWithHistory((prev) => ({
+        ...prev,
+        soundTrackId: 'custom',
+        customAudioUrl: finalAudioUrl,
+        customAudioName: finalAudioName,
+        soundDuration: extracted.duration,
+        soundTrimStart: 0,
+        soundTrimEnd: Math.min(BOOSTHUB_MAX_VIDEO_SECONDS, extracted.duration),
+        clips: prev.clips.map((c, idx) =>
+          idx === activeClipIndex ? { ...c, muted: true } : c
+        ),
+      }));
+      showToast(
+        `Extracted audio from ${activeClip.name} & muted original video track!`,
+        'success'
+      );
+    } catch {
+      showToast('Could not decode audio from this clip.', 'error');
+    } finally {
+      setExtractingAudioBusy(false);
+    }
+  };
+
+  // ==================== VOICE COVER (RECORD VOICEOVER) & 52-VOICE CHANGER ====================
+  const handleStartVoiceCoverRecording = async () => {
+    if (isRecordingVoice) return;
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+      showToast('Microphone recording is not supported in this browser.', 'error');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      micStreamRef.current = stream;
+
+      const mimeCandidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg',
+      ];
+      const selectedMime =
+        mimeCandidates.find(
+          (m) =>
+            typeof MediaRecorder !== 'undefined' &&
+            MediaRecorder.isTypeSupported(m)
+        ) || '';
+
+      const chunks: BlobPart[] = [];
+      const recorder = new MediaRecorder(
+        stream,
+        selectedMime ? { mimeType: selectedMime } : undefined
+      );
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          chunks.push(ev.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        if (recordTimerRef.current) {
+          window.clearInterval(recordTimerRef.current);
+          recordTimerRef.current = null;
+        }
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach((t) => t.stop());
+          micStreamRef.current = null;
+        }
+        if (videoRef.current) {
+          videoRef.current.pause();
+          setIsPlaying(false);
+        }
+
+        const recordedBlob = new Blob(chunks, {
+          type: selectedMime || 'audio/webm',
+        });
+        if (recordedBlob.size === 0) {
+          showToast('Recording was empty. Please try again.', 'error');
+          return;
+        }
+
+        setApplyingVoiceBusy(true);
+        try {
+          const decodedBuffer = await decodeMediaToAudioBuffer(recordedBlob);
+          rawVoiceBufferRef.current = decodedBuffer;
+          const activePresetId = project.voicePresetId || 'original';
+          const preset = getVoicePresetById(activePresetId);
+          const rendered = await renderVoiceChangedAudio(
+            decodedBuffer,
+            preset.id,
+            'voice_cover'
+          );
+          const rawUrl = URL.createObjectURL(recordedBlob);
+
+          updateProjectWithHistory((prev) => ({
+            ...prev,
+            voiceoverRawUrl: rawUrl,
+            voiceoverAudioUrl: rendered.wavUrl,
+            voiceoverName:
+              preset.id === 'original'
+                ? 'My Voice Cover'
+                : `${preset.name} Voice Cover`,
+            voiceoverDuration: rendered.duration,
+            voicePresetId: preset.id,
+            clips: muteVideoDuringRecord
+              ? prev.clips.map((c) => ({ ...c, muted: true }))
+              : prev.clips,
+          }));
+          showToast(
+            `Saved Voice Cover (${rendered.duration}s) with "${preset.name}"!`,
+            'success'
+          );
+        } catch {
+          const fallbackUrl = URL.createObjectURL(recordedBlob);
+          updateProjectWithHistory((prev) => ({
+            ...prev,
+            voiceoverRawUrl: fallbackUrl,
+            voiceoverAudioUrl: fallbackUrl,
+            voiceoverName: 'My Voice Cover',
+            voiceoverDuration: Number(recordingSeconds.toFixed(1)) || 5,
+          }));
+          showToast('Voice Cover saved to timeline!', 'success');
+        } finally {
+          setApplyingVoiceBusy(false);
+        }
+      };
+
+      setRecordingSeconds(0);
+      setIsRecordingVoice(true);
+      recorder.start(100);
+
+      // Play video muted alongside recording so creator can dub accurately
+      if (videoRef.current && activeClip?.type === 'video') {
+        videoRef.current.muted = true;
+        videoRef.current.currentTime = activeClip.trimStart || 0;
+        videoRef.current.play().catch(() => {});
+        setIsPlaying(true);
+      }
+
+      const startedAt = Date.now();
+      recordTimerRef.current = window.setInterval(() => {
+        const elapsed = (Date.now() - startedAt) / 1000;
+        setRecordingSeconds(Number(elapsed.toFixed(1)));
+        if (elapsed >= BOOSTHUB_MAX_VIDEO_SECONDS) {
+          handleStopVoiceCoverRecording();
+        }
+      }, 100);
+    } catch {
+      showToast(
+        'Microphone access denied. Please allow microphone permission to record Voice Cover.',
+        'error'
+      );
+    }
+  };
+
+  const handleStopVoiceCoverRecording = () => {
+    setIsRecordingVoice(false);
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state !== 'inactive'
+    ) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const toggleVoiceoverPreview = () => {
+    const el = voiceoverAudioRef.current;
+    if (!el || !project.voiceoverAudioUrl) return;
+    if (isVoicePreviewing) {
+      el.pause();
+      setIsVoicePreviewing(false);
+      return;
+    }
+    el.currentTime = 0;
+    el.volume = Math.max(0, Math.min(1, (project.voiceoverVolume ?? 100) / 100));
+    setIsVoicePreviewing(true);
+    el.onended = () => setIsVoicePreviewing(false);
+    el.play().catch(() => setIsVoicePreviewing(false));
+  };
+
+  const handleApplyVoicePreset = async (presetId: string) => {
+    const preset = getVoicePresetById(presetId);
+    setApplyingVoiceBusy(true);
+
+    try {
+      let sourceBuf =
+        rawVoiceBufferRef.current || extractedAudioBufferRef.current;
+
+      // If no buffer cached yet, decode from voiceoverRawUrl, customAudioUrl, or active video clip!
+      if (!sourceBuf) {
+        if (project.voiceoverRawUrl) {
+          sourceBuf = await decodeMediaToAudioBuffer(project.voiceoverRawUrl);
+          rawVoiceBufferRef.current = sourceBuf;
+        } else if (project.customAudioUrl) {
+          sourceBuf = await decodeMediaToAudioBuffer(project.customAudioUrl);
+          extractedAudioBufferRef.current = sourceBuf;
+        } else if (activeClip?.type === 'video' && activeClip.url) {
+          const rawFile = clipFilesMapRef.current.get(activeClip.url);
+          sourceBuf = await decodeMediaToAudioBuffer(rawFile || activeClip.url);
+          rawVoiceBufferRef.current = sourceBuf;
+        }
+      }
+
+      if (!sourceBuf) {
+        updateProjectWithHistory((prev) => ({
+          ...prev,
+          voicePresetId: preset.id,
+        }));
+        showToast(
+          `Selected "${preset.name}"! Record a Voice Cover or upload a video to hear it.`,
+          'info'
+        );
+        return;
+      }
+
+      const rendered = await renderVoiceChangedAudio(
+        sourceBuf,
+        preset.id,
+        'voice_changer'
+      );
+
+      updateProjectWithHistory((prev) => ({
+        ...prev,
+        voicePresetId: preset.id,
+        voiceoverAudioUrl: rendered.wavUrl,
+        voiceoverName: `${preset.name}`,
+        voiceoverDuration: rendered.duration,
+        clips:
+          !prev.voiceoverRawUrl && activeClip?.type === 'video'
+            ? prev.clips.map((c, idx) =>
+                idx === activeClipIndex ? { ...c, muted: true } : c
+              )
+            : prev.clips,
+      }));
+
+      // Automatically preview the transformed voice
+      window.setTimeout(() => {
+        if (voiceoverAudioRef.current) {
+          voiceoverAudioRef.current.src = rendered.wavUrl;
+          voiceoverAudioRef.current.currentTime = 0;
+          voiceoverAudioRef.current.volume = Math.max(
+            0,
+            Math.min(1, (project.voiceoverVolume ?? 100) / 100)
+          );
+          setIsVoicePreviewing(true);
+          voiceoverAudioRef.current.onended = () => setIsVoicePreviewing(false);
+          voiceoverAudioRef.current.play().catch(() => setIsVoicePreviewing(false));
+        }
+      }, 60);
+
+      showToast(`Applied "${preset.name}" voice effect!`, 'success');
+    } catch {
+      updateProjectWithHistory((prev) => ({
+        ...prev,
+        voicePresetId: preset.id,
+      }));
+      showToast(
+        `Set "${preset.name}". Record a Voice Cover first to transform your voice!`,
+        'info'
+      );
+    } finally {
+      setApplyingVoiceBusy(false);
+    }
+  };
+
   // Auto-Captions via Web Speech API or Smart Timed Generator
   const handleStartLiveSpeechCaptions = () => {
     const SpeechRec =
@@ -770,7 +1183,16 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
       // Upload primary clip or exported composite file via existing Supabase / backend storage
       const rawClipFile = clipFilesMapRef.current.get(primaryClip.url);
-      if (
+      const hasCustomOrVoiceAudio = Boolean(
+        project.voiceoverAudioUrl || project.customAudioUrl || project.clips.length > 1
+      );
+      if (hasCustomOrVoiceAudio && exportedVideoFile) {
+        const uploaded = await uploadMediaWithProgress(
+          exportedVideoFile,
+          'videos'
+        );
+        baseMediaUrl = uploaded.url;
+      } else if (
         (!baseMediaUrl || baseMediaUrl.startsWith('blob:')) &&
         (rawClipFile || exportedVideoFile)
       ) {
@@ -883,10 +1305,17 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         ref={audioInputRef}
         type="file"
         accept="audio/*"
-        onChange={(e) => {
+        onChange={async (e) => {
           const f = e.target.files?.[0];
           if (!f) return;
+          e.target.value = '';
           const url = URL.createObjectURL(f);
+          try {
+            const buf = await decodeMediaToAudioBuffer(f);
+            extractedAudioBufferRef.current = buf;
+          } catch {
+            // ignore
+          }
           updateProjectWithHistory((prev) => ({
             ...prev,
             soundTrackId: 'custom',
@@ -897,6 +1326,13 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           }));
           showToast(`Imported audio: ${f.name}`, 'success');
         }}
+        className="hidden"
+      />
+      <input
+        ref={extractVideoInputRef}
+        type="file"
+        accept="video/*"
+        onChange={handleExtractAudioFromGalleryFile}
         className="hidden"
       />
       <input
@@ -949,6 +1385,13 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         <audio
           ref={customAudioRef}
           src={project.customAudioUrl}
+          className="hidden"
+        />
+      )}
+      {project.voiceoverAudioUrl && (
+        <audio
+          ref={voiceoverAudioRef}
+          src={project.voiceoverAudioUrl}
           className="hidden"
         />
       )}
@@ -1341,114 +1784,552 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           </div>
         )}
 
-        {/* 2. AUDIO TAB: Volume, Mute, Background Music, Import Audio from Device */}
+        {/* 2. AUDIO TAB: Extract Audio from Gallery Video, Voice Cover Recorder, 52 Voice Changer & Music Mixer */}
         {activeBottomTab === 'audio' && (
           <div className="space-y-3.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-bold text-white">
-                Audio Mixer & Background Music
-              </span>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => audioInputRef.current?.click()}
-                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white inline-flex items-center gap-1.5"
-                >
-                  <Upload className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Import Audio</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleAudioPreview}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 ${
-                    isAudioPreviewing
-                      ? 'bg-rose-600 text-white'
-                      : 'bg-[#4A90E2] text-white'
-                  }`}
-                >
-                  {isAudioPreviewing ? (
-                    <>
-                      <Pause className="w-3.5 h-3.5" /> Stop
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" /> Preview Music
-                    </>
-                  )}
-                </button>
-              </div>
+            {/* Sub-navigation tabs for Audio Studio */}
+            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#080B14] border border-white/10">
+              <button
+                type="button"
+                onClick={() => setAudioSubMode('extract_music')}
+                className={`py-2 px-2 rounded-lg text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                  audioSubMode === 'extract_music'
+                    ? 'bg-[#4A90E2] text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <FileAudio className="w-3.5 h-3.5" />
+                <span>Extract & Music</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAudioSubMode('voice_cover')}
+                className={`py-2 px-2 rounded-lg text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                  audioSubMode === 'voice_cover'
+                    ? 'bg-rose-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Mic className="w-3.5 h-3.5" />
+                <span>Voice Cover</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAudioSubMode('voice_changer')}
+                className={`py-2 px-2 rounded-lg text-[11px] font-extrabold inline-flex items-center justify-center gap-1.5 transition-colors ${
+                  audioSubMode === 'voice_changer'
+                    ? 'bg-purple-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>52 Voices</span>
+              </button>
             </div>
 
-            {activeClip && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                    <span>Clip Volume</span>
-                    <span className="font-mono tabular-nums text-blue-400">
-                      {activeClip.muted ? 'Muted (0%)' : `${activeClip.volume}%`}
-                    </span>
+            {/* SUB-MODE 1: EXTRACT AUDIO FROM VIDEO + MUSIC MIXER */}
+            {audioSubMode === 'extract_music' && (
+              <div className="space-y-3.5">
+                {/* Extract Audio From Phone Gallery Video Card */}
+                <div className="p-3 rounded-xl bg-gradient-to-br from-blue-950/60 via-[#10172A] to-indigo-950/40 border border-[#4A90E2]/40 space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                        <FileAudio className="w-4 h-4 text-cyan-400" />
+                        <span>Extract Audio from Video</span>
+                      </p>
+                      <p className="text-[11px] text-slate-300 mt-0.5">
+                        Select any video from your phone gallery to rip its sound as background audio or voice track
+                      </p>
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={activeClip.muted ? 0 : activeClip.volume}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      updateActiveClip({ volume: v, muted: v === 0 });
-                    }}
-                    className="w-full accent-[#4A90E2]"
-                  />
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={extractingAudioBusy}
+                      onClick={() => extractVideoInputRef.current?.click()}
+                      className="flex-1 min-w-[160px] py-2.5 px-3 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] disabled:opacity-50 text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shadow"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>
+                        {extractingAudioBusy
+                          ? 'Extracting Audio...'
+                          : 'Select Video from Gallery'}
+                      </span>
+                    </button>
+
+                    {activeClip?.type === 'video' && (
+                      <button
+                        type="button"
+                        disabled={extractingAudioBusy}
+                        onClick={handleExtractAudioFromActiveClip}
+                        className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-50 text-cyan-300 text-xs font-bold inline-flex items-center justify-center gap-1.5 border border-cyan-400/30"
+                      >
+                        <Scissors className="w-3.5 h-3.5" />
+                        <span>Extract from Current Clip</span>
+                      </button>
+                    )}
+                  </div>
+
+                  {project.customAudioUrl && (
+                    <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-emerald-300 truncate">
+                          {project.customAudioName || 'Extracted Audio Track'}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          Duration: {(project.soundDuration || 15).toFixed(1)}s · Ready in timeline
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={toggleAudioPreview}
+                          className="px-2.5 py-1 rounded-lg bg-[#4A90E2] text-white text-[11px] font-bold inline-flex items-center gap-1"
+                        >
+                          {isAudioPreviewing ? (
+                            <>
+                              <Pause className="w-3 h-3" /> Stop
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-3 h-3" /> Play
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAudioSubMode('voice_changer')}
+                          className="px-2.5 py-1 rounded-lg bg-purple-600/80 hover:bg-purple-600 text-white text-[11px] font-bold inline-flex items-center gap-1"
+                        >
+                          <Wand2 className="w-3 h-3" /> Voice FX
+                        </button>
+                        <a
+                          href={project.customAudioUrl}
+                          download={
+                            (project.customAudioName || 'extracted-audio')
+                              .replace(/[^a-z0-9_-]/gi, '_') + '.wav'
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-bold inline-flex items-center gap-1"
+                        >
+                          <Download className="w-3 h-3" /> WAV
+                        </a>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div>
-                  <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                    <span>Background Music Volume</span>
-                    <span className="font-mono tabular-nums text-pink-400">
-                      {project.soundVolume}%
-                    </span>
+                {/* Import Audio File & Preview Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-white">
+                    Audio Mixer & Background Music
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => audioInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white inline-flex items-center gap-1.5"
+                    >
+                      <Upload className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Import Audio File</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={toggleAudioPreview}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 ${
+                        isAudioPreviewing
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-[#4A90E2] text-white'
+                      }`}
+                    >
+                      {isAudioPreviewing ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5" /> Stop
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" /> Preview Music
+                        </>
+                      )}
+                    </button>
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={project.soundVolume}
-                    onChange={(e) =>
-                      updateProjectWithHistory((prev) => ({
-                        ...prev,
-                        soundVolume: Number(e.target.value),
-                      }))
-                    }
-                    className="w-full accent-pink-500"
-                  />
+                </div>
+
+                {/* Volume Sliders */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {activeClip && (
+                    <div>
+                      <div className="flex justify-between text-[11px] text-slate-300 mb-1">
+                        <span>Clip Original Volume</span>
+                        <span className="font-mono tabular-nums text-blue-400">
+                          {activeClip.muted
+                            ? 'Muted (0%)'
+                            : `${activeClip.volume}%`}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={activeClip.muted ? 0 : activeClip.volume}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          updateActiveClip({ volume: v, muted: v === 0 });
+                        }}
+                        className="w-full accent-[#4A90E2]"
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex justify-between text-[11px] text-slate-300 mb-1">
+                      <span>Extracted / Music Volume</span>
+                      <span className="font-mono tabular-nums text-pink-400">
+                        {project.soundVolume}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={project.soundVolume}
+                      onChange={(e) =>
+                        updateProjectWithHistory((prev) => ({
+                          ...prev,
+                          soundVolume: Number(e.target.value),
+                        }))
+                      }
+                      className="w-full accent-pink-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Built-in Music Tracks */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                  {STUDIO_BUILTIN_SOUNDS.map((snd) => (
+                    <button
+                      key={snd.id}
+                      type="button"
+                      onClick={() =>
+                        updateProjectWithHistory((prev) => ({
+                          ...prev,
+                          soundTrackId: snd.id,
+                          customAudioUrl: '',
+                          customAudioName: '',
+                        }))
+                      }
+                      className={`p-2.5 rounded-xl border text-left transition-colors ${
+                        project.soundTrackId === snd.id
+                          ? 'bg-[#4A90E2]/20 border-[#4A90E2] text-white'
+                          : 'bg-white/5 border-white/10 text-slate-300'
+                      }`}
+                    >
+                      <p className="text-xs font-bold truncate">{snd.name}</p>
+                      <p className="text-[10px] text-slate-400">{snd.genre}</p>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 pt-2 border-t border-white/10">
-              {STUDIO_BUILTIN_SOUNDS.map((snd) => (
-                <button
-                  key={snd.id}
-                  type="button"
-                  onClick={() =>
-                    updateProjectWithHistory((prev) => ({
-                      ...prev,
-                      soundTrackId: snd.id,
-                      customAudioUrl: '',
-                      customAudioName: '',
-                    }))
-                  }
-                  className={`p-2.5 rounded-xl border text-left transition-colors ${
-                    project.soundTrackId === snd.id
-                      ? 'bg-[#4A90E2]/20 border-[#4A90E2] text-white'
-                      : 'bg-white/5 border-white/10 text-slate-300'
-                  }`}
-                >
-                  <p className="text-xs font-bold truncate">{snd.name}</p>
-                  <p className="text-[10px] text-slate-400">{snd.genre}</p>
-                </button>
-              ))}
-            </div>
+            {/* SUB-MODE 2: VOICE COVER RECORDER (RECORD VOICEOVER FOR VIDEO) */}
+            {audioSubMode === 'voice_cover' && (
+              <div className="space-y-3.5">
+                <div className="p-3.5 rounded-xl bg-gradient-to-br from-rose-950/50 via-[#101526] to-purple-950/40 border border-rose-500/30 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                        <Mic className="w-4 h-4 text-rose-400" />
+                        <span>Voice Cover Studio (Record Voiceover)</span>
+                      </p>
+                      <p className="text-[11px] text-slate-300 mt-0.5">
+                        Record your own voice directly over your video, then transform it with 52 comedy, girl, male, children & Nigerian voices!
+                      </p>
+                    </div>
+                    {isRecordingVoice && (
+                      <span className="px-2.5 py-1 rounded-full bg-rose-600 text-white text-[11px] font-mono font-extrabold animate-pulse">
+                        ● REC {recordingSeconds.toFixed(1)}s
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Mute original video audio while recording checkbox */}
+                  <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={muteVideoDuringRecord}
+                      onChange={(e) =>
+                        setMuteVideoDuringRecord(e.target.checked)
+                      }
+                      className="rounded accent-rose-500"
+                    />
+                    <span>
+                      Mute original video clip audio when applying Voice Cover
+                    </span>
+                  </label>
+
+                  {/* Start / Stop Voice Recording Buttons */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {!isRecordingVoice ? (
+                      <button
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={handleStartVoiceCoverRecording}
+                        className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-extrabold inline-flex items-center justify-center gap-2 shadow-lg"
+                      >
+                        <Mic className="w-4 h-4" />
+                        <span>Tap to Record Voice Cover</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleStopVoiceCoverRecording}
+                        className="flex-1 py-3 px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-extrabold inline-flex items-center justify-center gap-2 shadow-lg animate-pulse"
+                      >
+                        <MicOff className="w-4 h-4" />
+                        <span>
+                          Stop & Save Recording ({recordingSeconds.toFixed(1)}s)
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Active Recorded Voice Cover Status Card */}
+                  {project.voiceoverAudioUrl && (
+                    <div className="p-3 rounded-xl bg-black/45 border border-white/10 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-bold text-emerald-300">
+                            {project.voiceoverName || 'My Voice Cover'}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            Length: {(project.voiceoverDuration || 5).toFixed(1)}s · Active Voice:{' '}
+                            <span className="text-purple-300 font-semibold">
+                              {getVoicePresetById(project.voicePresetId || 'original').name}
+                            </span>
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={toggleVoiceoverPreview}
+                            className="px-2.5 py-1.5 rounded-lg bg-[#4A90E2] text-white text-xs font-bold inline-flex items-center gap-1"
+                          >
+                            {isVoicePreviewing ? (
+                              <>
+                                <Pause className="w-3.5 h-3.5" /> Stop
+                              </>
+                            ) : (
+                              <>
+                                <Play className="w-3.5 h-3.5" /> Listen
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setAudioSubMode('voice_changer')}
+                            className="px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold inline-flex items-center gap-1"
+                          >
+                            <Wand2 className="w-3.5 h-3.5" /> Change Voice (52)
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              rawVoiceBufferRef.current = null;
+                              updateProjectWithHistory((prev) => ({
+                                ...prev,
+                                voiceoverAudioUrl: '',
+                                voiceoverRawUrl: '',
+                                voiceoverName: '',
+                                voiceoverDuration: 0,
+                              }));
+                              showToast('Removed Voice Cover', 'info');
+                            }}
+                            className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300"
+                            title="Delete Voice Cover"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Voice Cover Volume Slider */}
+                      <div>
+                        <div className="flex justify-between text-[11px] text-slate-300 mb-1">
+                          <span>Voice Cover Volume</span>
+                          <span className="font-mono tabular-nums text-emerald-300">
+                            {project.voiceoverVolume ?? 100}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={150}
+                          value={project.voiceoverVolume ?? 100}
+                          onChange={(e) =>
+                            updateProjectWithHistory((prev) => ({
+                              ...prev,
+                              voiceoverVolume: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full accent-emerald-400"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* SUB-MODE 3: 52 VOICE CHANGER STUDIO (NIGERIAN, COMEDY, GIRL, MALE, CHILDREN & MORE FX) */}
+            {audioSubMode === 'voice_changer' && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                      <Wand2 className="w-4 h-4 text-purple-400" />
+                      <span>52 Voice Changer Effects</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Tap any voice to transform your Voice Cover, Extracted Audio, or Video Clip sound in real time
+                    </p>
+                  </div>
+
+                  {project.voiceoverAudioUrl && (
+                    <button
+                      type="button"
+                      onClick={toggleVoiceoverPreview}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5 ${
+                        isVoicePreviewing
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-purple-600 text-white'
+                      }`}
+                    >
+                      {isVoicePreviewing ? (
+                        <>
+                          <Pause className="w-3.5 h-3.5" /> Stop Preview
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3.5 h-3.5" /> Replay Voice
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Input for 52 Voices */}
+                <div className="flex items-center gap-2 bg-[#080B14] border border-white/15 rounded-xl px-3 py-2">
+                  <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={voiceSearchQuery}
+                    onChange={(e) => setVoiceSearchQuery(e.target.value)}
+                    placeholder="Search 52 voices (e.g. Naija, Odogwu, Chipmunk, Girl, Baby, Deep...)"
+                    className="flex-1 bg-transparent text-xs text-white focus:outline-none"
+                  />
+                  {voiceSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setVoiceSearchQuery('')}
+                      className="text-slate-400 hover:text-white"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Category Filter Tabs */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+                  {BEDIT_VOICE_CATEGORIES.map((cat) => {
+                    const active = voiceCategoryFilter === cat;
+                    const labelMap: Record<BEditVoiceCategory, string> = {
+                      All: 'All (52)',
+                      Nigerian: '🇳🇬 Nigerian (10)',
+                      Comedy: '😂 Comedy (12)',
+                      Girl: '👩 Girl (8)',
+                      Male: '👨 Male (8)',
+                      Children: '🧒 Children (6)',
+                      'More FX': '🤖 More FX (8)',
+                    };
+                    return (
+                      <button
+                        key={cat}
+                        type="button"
+                        onClick={() => setVoiceCategoryFilter(cat)}
+                        className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold shrink-0 border transition-colors ${
+                          active
+                            ? 'bg-purple-600 border-purple-400 text-white'
+                            : 'bg-white/5 border-white/10 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {labelMap[cat]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {applyingVoiceBusy && (
+                  <div className="px-3 py-2 rounded-xl bg-purple-950/60 border border-purple-400/40 text-xs font-bold text-purple-200 animate-pulse text-center">
+                    Applying real Web Audio DSP voice transformation...
+                  </div>
+                )}
+
+                {/* 52 Voice Presets Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-0.5">
+                  {BEDIT_VOICE_PRESETS.filter((preset) => {
+                    const matchesCat =
+                      voiceCategoryFilter === 'All' ||
+                      preset.category === voiceCategoryFilter;
+                    const q = voiceSearchQuery.trim().toLowerCase();
+                    const matchesSearch =
+                      !q ||
+                      preset.name.toLowerCase().includes(q) ||
+                      preset.badge.toLowerCase().includes(q) ||
+                      preset.description.toLowerCase().includes(q) ||
+                      preset.category.toLowerCase().includes(q);
+                    return matchesCat && matchesSearch;
+                  }).map((preset) => {
+                    const isSelected =
+                      (project.voicePresetId || 'original') === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={() => handleApplyVoicePreset(preset.id)}
+                        className={`p-2.5 rounded-xl border text-left transition-all ${
+                          isSelected
+                            ? 'bg-purple-600/25 border-purple-400 text-white shadow-md ring-1 ring-purple-400/40'
+                            : 'bg-[#13192B] border-white/10 text-slate-200 hover:border-purple-400/40'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-white/10 text-purple-300 truncate">
+                            {preset.badge}
+                          </span>
+                          {isSelected && (
+                            <span className="text-[10px] font-extrabold text-emerald-400">
+                              ACTIVE
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs font-extrabold text-white mt-1 truncate">
+                          {preset.name}
+                        </p>
+                        <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">
+                          {preset.description}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

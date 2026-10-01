@@ -15,7 +15,11 @@ import {
   Play,
 } from 'lucide-react';
 import { PostItem } from '../types';
-import { apiFetch, setCachedFeed } from '../services/api';
+import {
+  apiFetch,
+  setCachedFeed,
+  updateCachedPostStats,
+} from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from './Avatar';
 import { formatRelativeTime, formatCompactNumber } from '../utils/format';
@@ -45,6 +49,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   const { userProfile, showToast } = useAuth();
   const [isLiked, setIsLiked] = useState(post.isLiked);
   const [likesCount, setLikesCount] = useState(post.likesCount);
+  const [commentsCount, setCommentsCount] = useState(post.commentsCount);
   const [isSaved, setIsSaved] = useState(post.isSaved);
   const [savesCount, setSavesCount] = useState(post.savesCount);
   const [isFollowing, setIsFollowing] = useState(post.isFollowingAuthor);
@@ -56,9 +61,41 @@ export const PostCard: React.FC<PostCardProps> = ({
   useEffect(() => {
     setIsLiked(post.isLiked);
     setLikesCount(post.likesCount);
+    setCommentsCount(post.commentsCount);
     setIsSaved(post.isSaved);
     setSavesCount(post.savesCount);
-  }, [post.id, post.isLiked, post.likesCount, post.isSaved, post.savesCount]);
+  }, [
+    post.id,
+    post.isLiked,
+    post.likesCount,
+    post.commentsCount,
+    post.isSaved,
+    post.savesCount,
+  ]);
+
+  useEffect(() => {
+    const handlePostStatSync = (e: Event) => {
+      const custom = e as CustomEvent<{
+        postId: string;
+        patch: Partial<PostItem>;
+      }>;
+      if (!custom.detail || String(custom.detail.postId) !== String(post.id)) {
+        return;
+      }
+      const { patch } = custom.detail;
+      if (typeof patch.isLiked === 'boolean') setIsLiked(patch.isLiked);
+      if (typeof patch.likesCount === 'number') setLikesCount(patch.likesCount);
+      if (typeof patch.commentsCount === 'number') {
+        setCommentsCount(patch.commentsCount);
+      }
+      if (typeof patch.isSaved === 'boolean') setIsSaved(patch.isSaved);
+      if (typeof patch.savesCount === 'number') setSavesCount(patch.savesCount);
+    };
+    window.addEventListener('boosthub:post-updated', handlePostStatSync);
+    return () => {
+      window.removeEventListener('boosthub:post-updated', handlePostStatSync);
+    };
+  }, [post.id]);
 
   const isOwnPost = userProfile?.id === post.userId;
 
@@ -70,25 +107,39 @@ export const PostCard: React.FC<PostCardProps> = ({
     const prevLiked = isLiked;
     const prevCount = likesCount;
     const nextLiked = !prevLiked;
+    const optimisticCount = nextLiked
+      ? prevCount + 1
+      : Math.max(0, prevCount - 1);
     setIsLiked(nextLiked);
-    setLikesCount(nextLiked ? prevCount + 1 : Math.max(0, prevCount - 1));
+    setLikesCount(optimisticCount);
+    updateCachedPostStats(post.id, {
+      isLiked: nextLiked,
+      likesCount: optimisticCount,
+    });
 
     try {
       const res = await apiFetch<{ liked?: boolean; likesCount?: number }>(
         `/api/posts/${post.id}/like`,
         { method: 'POST' }
       );
-      if (typeof res?.liked === 'boolean') {
-        setIsLiked(res.liked);
-      }
-      if (typeof res?.likesCount === 'number') {
-        setLikesCount(res.likesCount);
-      }
-      setCachedFeed('recommended', []);
+      const finalLiked =
+        typeof res?.liked === 'boolean' ? res.liked : nextLiked;
+      const finalCount =
+        typeof res?.likesCount === 'number' ? res.likesCount : optimisticCount;
+      setIsLiked(finalLiked);
+      setLikesCount(finalCount);
+      updateCachedPostStats(post.id, {
+        isLiked: finalLiked,
+        likesCount: finalCount,
+      });
     } catch {
       // Rollback UI safely on failure
       setIsLiked(prevLiked);
       setLikesCount(prevCount);
+      updateCachedPostStats(post.id, {
+        isLiked: prevLiked,
+        likesCount: prevCount,
+      });
       showToast('Something went wrong. Please try again.', 'error');
     } finally {
       likeBusyRef.current = false;
@@ -424,12 +475,12 @@ export const PostCard: React.FC<PostCardProps> = ({
           </button>
 
           <button
-            onClick={() => onOpenComments(post)}
+            onClick={() => onOpenComments({ ...post, commentsCount })}
             className="min-h-[44px] px-3 rounded-xl inline-flex items-center gap-2 text-xs font-medium hover:bg-white/5 hover:text-white transition-colors"
           >
             <MessageCircle className="w-4 h-4" />
             <span className="tabular-nums">
-              {formatCompactNumber(post.commentsCount)}
+              {formatCompactNumber(commentsCount)}
             </span>
           </button>
 

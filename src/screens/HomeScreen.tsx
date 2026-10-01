@@ -93,8 +93,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   }, []);
 
   const fetchPosts = useCallback(
-    async (reset = false) => {
-      if (reset) {
+    async (reset = false, silent = false) => {
+      if (reset && !silent) {
         const cached = getCachedFeed(feedTab);
         if (cached && cached.length > 0) {
           setPosts(cached);
@@ -135,10 +135,53 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   );
 
   useEffect(() => {
-    fetchPosts(true);
+    fetchPosts(true, false);
     fetchStories();
     fetchMissions();
   }, [feedTab]);
+
+  // Listen to immediate local & remote post stat updates (likes, comments, saves)
+  useEffect(() => {
+    const handlePostStatSync = (e: Event) => {
+      const custom = e as CustomEvent<{
+        postId: string;
+        patch: Partial<PostItem>;
+      }>;
+      if (!custom.detail) return;
+      const { postId, patch } = custom.detail;
+      setPosts((prev) =>
+        prev.map((p) => (String(p.id) === String(postId) ? { ...p, ...patch } : p))
+      );
+    };
+    window.addEventListener('boosthub:post-updated', handlePostStatSync);
+    return () => {
+      window.removeEventListener('boosthub:post-updated', handlePostStatSync);
+    };
+  }, []);
+
+  // Strictly enforce 24-hour stories expiration in live UI & periodic background sync
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const nowMs = Date.now();
+      setStories((prev) => {
+        const filtered = prev.filter((st) => {
+          const createdMs = new Date(st.createdAt).getTime();
+          const expiresMs = new Date(st.expiresAt).getTime();
+          return (
+            expiresMs > nowMs && nowMs - createdMs < 24 * 60 * 60 * 1000
+          );
+        });
+        if (filtered.length !== prev.length) {
+          setCachedStories(filtered);
+        }
+        return filtered;
+      });
+      fetchPosts(true, true);
+      fetchStories();
+    }, 6000);
+
+    return () => window.clearInterval(timer);
+  }, [feedTab, fetchStories]);
 
   // Listen to Supabase realtime changes on posts, likes, comments, and stories
   useEffect(() => {
@@ -151,14 +194,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
       latest.type === 'post_comment' ||
       latest.type === 'profile_updated'
     ) {
-      fetchPosts(true);
+      fetchPosts(true, true);
     } else if (
       latest.type === 'new_story' ||
       latest.type === 'story_update'
     ) {
       fetchStories();
     }
-  }, [realtimeEvents, fetchPosts, fetchStories]);
+  }, [realtimeEvents, fetchStories]);
 
   const handlePullRefresh = async () => {
     setRefreshing(true);
