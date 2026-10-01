@@ -18,6 +18,7 @@ import {
 } from '../data/bshopCatalog';
 import {
   dispatchRealPushNotification,
+  showBrowserSystemNotification,
   VAPID_PUBLIC_KEY,
 } from './pushNotifications';
 import {
@@ -76,6 +77,128 @@ function parseProfileMeta(rawJoinReason: any): ProfileMeta {
     }
   }
   return { bio: trimmed };
+}
+
+function buildDeepLinkForNotification(
+  type: string,
+  postId?: string | null,
+  actorId?: string | null
+): string {
+  const cleanType = String(type || 'notification').toLowerCase();
+  if (cleanType === 'like' || cleanType === 'share' || cleanType === 'mention') {
+    return postId
+      ? `?tab=home&post=${encodeURIComponent(postId)}`
+      : '?tab=notifications';
+  }
+  if (cleanType === 'comment' || cleanType === 'reply') {
+    return postId
+      ? `?tab=home&post=${encodeURIComponent(postId)}&comments=1`
+      : '?tab=notifications';
+  }
+  if (cleanType === 'follow') {
+    return actorId
+      ? `?tab=me&profile=${encodeURIComponent(actorId)}`
+      : '?tab=notifications';
+  }
+  if (cleanType === 'friend_request' || cleanType === 'friend_accept') {
+    return '?tab=friends';
+  }
+  if (cleanType === 'dm' || cleanType === 'message' || cleanType === 'boost_bot') {
+    return actorId
+      ? `?messages=${encodeURIComponent(actorId)}`
+      : '?tab=friends';
+  }
+  if (cleanType === 'gift' || cleanType === 'badge') {
+    return '?tab=me&mode=gifts';
+  }
+  return '?tab=notifications';
+}
+
+async function createAndDeliverNotification(params: {
+  targetUser: string;
+  actorUser: string;
+  type: string;
+  title: string;
+  body: string;
+  postId?: string | null;
+  subscription?: any;
+  deliverLockScreenOnCurrentDevice?: boolean;
+}) {
+  const effectiveTarget =
+    params.targetUser === BOOST_BOT_UUID ? ADMIN_ABBA_UUID : params.targetUser;
+
+  const { data: inserted } = await supabase
+    .from('notifications')
+    .insert({
+      target_user: effectiveTarget,
+      actor_user: params.actorUser,
+      type: params.type,
+      title: params.title,
+      body: params.body,
+      post_id: params.postId || null,
+      is_read: false,
+      subscription: params.subscription || null,
+    })
+    .select()
+    .maybeSingle();
+
+  const notifRow = inserted || {
+    id: `${Date.now()}`,
+    target_user: effectiveTarget,
+    actor_user: params.actorUser,
+    type: params.type,
+    title: params.title,
+    body: params.body,
+    post_id: params.postId || null,
+    is_read: false,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    supabase.channel('boosthub-global-realtime').send({
+      type: 'broadcast',
+      event: 'sync',
+      payload: {
+        type: 'notification_created',
+        notification: notifRow,
+      },
+    });
+  } catch {
+    // ignore broadcast error
+  }
+
+  const deepLink = buildDeepLinkForNotification(
+    params.type,
+    params.postId,
+    params.actorUser
+  );
+  const tag = `boosthub-notif-${notifRow.id}`;
+
+  if (params.deliverLockScreenOnCurrentDevice !== false && params.type !== 'gift_tx') {
+    await showBrowserSystemNotification(
+      params.title,
+      params.body,
+      deepLink,
+      tag,
+      {
+        type: params.type,
+        entityId: String(params.postId || params.actorUser || ''),
+        actorId: params.actorUser,
+      }
+    ).catch(() => {});
+  }
+
+  dispatchRealPushNotification({
+    userId: effectiveTarget,
+    title: params.title,
+    body: params.body,
+    type: params.type,
+    entityId: String(params.postId || params.actorUser || ''),
+    actorId: params.actorUser,
+    url: deepLink,
+  }).catch(() => {});
+
+  return notifRow;
 }
 
 export function mapSupabaseRowToUserProfile(
@@ -987,23 +1110,22 @@ export async function handleStaticBackendRequest<T = any>(
           .update({ followers: nextCount })
           .eq('id', targetId);
       }
-      if (targetId !== currentUserId) {
-        const { data: meProf } = await supabase
-          .from('profiles')
-          .select('display_name, username')
-          .eq('id', currentUserId)
-          .maybeSingle();
-        const actorName =
-          meProf?.display_name || meProf?.username || 'Someone';
-        await supabase.from('notifications').insert({
-          target_user: targetId,
-          actor_user: currentUserId,
-          type: 'follow',
-          title: 'New Follower',
-          body: `${actorName} started following you.`,
-          is_read: false,
-        });
-      }
+      const { data: meProf } = await supabase
+        .from('profiles')
+        .select('display_name, username')
+        .eq('id', currentUserId)
+        .maybeSingle();
+      const actorName =
+        currentUserId === ADMIN_ABBA_UUID
+          ? 'Prince Abba'
+          : meProf?.display_name || meProf?.username || 'Someone';
+      await createAndDeliverNotification({
+        targetUser: targetId,
+        actorUser: currentUserId,
+        type: 'follow',
+        title: 'New Follower',
+        body: `${actorName} started following you.`,
+      });
       try {
         supabase.channel('boosthub-global-realtime').send({
           type: 'broadcast',
@@ -1303,22 +1425,23 @@ export async function handleStaticBackendRequest<T = any>(
           .eq('id', authorId);
       }
 
-      if (isNowLiked && authorId !== currentUserId) {
+      if (isNowLiked) {
         const { data: meProf } = await supabase
           .from('profiles')
           .select('display_name, username')
           .eq('id', currentUserId)
           .maybeSingle();
         const actorName =
-          meProf?.display_name || meProf?.username || 'Someone';
-        await supabase.from('notifications').insert({
-          target_user: authorId,
-          actor_user: currentUserId,
+          currentUserId === ADMIN_ABBA_UUID
+            ? 'Prince Abba'
+            : meProf?.display_name || meProf?.username || 'Someone';
+        await createAndDeliverNotification({
+          targetUser: authorId,
+          actorUser: currentUserId,
           type: 'like',
           title: 'New Like',
           body: `${actorName} liked your post.`,
-          post_id: postId,
-          is_read: false,
+          postId,
         });
       }
 
@@ -1380,6 +1503,26 @@ export async function handleStaticBackendRequest<T = any>(
           })
           .eq('id', authorId);
       }
+
+      const { data: meProf } = await supabase
+        .from('profiles')
+        .select('display_name, username')
+        .eq('id', currentUserId)
+        .maybeSingle();
+      const actorName =
+        currentUserId === ADMIN_ABBA_UUID
+          ? 'Prince Abba'
+          : meProf?.display_name || meProf?.username || 'Someone';
+
+      await createAndDeliverNotification({
+        targetUser: authorId,
+        actorUser: currentUserId,
+        type: 'share',
+        title: 'Post Shared',
+        body: `${actorName} shared your post.`,
+        postId,
+      });
+
       return { shared: true } as unknown as T;
     }
 
@@ -1616,17 +1759,16 @@ export async function handleStaticBackendRequest<T = any>(
       const postOwnerId = normalizeTargetUserId(
         String(postRow?.user_id || ADMIN_ABBA_UUID)
       );
-      if (postOwnerId && postOwnerId !== currentUserId) {
-        await supabase.from('notifications').insert({
-          target_user: postOwnerId,
-          actor_user: currentUserId,
-          type: 'comment',
+      if (postOwnerId) {
+        await createAndDeliverNotification({
+          targetUser: postOwnerId,
+          actorUser: currentUserId,
+          type: parentId ? 'reply' : 'comment',
           title: parentId ? 'New Reply on Your Post' : 'New Comment',
           body: `${actorDisplayName} ${
             parentId ? 'replied' : 'commented'
           }: "${content.slice(0, 60)}"`,
-          post_id: postId,
-          is_read: false,
+          postId,
         });
       }
 
@@ -1640,19 +1782,14 @@ export async function handleStaticBackendRequest<T = any>(
         const parentOwnerId = parentRow?.user_id
           ? normalizeTargetUserId(String(parentRow.user_id))
           : null;
-        if (
-          parentOwnerId &&
-          parentOwnerId !== currentUserId &&
-          parentOwnerId !== postOwnerId
-        ) {
-          await supabase.from('notifications').insert({
-            target_user: parentOwnerId,
-            actor_user: currentUserId,
+        if (parentOwnerId && parentOwnerId !== postOwnerId) {
+          await createAndDeliverNotification({
+            targetUser: parentOwnerId,
+            actorUser: currentUserId,
             type: 'reply',
             title: 'New Reply to Your Comment',
             body: `${actorDisplayName} replied: "${content.slice(0, 60)}"`,
-            post_id: postId,
-            is_read: false,
+            postId,
           });
         }
       }
@@ -1986,10 +2123,33 @@ export async function handleStaticBackendRequest<T = any>(
     }
 
     if (action === 'react') {
+      const reactionEmoji = String(body.payload || '🔥');
       await supabase.from('story_reactions').insert({
         story_id: storyId,
         user_id: currentUserId,
-        reaction: String(body.payload || '🔥'),
+        reaction: reactionEmoji,
+      });
+      const [{ data: storyRow }, { data: meProf }] = await Promise.all([
+        supabase.from('stories').select('user_id').eq('id', storyId).maybeSingle(),
+        supabase
+          .from('profiles')
+          .select('display_name, username')
+          .eq('id', currentUserId)
+          .maybeSingle(),
+      ]);
+      const storyOwnerId = normalizeTargetUserId(
+        String(storyRow?.user_id || ADMIN_ABBA_UUID)
+      );
+      const actorName =
+        currentUserId === ADMIN_ABBA_UUID
+          ? 'Prince Abba'
+          : meProf?.display_name || meProf?.username || 'Someone';
+      await createAndDeliverNotification({
+        targetUser: storyOwnerId,
+        actorUser: currentUserId,
+        type: 'story_reaction',
+        title: 'Story Reaction',
+        body: `${actorName} reacted ${reactionEmoji} to your story.`,
       });
       return { ok: true } as unknown as T;
     }
@@ -2001,6 +2161,28 @@ export async function handleStaticBackendRequest<T = any>(
           story_id: storyId,
           user_id: currentUserId,
           message: msg,
+        });
+        const [{ data: storyRow }, { data: meProf }] = await Promise.all([
+          supabase.from('stories').select('user_id').eq('id', storyId).maybeSingle(),
+          supabase
+            .from('profiles')
+            .select('display_name, username')
+            .eq('id', currentUserId)
+            .maybeSingle(),
+        ]);
+        const storyOwnerId = normalizeTargetUserId(
+          String(storyRow?.user_id || ADMIN_ABBA_UUID)
+        );
+        const actorName =
+          currentUserId === ADMIN_ABBA_UUID
+            ? 'Prince Abba'
+            : meProf?.display_name || meProf?.username || 'Someone';
+        await createAndDeliverNotification({
+          targetUser: storyOwnerId,
+          actorUser: currentUserId,
+          type: 'story_reply',
+          title: 'Story Reply',
+          body: `${actorName} replied to your story: "${msg.slice(0, 60)}"`,
         });
       }
       return { ok: true } as unknown as T;
@@ -2091,20 +2273,51 @@ export async function handleStaticBackendRequest<T = any>(
           addressee_id: targetUserId,
           status: 'pending',
         });
-        await supabase.from('notifications').insert({
-          target_user: targetUserId,
-          actor_user: currentUserId,
+        const { data: meProf } = await supabase
+          .from('profiles')
+          .select('display_name, username')
+          .eq('id', currentUserId)
+          .maybeSingle();
+        const actorName =
+          currentUserId === ADMIN_ABBA_UUID
+            ? 'Prince Abba'
+            : meProf?.display_name || meProf?.username || 'Someone';
+        await createAndDeliverNotification({
+          targetUser: targetUserId,
+          actorUser: currentUserId,
           type: 'friend_request',
           title: 'Friend Request',
-          body: 'sent you a friend request.',
-          is_read: false,
+          body: `${actorName} sent you a friend request.`,
         });
       }
     } else if (action === 'accept' && friendshipId) {
+      const { data: frRow } = await supabase
+        .from('friendships')
+        .select('*')
+        .eq('id', friendshipId)
+        .maybeSingle();
       await supabase
         .from('friendships')
         .update({ status: 'accepted' })
         .eq('id', friendshipId);
+      if (frRow?.requester_id) {
+        const { data: meProf } = await supabase
+          .from('profiles')
+          .select('display_name, username')
+          .eq('id', currentUserId)
+          .maybeSingle();
+        const actorName =
+          currentUserId === ADMIN_ABBA_UUID
+            ? 'Prince Abba'
+            : meProf?.display_name || meProf?.username || 'Someone';
+        await createAndDeliverNotification({
+          targetUser: normalizeTargetUserId(String(frRow.requester_id)),
+          actorUser: currentUserId,
+          type: 'friend_accept',
+          title: 'Friend Request Accepted',
+          body: `${actorName} accepted your friend request!`,
+        });
+      }
     } else if ((action === 'decline' || action === 'remove') && friendshipId) {
       await supabase.from('friendships').delete().eq('id', friendshipId);
     }
@@ -2488,29 +2701,30 @@ export async function handleStaticBackendRequest<T = any>(
       const mediaUrl = String(body.mediaUrl || '').trim();
       const mediaType = String(body.mediaType || '');
 
-      const { data: inserted, error } = await supabase
-        .from('notifications')
-        .insert({
-          target_user: partnerId,
-          actor_user: currentUserId,
-          type: 'dm',
-          title: 'Direct Message',
-          body: content,
-          post_id: body.sharedPostId || null,
-          is_read: false,
-          subscription: {
-            mediaUrl,
-            mediaType,
-            replyToId: body.replyToId || null,
-            reaction: '',
-          },
-        })
-        .select()
-        .single();
+      const { data: meProf } = await supabase
+        .from('profiles')
+        .select('display_name, username')
+        .eq('id', currentUserId)
+        .maybeSingle();
+      const actorName =
+        currentUserId === ADMIN_ABBA_UUID
+          ? 'Prince Abba'
+          : meProf?.display_name || meProf?.username || 'Someone';
 
-      if (error || !inserted) {
-        throw new Error(error?.message || 'Failed to send message.');
-      }
+      const inserted = await createAndDeliverNotification({
+        targetUser: partnerId,
+        actorUser: currentUserId,
+        type: 'dm',
+        title: `Message from ${actorName}`,
+        body: content || 'Sent you media',
+        postId: body.sharedPostId ? String(body.sharedPostId) : null,
+        subscription: {
+          mediaUrl,
+          mediaType,
+          replyToId: body.replyToId || null,
+          reaction: '',
+        },
+      });
 
       return {
         id: inserted.id,
@@ -2801,16 +3015,15 @@ export async function handleStaticBackendRequest<T = any>(
       },
     });
 
-    // Also create visible alert for recipient
-    await supabase.from('notifications').insert({
-      target_user: receiverId,
-      actor_user: currentUserId,
+    // Also create visible alert for recipient and deliver to lock screen & notification bar
+    await createAndDeliverNotification({
+      targetUser: receiverId,
+      actorUser: currentUserId,
       type: 'badge',
       title: `${item.icon} ${
         isAbba ? 'Prince Abba' : senderRow?.display_name || 'Someone'
       } sent you ${qty} ${item.name}`,
       body: body.message || `Added +${item.recognitionPoints * qty} Recognition`,
-      is_read: false,
     });
 
     const recMeta = parseProfileMeta(receiverRow.join_reason);

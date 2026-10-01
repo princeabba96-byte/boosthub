@@ -123,7 +123,7 @@ export function getServiceWorkerScope(): string {
 }
 
 export function getServiceWorkerScriptUrl(): string {
-  return `${getServiceWorkerScope()}sw.js?v=30`;
+  return `${getServiceWorkerScope()}sw.js?v=31`;
 }
 
 export function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -165,15 +165,31 @@ export async function ensureServiceWorkerRegistration(): Promise<ServiceWorkerRe
   return reg;
 }
 
+const recentlyShownNotificationTags = new Map<string, number>();
+
 export async function showBrowserSystemNotification(
   title: string,
   body: string,
-  url = '?tab=notifications'
+  url = '?tab=notifications',
+  tag?: string,
+  extraData?: {
+    type?: string;
+    entityId?: string;
+    actorId?: string;
+  }
 ) {
   if (typeof window === 'undefined') return;
   if (!('Notification' in window) || Notification.permission !== 'granted') {
     return;
   }
+
+  const effectiveTag = tag || `boosthub-${Date.now()}`;
+  const now = Date.now();
+  const prevShownAt = recentlyShownNotificationTags.get(effectiveTag);
+  if (prevShownAt && now - prevShownAt < 60_000) {
+    return;
+  }
+  recentlyShownNotificationTags.set(effectiveTag, now);
 
   const scope = getServiceWorkerScope();
   const resolvedUrl = url.startsWith('http')
@@ -186,17 +202,31 @@ export async function showBrowserSystemNotification(
     body,
     icon: `${scope}icons/icon-192x192.png`,
     badge: `${scope}icons/icon-192x192.png`,
-    tag: `boosthub-${Date.now()}`,
+    tag: effectiveTag,
     renotify: true,
+    silent: false,
+    requireInteraction: false,
     vibrate: [200, 100, 200],
-    data: { url: resolvedUrl },
+    timestamp: now,
+    actions: [
+      {
+        action: 'open',
+        title: 'Open BoostHub',
+      },
+    ],
+    data: {
+      url: resolvedUrl,
+      type: extraData?.type || 'notification',
+      entityId: extraData?.entityId || '',
+      actorId: extraData?.actorId || '',
+    },
   };
 
   if ('serviceWorker' in navigator) {
     try {
       const reg = await ensureServiceWorkerRegistration();
       if (reg && typeof reg.showNotification === 'function') {
-        await reg.showNotification(title, notifOptions);
+        await reg.showNotification(title || 'BoostHub', notifOptions);
         return;
       }
     } catch {
@@ -205,7 +235,7 @@ export async function showBrowserSystemNotification(
   }
 
   try {
-    new Notification(title, notifOptions);
+    new Notification(title || 'BoostHub', notifOptions);
   } catch {
     // ignore
   }

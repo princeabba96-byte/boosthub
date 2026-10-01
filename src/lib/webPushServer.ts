@@ -3,6 +3,7 @@ import webpush from 'web-push';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.ts';
 import { pushSubscriptions, profiles } from '../db/schema.ts';
+import { supabase } from './supabase.ts';
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   NotificationBatchFrequency,
@@ -462,4 +463,133 @@ export async function sendPushNotificationToUser(
     console.warn('Could not dispatch Web Push notification:', err);
     return { sent: 0 };
   }
+}
+
+const processedSupabaseNotifIds = new Set<string>();
+let bridgeStarted = false;
+
+export async function dispatchSupabaseNotificationToWebPush(row: any) {
+  if (!isWebPushConfigured || !row || !row.id) return { sent: 0 };
+  const rowId = String(row.id);
+  if (processedSupabaseNotifIds.has(rowId)) return { sent: 0 };
+  processedSupabaseNotifIds.add(rowId);
+
+  if (row.type === 'gift_tx' || row.type === 'test_rt') {
+    return { sent: 0 };
+  }
+
+  try {
+    const { data: allSubs } = await supabase
+      .from('push_subscriptions')
+      .select('*');
+    const subsList = allSubs || [];
+    if (subsList.length === 0) return { sent: 0 };
+
+    const targetUid = String(row.target_user || '');
+    const matchingSubs = subsList.filter((s: any) => {
+      const uid = String(s.user_id || s.subscription?.userId || '');
+      return uid === targetUid;
+    });
+
+    const effectiveSubs = matchingSubs.length > 0 ? matchingSubs : subsList;
+    const notifType = String(row.type || 'notification').toLowerCase();
+    const targetUrl = buildServerDeepLinkUrl(
+      notifType,
+      row.post_id ? String(row.post_id) : undefined,
+      row.actor_user ? String(row.actor_user) : undefined
+    );
+
+    const payloadStr = JSON.stringify({
+      title: row.title || 'BoostHub',
+      body: row.body || 'You have a new notification on BoostHub',
+      icon: '/boosthub/icons/icon-192x192.png',
+      badge: '/boosthub/icons/icon-192x192.png',
+      type: notifType,
+      entityId: String(row.post_id || row.actor_user || ''),
+      actorId: String(row.actor_user || ''),
+      tag: `boosthub-notif-${rowId}`,
+      url: targetUrl,
+    });
+
+    let sent = 0;
+    for (const s of effectiveSubs) {
+      const endpoint = String(s.endpoint || s.subscription?.endpoint || '');
+      const p256dh = String(s.p256dh || s.subscription?.keys?.p256dh || '');
+      const auth = String(s.auth || s.subscription?.keys?.auth || '');
+      if (!endpoint || !p256dh || !auth) continue;
+
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint,
+            keys: { p256dh, auth },
+          },
+          payloadStr
+        );
+        sent++;
+      } catch (err: any) {
+        if (
+          err?.statusCode === 401 ||
+          err?.statusCode === 403 ||
+          err?.statusCode === 404 ||
+          err?.statusCode === 410
+        ) {
+          await supabase.from('push_subscriptions').delete().eq('id', s.id);
+        }
+      }
+    }
+
+    return { sent };
+  } catch {
+    return { sent: 0 };
+  }
+}
+
+export function startSupabaseRealtimePushBridge() {
+  if (bridgeStarted || !isWebPushConfigured) return;
+  bridgeStarted = true;
+
+  const startIso = new Date(Date.now() - 5000).toISOString();
+
+  supabase
+    .from('notifications')
+    .select('id')
+    .order('created_at', { ascending: false })
+    .limit(50)
+    .then(({ data }) => {
+      (data || []).forEach((n: any) => {
+        if (n?.id) processedSupabaseNotifIds.add(String(n.id));
+      });
+    });
+
+  supabase
+    .channel('server-supabase-push-bridge')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'notifications' },
+      (payload) => {
+        if (payload?.new) {
+          dispatchSupabaseNotificationToWebPush(payload.new).catch(() => {});
+        }
+      }
+    )
+    .subscribe();
+
+  setInterval(async () => {
+    try {
+      const { data: recent } = await supabase
+        .from('notifications')
+        .select('*')
+        .gt('created_at', startIso)
+        .order('created_at', { ascending: false })
+        .limit(10);
+      for (const r of recent || []) {
+        if (r?.id && !processedSupabaseNotifIds.has(String(r.id))) {
+          await dispatchSupabaseNotificationToWebPush(r);
+        }
+      }
+    } catch {
+      // ignore transient network errors
+    }
+  }, 4000);
 }

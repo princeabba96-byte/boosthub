@@ -66,9 +66,11 @@ import {
   removeUserPushSubscription,
   getUserPushSubscriptionStatus,
   sendPushNotificationToUser,
+  startSupabaseRealtimePushBridge,
 } from './src/lib/webPushServer.ts';
 
 dotenv.config({ override: true });
+startSupabaseRealtimePushBridge();
 
 interface RealtimeClient {
   userId: string;

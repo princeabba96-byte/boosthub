@@ -226,9 +226,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     }
   }, [userProfile]);
 
-  // Subscribe to Supabase Realtime Postgres Changes across all tables
+  // Subscribe to Supabase Realtime Postgres Changes across all tables + background notification lock-screen delivery
   useEffect(() => {
     if (!userProfile) return;
+
+    const seenNotifIds = new Set<string>();
+    const mountIso = new Date(Date.now() - 5000).toISOString();
 
     const pushEvent = (type: string, payload: any) => {
       setRealtimeEvents((prev) => [
@@ -237,13 +240,109 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       ]);
     };
 
+    const deliverIncomingNotificationRow = (row: any) => {
+      if (!row || !row.id) return;
+      const rowId = String(row.id);
+      if (seenNotifIds.has(rowId)) return;
+      seenNotifIds.add(rowId);
+
+      if (row.type === 'gift_tx' || row.type === 'test_rt') return;
+
+      const isForMe =
+        String(row.target_user) === userProfile.id ||
+        String(row.actor_user) === userProfile.id;
+      if (!isForMe) return;
+
+      const notifType = String(row.type || 'notification').toLowerCase();
+      let deepLink = '?tab=notifications';
+      if (notifType === 'like' || notifType === 'share' || notifType === 'mention') {
+        deepLink = row.post_id
+          ? `?tab=home&post=${encodeURIComponent(String(row.post_id))}`
+          : '?tab=notifications';
+      } else if (notifType === 'comment' || notifType === 'reply') {
+        deepLink = row.post_id
+          ? `?tab=home&post=${encodeURIComponent(String(row.post_id))}&comments=1`
+          : '?tab=notifications';
+      } else if (notifType === 'follow') {
+        deepLink = row.actor_user
+          ? `?tab=me&profile=${encodeURIComponent(String(row.actor_user))}`
+          : '?tab=notifications';
+      } else if (notifType === 'friend_request' || notifType === 'friend_accept') {
+        deepLink = '?tab=friends';
+      } else if (notifType === 'dm' || notifType === 'message' || notifType === 'boost_bot') {
+        deepLink = row.actor_user
+          ? `?messages=${encodeURIComponent(String(row.actor_user))}`
+          : '?tab=friends';
+      } else if (notifType === 'gift' || notifType === 'badge') {
+        deepLink = '?tab=me&mode=gifts';
+      }
+
+      if (String(row.target_user) === userProfile.id) {
+        if (notifType === 'dm') {
+          showToast(`${row.title || 'New Message'}: ${row.body || ''}`, 'info');
+        } else {
+          showToast(`${row.title || 'Alert'}: ${row.body || ''}`, 'info');
+        }
+      }
+
+      showBrowserSystemNotification(
+        row.title || 'BoostHub Alert',
+        row.body || 'You have a new notification on BoostHub',
+        deepLink,
+        `boosthub-notif-${rowId}`,
+        {
+          type: notifType,
+          entityId: String(row.post_id || row.actor_user || ''),
+          actorId: String(row.actor_user || ''),
+        }
+      );
+    };
+
+    // Seed existing notifications so only new notifications fire lock-screen alerts
+    supabase
+      .from('notifications')
+      .select('id')
+      .order('created_at', { ascending: false })
+      .limit(30)
+      .then(({ data }) => {
+        (data || []).forEach((n: any) => {
+          if (n?.id) seenNotifIds.add(String(n.id));
+        });
+      });
+
+    const pollTimer = window.setInterval(async () => {
+      try {
+        const { data: recentRows } = await supabase
+          .from('notifications')
+          .select('*')
+          .gt('created_at', mountIso)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        if (recentRows && recentRows.length > 0) {
+          for (const r of [...recentRows].reverse()) {
+            if (!seenNotifIds.has(String(r.id))) {
+              deliverIncomingNotificationRow(r);
+              pushEvent('notification', r);
+              refreshBadgesCount();
+            }
+          }
+        }
+      } catch {
+        // ignore transient network error
+      }
+    }, 4000);
+
     const channel = supabase
       .channel('boosthub-global-realtime', {
         config: { broadcast: { self: false } },
       })
       .on('broadcast', { event: 'sync' }, (msg) => {
         const data = msg?.payload || {};
-        if (data.type === 'post_comment' && data.postId) {
+        if (data.type === 'notification_created' && data.notification) {
+          deliverIncomingNotificationRow(data.notification);
+          pushEvent('notification', data.notification);
+          refreshBadgesCount();
+        } else if (data.type === 'post_comment' && data.postId) {
           if (typeof data.commentsCount === 'number') {
             updateCachedPostStats(data.postId, {
               commentsCount: data.commentsCount,
@@ -340,21 +439,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           const row: any = payload.new;
           pushEvent('notification', row);
           refreshBadgesCount();
-          if (
-            payload.eventType === 'INSERT' &&
-            row &&
-            String(row.target_user) === userProfile.id
-          ) {
-            if (row.type === 'dm') {
-              showToast('New direct message received', 'info');
-            } else if (row.type !== 'gift_tx') {
-              showToast(`${row.title || 'Alert'}: ${row.body || ''}`, 'info');
-              showBrowserSystemNotification(
-                row.title || 'BoostHub Alert',
-                row.body || '',
-                '/?tab=notifications'
-              );
-            }
+          if (payload.eventType === 'INSERT' && row) {
+            deliverIncomingNotificationRow(row);
           }
         }
       )
@@ -377,6 +463,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       .subscribe();
 
     return () => {
+      window.clearInterval(pollTimer);
       supabase.removeChannel(channel);
     };
   }, [userProfile, refreshProfile, refreshBadgesCount, showToast]);
