@@ -533,7 +533,7 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
         {section === 'suggestions' && (
           <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
             <h2 className="text-sm font-semibold text-white">
-              People You May Know
+              Suggested Creators
             </h2>
             {(safeSuggestions || []).length === 0 ? (
               <p className="text-xs text-slate-500 py-8 text-center">

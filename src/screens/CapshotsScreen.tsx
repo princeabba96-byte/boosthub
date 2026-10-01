@@ -44,7 +44,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   const [capshots, setCapshots] = useState<PostItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -124,9 +124,35 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
     watchStartRef.current = Date.now();
     setPaused(false);
     if (videoRef.current) {
+      videoRef.current.defaultMuted = true;
+      videoRef.current.muted = muted;
+      videoRef.current.playsInline = true;
       videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
     }
+    if (!currentVideo?.id) return;
+    const postId = String(currentVideo.id);
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await apiFetch<{
+          ok?: boolean;
+          alreadyViewed?: boolean;
+          viewsCount?: number;
+        }>(`/api/posts/${postId}/watch`, {
+          method: 'POST',
+          body: JSON.stringify({
+            watchDurationSeconds: 3,
+            completionPercentage: 100,
+          }),
+        });
+        if (typeof res?.viewsCount === 'number') {
+          updateCachedPostStats(postId, { viewsCount: res.viewsCount });
+        }
+      } catch {
+        // ignore
+      }
+    }, 3000);
+    return () => window.clearTimeout(timer);
   }, [currentIndex, currentVideo?.id]);
 
   const goNext = () => {

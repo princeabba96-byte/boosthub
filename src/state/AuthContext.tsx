@@ -283,13 +283,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           pushEvent('post_like', data);
           refreshProfile();
           refreshBadgesCount();
+        } else if (data.type === 'post_view' && data.postId) {
+          if (typeof data.viewsCount === 'number') {
+            updateCachedPostStats(data.postId, {
+              viewsCount: data.viewsCount,
+            });
+          }
+          pushEvent('post_view', data);
+        } else if (data.type === 'follow_update') {
+          pushEvent('follow_update', data);
+          refreshProfile();
+          refreshBadgesCount();
         }
       })
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'posts' },
         (payload) => {
+          const newRow: any = payload.new;
+          if (newRow?.id && typeof newRow.views === 'number') {
+            updateCachedPostStats(newRow.id, {
+              viewsCount: Number(newRow.views),
+            });
+          }
           pushEvent('posts_changed', payload.new || payload.old);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'post_views' },
+        (payload) => {
+          pushEvent('post_view', payload.new || payload.old);
         }
       )
       .on(

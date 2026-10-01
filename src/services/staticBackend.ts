@@ -747,6 +747,61 @@ export async function handleStaticBackendRequest<T = any>(
     return { followers, following } as unknown as T;
   }
 
+  if (pathname === '/api/creators/suggested' && method === 'GET') {
+    const [usersRes, profilesRes, followsRes, friendshipsRes, postsRes] =
+      await Promise.all([
+        supabase
+          .from('users')
+          .select('*')
+          .or('verified.eq.true,xp.gt.5000')
+          .limit(10),
+        supabase
+          .from('profiles')
+          .select('*')
+          .or('creator_of_week.eq.true,is_admin.eq.true,xp.gt.5000')
+          .order('xp', { ascending: false })
+          .limit(10),
+        supabase.from('follows').select('*'),
+        supabase.from('friendships').select('*'),
+        supabase.from('posts').select('*'),
+      ]);
+
+    const sourceRows =
+      usersRes.data &&
+      usersRes.data.length > 0 &&
+      usersRes.data.some((u: any) => u.username)
+        ? usersRes.data
+        : profilesRes.data || [];
+
+    const creators = sourceRows.map((row: any) => {
+      const mapped = mapSupabaseRowToUserProfile(
+        row,
+        followsRes.data || [],
+        friendshipsRes.data || [],
+        postsRes.data || [],
+        currentUserId
+      );
+      const isFollowingCreator = (followsRes.data || []).some(
+        (f: any) =>
+          normalizeTargetUserId(String(f.follower_id || '')) === currentUserId &&
+          normalizeTargetUserId(String(f.following_id || '')) === mapped.id
+      );
+      return {
+        ...mapped,
+        isVerified: Boolean(
+          mapped.isVerified ||
+            row.verified ||
+            row.creator_of_week ||
+            row.is_admin ||
+            Number(row.xp || 0) > 5000
+        ),
+        isFollowing: isFollowingCreator,
+      };
+    });
+
+    return creators as unknown as T;
+  }
+
   const profileFollowToggleMatch = pathname.match(
     /^\/api\/profiles\/([^/]+)\/follow$/
   );
@@ -767,22 +822,40 @@ export async function handleStaticBackendRequest<T = any>(
       .maybeSingle();
 
     if (existing && existing.length > 0) {
-      await supabase.from('follows').delete().eq('id', existing[0].id);
+      await supabase
+        .from('follows')
+        .delete()
+        .eq('follower_id', currentUserId)
+        .eq('following_id', targetId);
+      let nextCount = Math.max(0, Number(targetProf?.followers || 1) - 1);
       if (targetProf) {
-        const nextCount = Math.max(0, Number(targetProf.followers || 0) - 1);
         await supabase
           .from('profiles')
           .update({ followers: nextCount })
           .eq('id', targetId);
       }
-      return { following: false } as unknown as T;
+      try {
+        supabase.channel('boosthub-global-realtime').send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            type: 'follow_update',
+            targetId,
+            following: false,
+            followersCount: nextCount,
+          },
+        });
+      } catch {
+        // ignore
+      }
+      return { following: false, followersCount: nextCount } as unknown as T;
     } else {
       await supabase.from('follows').insert({
         follower_id: currentUserId,
         following_id: targetId,
       });
+      const nextCount = Number(targetProf?.followers || 0) + 1;
       if (targetProf) {
-        const nextCount = Number(targetProf.followers || 0) + 1;
         await supabase
           .from('profiles')
           .update({ followers: nextCount })
@@ -805,7 +878,21 @@ export async function handleStaticBackendRequest<T = any>(
           is_read: false,
         });
       }
-      return { following: true } as unknown as T;
+      try {
+        supabase.channel('boosthub-global-realtime').send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            type: 'follow_update',
+            targetId,
+            following: true,
+            followersCount: nextCount,
+          },
+        });
+      } catch {
+        // ignore
+      }
+      return { following: true, followersCount: nextCount } as unknown as T;
     }
   }
 
@@ -1171,18 +1258,70 @@ export async function handleStaticBackendRequest<T = any>(
     }
 
     if (action === 'watch') {
+      // Strictly enforce 1 VIEW PER PERSON using post_views and video_watch_history in Supabase
+      let alreadyViewedByUser = false;
+
+      // 1. Check / insert into post_views if table exists in Supabase
+      try {
+        const { data: existingPv, error: pvSelectErr } = await supabase
+          .from('post_views')
+          .select('id')
+          .eq('post_id', postId)
+          .eq('user_id', currentUserId);
+        if (!pvSelectErr) {
+          if (existingPv && existingPv.length > 0) {
+            alreadyViewedByUser = true;
+          } else {
+            const { error: pvInsertErr } = await supabase
+              .from('post_views')
+              .insert({
+                post_id: postId,
+                user_id: currentUserId,
+              });
+            if (pvInsertErr) {
+              alreadyViewedByUser = true;
+            } else {
+              await supabase.rpc('increment_view', { post_id_input: postId });
+            }
+          }
+        }
+      } catch {
+        // fallback to video_watch_history check below
+      }
+
+      // 2. Also check / insert into video_watch_history (strictly 1 view per (post_id, user_id))
+      const { data: existingWatchRows } = await supabase
+        .from('video_watch_history')
+        .select('id')
+        .eq('post_id', postId)
+        .eq('user_id', currentUserId);
+
+      if (existingWatchRows && existingWatchRows.length > 0) {
+        alreadyViewedByUser = true;
+      }
+
+      if (alreadyViewedByUser) {
+        return {
+          ok: true,
+          alreadyViewed: true,
+          viewsCount: Number(postRow.views || 0),
+        } as unknown as T;
+      }
+
       const newViews = Number(postRow.views || 0) + 1;
       await supabase
         .from('posts')
         .update({ views: newViews })
         .eq('id', postId);
+
       await supabase.from('video_watch_history').insert({
         post_id: postId,
         user_id: currentUserId,
-        watch_seconds: Math.round(Number(body.watchDurationSeconds || 5)),
-        completion_percent: Math.round(Number(body.completionPercentage || 80)),
-        completed: Boolean(Number(body.completionPercentage || 0) >= 80),
+        watch_seconds: Math.max(3, Math.round(Number(body.watchDurationSeconds || 3))),
+        completion_percent: Math.round(Number(body.completionPercentage || 100)),
+        completed: true,
       });
+
       const { data: authorProf } = await supabase
         .from('profiles')
         .select('views')
@@ -1194,7 +1333,26 @@ export async function handleStaticBackendRequest<T = any>(
           .update({ views: Number(authorProf.views || 0) + 1 })
           .eq('id', authorId);
       }
-      return { ok: true, viewsCount: newViews } as unknown as T;
+
+      try {
+        supabase.channel('boosthub-global-realtime').send({
+          type: 'broadcast',
+          event: 'sync',
+          payload: {
+            type: 'post_view',
+            postId,
+            viewsCount: newViews,
+          },
+        });
+      } catch {
+        // ignore broadcast error
+      }
+
+      return {
+        ok: true,
+        alreadyViewed: false,
+        viewsCount: newViews,
+      } as unknown as T;
     }
   }
 

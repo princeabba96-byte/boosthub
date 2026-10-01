@@ -13,6 +13,8 @@ import {
   UserPlus,
   UserCheck,
   Play,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { PostItem } from '../types';
 import {
@@ -50,27 +52,42 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [isLiked, setIsLiked] = useState(post.isLiked);
   const [likesCount, setLikesCount] = useState(post.likesCount);
   const [commentsCount, setCommentsCount] = useState(post.commentsCount);
+  const [viewsCount, setViewsCount] = useState(post.viewsCount);
   const [isSaved, setIsSaved] = useState(post.isSaved);
   const [savesCount, setSavesCount] = useState(post.savesCount);
   const [isFollowing, setIsFollowing] = useState(post.isFollowingAuthor);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mediaError, setMediaError] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(17);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const likeBusyRef = useRef(false);
-  const watchStartRef = useRef<number | null>(null);
+
+  const formatVideoClock = (sec: number) => {
+    const safe = Math.max(0, Math.floor(Number.isFinite(sec) ? sec : 0));
+    const mins = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
 
   useEffect(() => {
     setIsLiked(post.isLiked);
     setLikesCount(post.likesCount);
     setCommentsCount(post.commentsCount);
+    setViewsCount(post.viewsCount);
     setIsSaved(post.isSaved);
     setSavesCount(post.savesCount);
+    setIsFollowing(post.isFollowingAuthor);
   }, [
     post.id,
     post.isLiked,
     post.likesCount,
     post.commentsCount,
+    post.viewsCount,
     post.isSaved,
     post.savesCount,
+    post.isFollowingAuthor,
   ]);
 
   useEffect(() => {
@@ -88,6 +105,7 @@ export const PostCard: React.FC<PostCardProps> = ({
       if (typeof patch.commentsCount === 'number') {
         setCommentsCount(patch.commentsCount);
       }
+      if (typeof patch.viewsCount === 'number') setViewsCount(patch.viewsCount);
       if (typeof patch.isSaved === 'boolean') setIsSaved(patch.isSaved);
       if (typeof patch.savesCount === 'number') setSavesCount(patch.savesCount);
     };
@@ -222,8 +240,16 @@ export const PostCard: React.FC<PostCardProps> = ({
     .map((t) => t.trim())
     .filter(Boolean);
 
+  useEffect(() => {
+    if (videoRef.current) {
+      videoRef.current.defaultMuted = true;
+      videoRef.current.muted = isMuted;
+      videoRef.current.playsInline = true;
+    }
+  }, [isMuted, post.id]);
+
   return (
-    <article className="bg-[#0B1021]/90 border border-white/[0.08] rounded-3xl p-4 sm:p-5 transition-colors hover:border-white/[0.14]">
+    <article className="bg-[#131A2A] border border-white/[0.08] rounded-3xl p-4 sm:p-5 transition-colors hover:border-white/[0.14]">
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
@@ -237,25 +263,23 @@ export const PostCard: React.FC<PostCardProps> = ({
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => onSelectUser(post.author.id)}
-                className="text-sm font-semibold text-white hover:underline truncate"
+                className="text-sm font-bold text-white hover:underline truncate"
               >
                 {post.author.displayName}
               </button>
               {post.author.isVerified && (
-                <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
+                <CheckCircle2 className="w-4 h-4 text-[#2B8CFF] shrink-0" />
               )}
             </div>
-            {/* Zero-pill static metadata with clean typographic separators */}
+            {/* Metadata row: @Abba · 2d ago · Creators */}
             <div className="flex items-center gap-1.5 text-xs text-slate-400 truncate">
               <span>@{post.author.username}</span>
               <span aria-hidden="true">·</span>
               <span>{formatRelativeTime(post.createdAt)}</span>
-              {post.category && (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-slate-300">{post.category}</span>
-                </>
-              )}
+              <span aria-hidden="true">·</span>
+              <span className="text-[#2B8CFF] font-medium">
+                {post.category || 'Creators'}
+              </span>
             </div>
           </div>
         </div>
@@ -355,90 +379,141 @@ export const PostCard: React.FC<PostCardProps> = ({
       {/* Media Slot */}
       {post.mediaUrl && !mediaError && (() => {
         const studioMeta = parseStudioUrlHash(post.mediaUrl);
+        const isVideoPost =
+          post.postType === 'video' || post.postType === 'capshot';
+        const progressPct =
+          videoDuration > 0
+            ? Math.min(100, Math.max(0, (videoCurrentTime / videoDuration) * 100))
+            : 0;
+
         return (
-          <div className="mt-3.5 rounded-2xl overflow-hidden bg-black/60 border border-white/10 max-h-[520px] flex items-center justify-center relative">
-            {post.postType === 'video' || post.postType === 'capshot' ? (
-              <video
-                src={post.mediaUrl}
-                poster={post.thumbnailUrl || undefined}
-                controls
-                playsInline
-                preload="metadata"
-                style={
-                  studioMeta
-                    ? {
-                        filter: buildCssFilterString(studioMeta),
-                        transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
-                          (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
-                        }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
-                      }
-                    : undefined
-                }
-                onLoadedMetadata={(e) => {
-                  const vid = e.currentTarget;
-                  if (studioMeta?.playbackSpeed) {
-                    vid.playbackRate = studioMeta.playbackSpeed;
+          <div
+            className={`mt-3.5 rounded-2xl overflow-hidden bg-black border border-white/10 flex items-center justify-center relative ${
+              isVideoPost
+                ? 'aspect-[9/16] w-full max-h-[540px]'
+                : 'max-h-[520px]'
+            }`}
+          >
+            {isVideoPost ? (
+              <>
+                <video
+                  ref={videoRef}
+                  data-post-id={post.id}
+                  src={post.mediaUrl}
+                  poster={post.thumbnailUrl || undefined}
+                  muted={isMuted}
+                  playsInline
+                  loop
+                  preload="auto"
+                  onClick={(e) => {
+                    const vid = e.currentTarget;
+                    if (vid.paused) {
+                      vid.play().catch(() => {});
+                    } else {
+                      vid.pause();
+                    }
+                  }}
+                  style={
+                    studioMeta
+                      ? {
+                          filter: buildCssFilterString(studioMeta),
+                          transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
+                            (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
+                          }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
+                        }
+                      : undefined
                   }
-                  if (studioMeta?.muteAudio) {
-                    vid.muted = true;
-                  }
-                  if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
-                    vid.currentTime = studioMeta.trimStart;
-                  }
-                }}
-                onTimeUpdate={(e) => {
-                  const vid = e.currentTarget;
-                  if (
-                    studioMeta?.trimEnd &&
-                    studioMeta.trimEnd > 0 &&
-                    vid.currentTime >= studioMeta.trimEnd
-                  ) {
-                    vid.currentTime = studioMeta.trimStart || 0;
-                  }
-                }}
-                onPlay={() => {
-                  watchStartRef.current = Date.now();
-                }}
-                onPause={(e) => {
-                  if (watchStartRef.current) {
-                    const elapsed = Math.max(
+                  onLoadedMetadata={(e) => {
+                    const vid = e.currentTarget;
+                    if (vid.duration && Number.isFinite(vid.duration)) {
+                      setVideoDuration(vid.duration);
+                    }
+                    if (studioMeta?.playbackSpeed) {
+                      vid.playbackRate = studioMeta.playbackSpeed;
+                    }
+                    if (studioMeta?.muteAudio) {
+                      vid.muted = true;
+                      setIsMuted(true);
+                    }
+                    if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
+                      vid.currentTime = studioMeta.trimStart;
+                    }
+                  }}
+                  onCanPlay={(e) => {
+                    const vid = e.currentTarget;
+                    if (vid.dataset.inView === 'true' && vid.paused) {
+                      vid.muted = isMuted;
+                      vid.play().catch(() => {});
+                    }
+                  }}
+                  onTimeUpdate={(e) => {
+                    const vid = e.currentTarget;
+                    setVideoCurrentTime(vid.currentTime || 0);
+                    if (vid.duration && Number.isFinite(vid.duration)) {
+                      setVideoDuration(vid.duration);
+                    }
+                    if (
+                      studioMeta?.trimEnd &&
+                      studioMeta.trimEnd > 0 &&
+                      vid.currentTime >= studioMeta.trimEnd
+                    ) {
+                      vid.currentTime = studioMeta.trimStart || 0;
+                    }
+                  }}
+                  className="w-full h-full object-cover cursor-pointer"
+                />
+
+                {/* Top-Right Muted Speaker Icon when Auto-Playing */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const nextMuted = !isMuted;
+                    setIsMuted(nextMuted);
+                    if (videoRef.current) {
+                      videoRef.current.muted = nextMuted;
+                    }
+                  }}
+                  className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-white shadow-lg transition-all"
+                  aria-label={isMuted ? 'Unmute video' : 'Mute video'}
+                  title={isMuted ? 'Tap to unmute' : 'Tap to mute'}
+                >
+                  {isMuted ? (
+                    <VolumeX className="w-4 h-4 text-white" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-[#2B8CFF]" />
+                  )}
+                </button>
+
+                {/* Bottom Video Progress Bar & 0:09 / 0:17 Time Display */}
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!videoRef.current || !videoDuration) return;
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const ratio = Math.min(
                       1,
-                      Math.round((Date.now() - watchStartRef.current) / 1000)
+                      Math.max(0, (e.clientX - rect.left) / rect.width)
                     );
-                    watchStartRef.current = null;
-                    const dur = e.currentTarget.duration || 15;
-                    const pct = Math.min(100, Math.round((elapsed / dur) * 100));
-                    apiFetch(`/api/posts/${post.id}/watch`, {
-                      method: 'POST',
-                      body: JSON.stringify({
-                        watchDurationSeconds: elapsed,
-                        completionPercentage: pct,
-                        skipped: elapsed < 2,
-                      }),
-                    }).catch(() => {});
-                    setCachedFeed('recommended', []);
-                  }
-                }}
-                onEnded={(e) => {
-                  const elapsed = watchStartRef.current
-                    ? Math.max(
-                        3,
-                        Math.round((Date.now() - watchStartRef.current) / 1000)
-                      )
-                    : Math.round(e.currentTarget.duration || 15);
-                  watchStartRef.current = null;
-                  apiFetch(`/api/posts/${post.id}/watch`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                      watchDurationSeconds: elapsed,
-                      completionPercentage: 100,
-                      skipped: false,
-                    }),
-                  }).catch(() => {});
-                  setCachedFeed('recommended', []);
-                }}
-                className="w-full max-h-[520px] object-contain"
-              />
+                    videoRef.current.currentTime = ratio * videoDuration;
+                    setVideoCurrentTime(ratio * videoDuration);
+                  }}
+                  className="absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/85 via-black/45 to-transparent pt-6 pb-2.5 px-3.5 cursor-pointer"
+                >
+                  <div className="flex items-center justify-between text-[11px] font-mono font-semibold text-white/95 tabular-nums mb-1.5">
+                    <span>
+                      {formatVideoClock(videoCurrentTime)} /{' '}
+                      {formatVideoClock(videoDuration)}
+                    </span>
+                  </div>
+                  <div className="w-full h-1 bg-white/25 rounded-full overflow-hidden">
+                    <div
+                      style={{ width: `${progressPct}%` }}
+                      className="h-full bg-[#2B8CFF] rounded-full transition-all duration-100"
+                    />
+                  </div>
+                </div>
+              </>
             ) : (
               <img
                 src={post.mediaUrl}
@@ -496,11 +571,9 @@ export const PostCard: React.FC<PostCardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {(post.postType === 'video' || post.postType === 'capshot') && (
-            <span className="text-xs text-slate-400 inline-flex items-center gap-1 tabular-nums mr-1">
-              <Play className="w-3 h-3" /> {formatCompactNumber(post.viewsCount)} views
-            </span>
-          )}
+          <span className="text-xs text-slate-400 inline-flex items-center gap-1 tabular-nums mr-1">
+            <Play className="w-3 h-3" /> {formatCompactNumber(viewsCount)} views
+          </span>
           <button
             onClick={handleToggleSave}
             className={`min-h-[44px] min-w-[44px] rounded-xl inline-flex items-center justify-center transition-colors ${
