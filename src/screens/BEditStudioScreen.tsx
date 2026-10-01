@@ -64,8 +64,11 @@ import {
   BEditVoiceCategory,
   decodeMediaToAudioBuffer,
   extractAudioFromVideoSource,
+  getLanguageCodeForDialect,
   getVoicePresetById,
   renderVoiceChangedAudio,
+  renderRealisticAiVoiceChangedAudio,
+  translateEnglishToNigerianLanguageClient,
 } from '../components/bEditVoiceEngine';
 import { BEditStudioStageAndTimeline } from '../components/BEditStudioStageAndTimeline';
 import {
@@ -116,6 +119,9 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   // Voice Cover & Audio Extraction DSP refs
   const rawVoiceBufferRef = useRef<AudioBuffer | null>(null);
   const extractedAudioBufferRef = useRef<AudioBuffer | null>(null);
+  const voiceoverFileRef = useRef<File | null>(null);
+  const speechRecDuringRecordRef = useRef<any>(null);
+  const recordedTranscriptHintRef = useRef<string>('');
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const recordTimerRef = useRef<number | null>(null);
@@ -133,6 +139,11 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [voiceCategoryFilter, setVoiceCategoryFilter] =
     useState<BEditVoiceCategory>('All');
   const [voiceSearchQuery, setVoiceSearchQuery] = useState('');
+  const [voiceTranscriptText, setVoiceTranscriptText] = useState('');
+  const [translatedDialectText, setTranslatedDialectText] = useState('');
+  const [activeDialectLabel, setActiveDialectLabel] = useState('Igbo');
+  const [activeLangCode, setActiveLangCode] = useState('ig-NG');
+  const [voiceStatusMessage, setVoiceStatusMessage] = useState('');
 
   // Project State + Undo/Redo History Stack
   const [project, setProject] = useState<BEditProjectState>(() =>
@@ -853,16 +864,34 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }
 
         setApplyingVoiceBusy(true);
+        setVoiceStatusMessage(
+          'Transcribing your English voice recording with Gemini 3.8 Flash...'
+        );
         try {
           const decodedBuffer = await decodeMediaToAudioBuffer(recordedBlob);
           rawVoiceBufferRef.current = decodedBuffer;
           const activePresetId = project.voicePresetId || 'original';
           const preset = getVoicePresetById(activePresetId);
-          const rendered = await renderVoiceChangedAudio(
+          const rendered = await renderRealisticAiVoiceChangedAudio(
             decodedBuffer,
             preset.id,
-            'voice_cover'
+            'voice_cover',
+            recordedTranscriptHintRef.current,
+            (statusMsg) => setVoiceStatusMessage(statusMsg)
           );
+          voiceoverFileRef.current = rendered.wavFile;
+          if (rendered.originalTranscript) {
+            setVoiceTranscriptText(rendered.originalTranscript);
+          }
+          if (rendered.translatedText) {
+            setTranslatedDialectText(rendered.translatedText);
+          }
+          if (rendered.targetLanguage) {
+            setActiveDialectLabel(rendered.targetLanguage);
+          }
+          if (rendered.langCode) {
+            setActiveLangCode(rendered.langCode);
+          }
           const rawUrl = URL.createObjectURL(recordedBlob);
 
           updateProjectWithHistory((prev) => ({
@@ -880,7 +909,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               : prev.clips,
           }));
           showToast(
-            `Saved Voice Cover (${rendered.duration}s) with "${preset.name}"!`,
+            `Saved Voice Cover (${rendered.duration}s)! Tap Igbo, Hausa, Yoruba, or Pidgin below to translate & play in real Nigerian voice.`,
             'success'
           );
         } catch {
@@ -895,8 +924,38 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           showToast('Voice Cover saved to timeline!', 'success');
         } finally {
           setApplyingVoiceBusy(false);
+          setVoiceStatusMessage('');
         }
       };
+
+      // Also start live speech recognition during recording if browser supports it
+      recordedTranscriptHintRef.current = '';
+      try {
+        const SpeechRec =
+          (window as unknown as { SpeechRecognition?: any }).SpeechRecognition ||
+          (window as unknown as { webkitSpeechRecognition?: any })
+            .webkitSpeechRecognition;
+        if (SpeechRec) {
+          const rec = new SpeechRec();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = 'en-US';
+          rec.onresult = (event: any) => {
+            let fullText = '';
+            for (let i = 0; i < (event.results?.length || 0); i++) {
+              fullText += (event.results[i]?.[0]?.transcript || '') + ' ';
+            }
+            if (fullText.trim()) {
+              recordedTranscriptHintRef.current = fullText.trim();
+              setVoiceTranscriptText(fullText.trim());
+            }
+          };
+          rec.start();
+          speechRecDuringRecordRef.current = rec;
+        }
+      } catch {
+        // ignore if speech recognition unavailable
+      }
 
       setRecordingSeconds(0);
       setIsRecordingVoice(true);
@@ -928,6 +987,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
   const handleStopVoiceCoverRecording = () => {
     setIsRecordingVoice(false);
+    if (speechRecDuringRecordRef.current) {
+      try {
+        speechRecDuringRecordRef.current.stop();
+      } catch {
+        // ignore
+      }
+      speechRecDuringRecordRef.current = null;
+    }
     if (
       mediaRecorderRef.current &&
       mediaRecorderRef.current.state !== 'inactive'
@@ -951,9 +1018,21 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     el.play().catch(() => setIsVoicePreviewing(false));
   };
 
-  const handleApplyVoicePreset = async (presetId: string) => {
+  const handleApplyVoicePreset = async (
+    presetId: string,
+    overrideEnglishInput?: string
+  ) => {
     const preset = getVoicePresetById(presetId);
+    const targetLang = preset.targetLanguage || 'English';
+    const langCode = getLanguageCodeForDialect(targetLang, preset.category);
+    setActiveDialectLabel(targetLang);
+    setActiveLangCode(langCode);
     setApplyingVoiceBusy(true);
+    setVoiceStatusMessage(
+      targetLang !== 'English'
+        ? `Downloading ${targetLang} voice (${langCode})...`
+        : `Generating realistic ${preset.name} voice...`
+    );
 
     try {
       let sourceBuf =
@@ -974,39 +1053,67 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }
       }
 
-      if (!sourceBuf) {
+      const effectiveEnglishText =
+        (overrideEnglishInput !== undefined
+          ? overrideEnglishInput
+          : voiceTranscriptText
+        ).trim() || recordedTranscriptHintRef.current;
+
+      if (effectiveEnglishText) {
+        setVoiceTranscriptText(effectiveEnglishText);
+        // Immediately translate and display real Igbo/Hausa/Yoruba/Pidgin letters in UI
+        translateEnglishToNigerianLanguageClient(
+          effectiveEnglishText,
+          targetLang
+        ).then((quickTrans) => {
+          if (quickTrans) setTranslatedDialectText(quickTrans);
+        });
+      }
+
+      if (!sourceBuf && !effectiveEnglishText) {
         updateProjectWithHistory((prev) => ({
           ...prev,
           voicePresetId: preset.id,
         }));
         showToast(
-          `Selected "${preset.name}"! Record a Voice Cover or upload a video to hear it.`,
+          `Selected "${preset.name}" (${langCode})! Record a Voice Cover in English (or type/tap a phrase below) to translate & hear it.`,
           'info'
         );
         return;
       }
 
-      const rendered = await renderVoiceChangedAudio(
+      const rendered = await renderRealisticAiVoiceChangedAudio(
         sourceBuf,
         preset.id,
-        'voice_changer'
+        'voice_changer',
+        effectiveEnglishText,
+        (statusMsg) => setVoiceStatusMessage(statusMsg)
       );
+      voiceoverFileRef.current = rendered.wavFile;
+      if (rendered.originalTranscript) {
+        setVoiceTranscriptText(rendered.originalTranscript);
+      }
+      if (rendered.translatedText) {
+        setTranslatedDialectText(rendered.translatedText);
+      }
+      setActiveDialectLabel(rendered.targetLanguage || targetLang);
+      setActiveLangCode(rendered.langCode || langCode);
 
       updateProjectWithHistory((prev) => ({
         ...prev,
         voicePresetId: preset.id,
         voiceoverAudioUrl: rendered.wavUrl,
-        voiceoverName: `${preset.name}`,
+        voiceoverName: `${preset.name} (${rendered.langCode || langCode})`,
         voiceoverDuration: rendered.duration,
         clips:
-          !prev.voiceoverRawUrl && activeClip?.type === 'video'
+          activeClip?.type === 'video'
             ? prev.clips.map((c, idx) =>
                 idx === activeClipIndex ? { ...c, muted: true } : c
               )
             : prev.clips,
       }));
 
-      // Automatically preview the transformed voice
+      // Automatically play the real translated Nigerian voice audio
       window.setTimeout(() => {
         if (voiceoverAudioRef.current) {
           voiceoverAudioRef.current.src = rendered.wavUrl;
@@ -1021,18 +1128,26 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }
       }, 60);
 
-      showToast(`Applied "${preset.name}" voice effect!`, 'success');
+      showToast(
+        targetLang !== 'English'
+          ? `Translated to real ${targetLang} (${langCode}): "${
+              rendered.translatedText || ''
+            }"`
+          : `Applied realistic "${preset.name}" voice!`,
+        'success'
+      );
     } catch {
       updateProjectWithHistory((prev) => ({
         ...prev,
         voicePresetId: preset.id,
       }));
       showToast(
-        `Set "${preset.name}". Record a Voice Cover first to transform your voice!`,
+        `Set "${preset.name}". Record a Voice Cover or enter English text to translate & hear it!`,
         'info'
       );
     } finally {
       setApplyingVoiceBusy(false);
+      setVoiceStatusMessage('');
     }
   };
 
@@ -1181,16 +1296,22 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       const primaryClip = project.clips[0];
       let baseMediaUrl = primaryClip.url;
 
-      // Upload primary clip or exported composite file via existing Supabase / backend storage
+      // Upload primary clip or multi-clip slideshow composite via Supabase storage
+      // For single video clips, ALWAYS preserve the real original MP4 video URL so it plays natively without black WebM issues
       const rawClipFile = clipFilesMapRef.current.get(primaryClip.url);
-      const hasCustomOrVoiceAudio = Boolean(
-        project.voiceoverAudioUrl || project.customAudioUrl || project.clips.length > 1
-      );
-      if (hasCustomOrVoiceAudio && exportedVideoFile) {
-        const uploaded = await uploadMediaWithProgress(
-          exportedVideoFile,
-          'videos'
-        );
+      if (
+        primaryClip.type === 'video' &&
+        project.clips.length === 1 &&
+        baseMediaUrl &&
+        !baseMediaUrl.startsWith('blob:')
+      ) {
+        // Keep the already-uploaded real MP4 URL
+      } else if (
+        primaryClip.type === 'video' &&
+        project.clips.length === 1 &&
+        rawClipFile
+      ) {
+        const uploaded = await uploadMediaWithProgress(rawClipFile, 'videos');
         baseMediaUrl = uploaded.url;
       } else if (
         (!baseMediaUrl || baseMediaUrl.startsWith('blob:')) &&
@@ -1204,6 +1325,22 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           isVidUpload ? 'videos' : 'posts'
         );
         baseMediaUrl = uploaded.url;
+      }
+
+      // Upload voice-changed / Voice Cover audio track so it plays in sync on the feed & Capshots
+      let finalVoiceoverUrl = project.voiceoverAudioUrl || '';
+      if (finalVoiceoverUrl.startsWith('blob:') && voiceoverFileRef.current) {
+        try {
+          const uploadedVo = await uploadMediaWithProgress(
+            voiceoverFileRef.current,
+            'posts'
+          );
+          if (uploadedVo?.url) {
+            finalVoiceoverUrl = uploadedVo.url;
+          }
+        } catch {
+          // ignore
+        }
       }
 
       // Upload chosen thumbnail if it's a data URL
@@ -1254,6 +1391,8 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         soundTrimEnd: project.soundTrimEnd,
         soundLoop: project.soundLoop,
         soundEffect: project.soundEffect,
+        voiceoverAudioUrl: finalVoiceoverUrl || undefined,
+        voiceoverName: project.voiceoverName || undefined,
         stickers: project.stickers,
         texts: project.texts,
         subtitles: project.subtitles,
@@ -2095,6 +2234,88 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     )}
                   </div>
 
+                  {/* Live Status Banner when Downloading / Generating Real Nigerian Voice */}
+                  {applyingVoiceBusy && (
+                    <div className="px-3 py-2 rounded-xl bg-purple-950/80 border border-purple-400/50 text-xs font-extrabold text-purple-200 animate-pulse text-center">
+                      {voiceStatusMessage ||
+                        `Downloading ${activeDialectLabel} voice (${activeLangCode})...`}
+                    </div>
+                  )}
+
+                  {/* Quick One-Tap Nigerian Language Translation & Real Voice Bar right inside Voice Cover */}
+                  <div className="p-2.5 rounded-xl bg-[#090D1A] border border-emerald-500/30 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <span className="text-[11px] font-extrabold text-emerald-300">
+                        🇳🇬 Translate & Speak in Real Nigerian Language:
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={applyingVoiceBusy}
+                          onClick={() => {
+                            const sample = 'I love Port Harcourt';
+                            setVoiceTranscriptText(sample);
+                            handleApplyVoicePreset('igbo_language_male', sample);
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-purple-500/20 border border-purple-400/40 text-[10px] font-bold text-purple-200 hover:bg-purple-500/30"
+                        >
+                          Test: "I love Port Harcourt" → Igbo
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                      {[
+                        { id: 'igbo_language_male', label: '🇳🇬 Igbo (ig-NG)' },
+                        { id: 'hausa_language_male', label: '🇳🇬 Hausa (ha-NG)' },
+                        { id: 'yoruba_language_male', label: '🇳🇬 Yoruba (yo-NG)' },
+                        { id: 'naija_pidgin_male', label: '🇳🇬 Pidgin (en-NG)' },
+                        { id: 'akwa_ibom_male', label: '🇳🇬 Akwa Ibom' },
+                        { id: 'naija_street_hypeman', label: '🇳🇬 Lagos Street' },
+                      ].map((langBtn) => (
+                        <button
+                          key={langBtn.id}
+                          type="button"
+                          disabled={applyingVoiceBusy}
+                          onClick={() => handleApplyVoicePreset(langBtn.id)}
+                          className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold shrink-0 border transition-all ${
+                            project.voicePresetId === langBtn.id
+                              ? 'bg-emerald-600 border-emerald-400 text-white shadow'
+                              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                          }`}
+                        >
+                          {langBtn.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Two Texts Display: 1) Original English & 2) Translated Igbo/Hausa/Yoruba/Pidgin */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                      <div className="p-2 rounded-lg bg-black/50 border border-white/10">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                          Original English:
+                        </span>
+                        <input
+                          type="text"
+                          value={voiceTranscriptText}
+                          onChange={(e) => setVoiceTranscriptText(e.target.value)}
+                          placeholder='e.g. "I love Port Harcourt" or "Hello my friends"'
+                          className="w-full bg-transparent text-xs font-bold text-white mt-0.5 focus:outline-none"
+                        />
+                      </div>
+                      <div className="p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
+                          Translated {activeDialectLabel} ({activeLangCode}):
+                        </span>
+                        <p className="text-xs font-extrabold text-white mt-0.5 break-words">
+                          {translatedDialectText
+                            ? `"${translatedDialectText}"`
+                            : 'Tap Igbo, Hausa, Yoruba, or Pidgin above to translate'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Active Recorded Voice Cover Status Card */}
                   {project.voiceoverAudioUrl && (
                     <div className="p-3 rounded-xl bg-black/45 border border-white/10 space-y-2.5">
@@ -2133,7 +2354,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                             onClick={() => setAudioSubMode('voice_changer')}
                             className="px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold inline-flex items-center gap-1"
                           >
-                            <Wand2 className="w-3.5 h-3.5" /> Change Voice (52)
+                            <Wand2 className="w-3.5 h-3.5" /> All 56 Voices
                           </button>
 
                           <button
@@ -2185,17 +2406,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               </div>
             )}
 
-            {/* SUB-MODE 3: 52 VOICE CHANGER STUDIO (NIGERIAN, COMEDY, GIRL, MALE, CHILDREN & MORE FX) */}
+            {/* SUB-MODE 3: 56 REALISTIC HUMAN VOICES & NIGERIAN DIALECT TRANSLATOR */}
             {audioSubMode === 'voice_changer' && (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
                       <Wand2 className="w-4 h-4 text-purple-400" />
-                      <span>52 Voice Changer Effects</span>
+                      <span>
+                        56 Realistic Human Voices & Dialect Translator
+                      </span>
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Tap any voice to transform your Voice Cover, Extracted Audio, or Video Clip sound in real time
+                      Record your voice in English, then tap any voice below to accurately change all you said into Igbo, Hausa, Yoruba, Akwa Ibom, Nigerian Pidgin, Lagos Street, Male, or Female voice!
                     </p>
                   </div>
 
@@ -2222,14 +2445,157 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                   )}
                 </div>
 
-                {/* Search Input for 52 Voices */}
+                {/* TWO TEXTS STUDIO BOX: 1. Original English & 2. Translated Igbo/Hausa/Yoruba/Pidgin */}
+                <div className="p-3 rounded-xl bg-gradient-to-br from-purple-950/50 via-[#0C1120] to-blue-950/40 border border-purple-500/30 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[11px] font-extrabold text-purple-200">
+                      🎙️ Gemini 3.8 Flash Transcription & Real Nigerian Translator
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={() => {
+                          const sample = 'I love Port Harcourt';
+                          setVoiceTranscriptText(sample);
+                          handleApplyVoicePreset('igbo_language_male', sample);
+                        }}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-400/40 hover:bg-purple-500/30"
+                      >
+                        Test: "I love Port Harcourt"
+                      </button>
+                      <button
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={() => {
+                          const sample = 'Hello my friends';
+                          setVoiceTranscriptText(sample);
+                          handleApplyVoicePreset('igbo_language_male', sample);
+                        }}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/40 hover:bg-blue-500/30"
+                      >
+                        Test: "Hello my friends"
+                      </button>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        {activeDialectLabel} ({activeLangCode})
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* TEXT 1: Original English */}
+                  <div className="p-2.5 rounded-xl bg-[#070A14] border border-white/15 space-y-1">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+                      Original English:
+                    </span>
+                    <input
+                      type="text"
+                      value={voiceTranscriptText}
+                      onChange={(e) => setVoiceTranscriptText(e.target.value)}
+                      placeholder='Record your voice in Voice Cover or type English here (e.g. "I love Port Harcourt")...'
+                      className="w-full bg-transparent text-xs font-bold text-white placeholder-slate-500 focus:outline-none"
+                    />
+                  </div>
+
+                  {/* TEXT 2: Translated Igbo / Hausa / Yoruba / Pidgin */}
+                  <div className="p-2.5 rounded-xl bg-black/55 border border-emerald-500/40 flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 block">
+                        Translated {activeDialectLabel} ({activeLangCode}):
+                      </span>
+                      <p className="text-sm font-extrabold text-white mt-0.5 break-words">
+                        {translatedDialectText
+                          ? `"${translatedDialectText}"`
+                          : 'Tap Igbo, Hausa, Yoruba, or Pidgin below to translate & speak'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {project.voiceoverAudioUrl && (
+                        <button
+                          type="button"
+                          onClick={toggleVoiceoverPreview}
+                          className="px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[10px] font-extrabold inline-flex items-center gap-1"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>
+                            {isVoicePreviewing
+                              ? 'Stop Audio'
+                              : `Play Real ${activeDialectLabel}`}
+                          </span>
+                        </button>
+                      )}
+                      {translatedDialectText && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dur = Math.max(3, totalDuration || 8);
+                            updateProjectWithHistory((prev) => ({
+                              ...prev,
+                              subtitles: [
+                                ...prev.subtitles,
+                                {
+                                  id: `sub_dialect_${Date.now()}`,
+                                  startTime: 0,
+                                  endTime: Number(dur.toFixed(1)),
+                                  text: translatedDialectText,
+                                },
+                              ],
+                            }));
+                            showToast(
+                              `Added ${activeDialectLabel} subtitles to video!`,
+                              'success'
+                            );
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold"
+                        >
+                          + Add Subtitle
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Quick Nigerian Dialect & Realistic Voice Shortcuts */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {[
+                    { id: 'naija_street_hypeman', label: '🇳🇬 Lagos Street' },
+                    { id: 'igbo_language_male', label: '🇳🇬 Igbo (Male)' },
+                    { id: 'igbo_language_female', label: '🇳🇬 Igbo (Female)' },
+                    { id: 'hausa_language_male', label: '🇳🇬 Hausa (Male)' },
+                    { id: 'hausa_language_female', label: '🇳🇬 Hausa (Female)' },
+                    { id: 'yoruba_language_male', label: '🇳🇬 Yoruba (Male)' },
+                    { id: 'yoruba_language_female', label: '🇳🇬 Yoruba (Female)' },
+                    { id: 'akwa_ibom_male', label: '🇳🇬 Akwa Ibom (Male)' },
+                    { id: 'akwa_ibom_female', label: '🇳🇬 Akwa Ibom (Female)' },
+                    { id: 'naija_pidgin_male', label: '🇳🇬 Pidgin (Male)' },
+                    { id: 'naija_pidgin_female', label: '🇳🇬 Pidgin (Female)' },
+                  ].map((quick) => {
+                    const active = project.voicePresetId === quick.id;
+                    return (
+                      <button
+                        key={quick.id}
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={() => handleApplyVoicePreset(quick.id)}
+                        className={`px-2.5 py-1.5 rounded-xl text-[11px] font-extrabold shrink-0 border transition-all ${
+                          active
+                            ? 'bg-emerald-600 border-emerald-400 text-white shadow'
+                            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20'
+                        }`}
+                      >
+                        {quick.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Search Input for 56 Voices */}
                 <div className="flex items-center gap-2 bg-[#080B14] border border-white/15 rounded-xl px-3 py-2">
                   <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   <input
                     type="text"
                     value={voiceSearchQuery}
                     onChange={(e) => setVoiceSearchQuery(e.target.value)}
-                    placeholder="Search 52 voices (e.g. Naija, Odogwu, Chipmunk, Girl, Baby, Deep...)"
+                    placeholder="Search 56 voices (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin, Lagos Street, Male, Female...)"
                     className="flex-1 bg-transparent text-xs text-white focus:outline-none"
                   />
                   {voiceSearchQuery && (
@@ -2248,10 +2614,10 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                   {BEDIT_VOICE_CATEGORIES.map((cat) => {
                     const active = voiceCategoryFilter === cat;
                     const labelMap: Record<BEditVoiceCategory, string> = {
-                      All: 'All (52)',
-                      Nigerian: '🇳🇬 Nigerian (10)',
+                      All: 'All (56)',
+                      Nigerian: '🇳🇬 Nigerian & Languages (14)',
                       Comedy: '😂 Comedy (12)',
-                      Girl: '👩 Girl (8)',
+                      Girl: '👩 Female (8)',
                       Male: '👨 Male (8)',
                       Children: '🧒 Children (6)',
                       'More FX': '🤖 More FX (8)',
@@ -2274,12 +2640,13 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 </div>
 
                 {applyingVoiceBusy && (
-                  <div className="px-3 py-2 rounded-xl bg-purple-950/60 border border-purple-400/40 text-xs font-bold text-purple-200 animate-pulse text-center">
-                    Applying real Web Audio DSP voice transformation...
+                  <div className="px-3 py-2 rounded-xl bg-purple-950/80 border border-purple-400/50 text-xs font-extrabold text-purple-200 animate-pulse text-center">
+                    {voiceStatusMessage ||
+                      `Downloading ${activeDialectLabel} voice (${activeLangCode})...`}
                   </div>
                 )}
 
-                {/* 52 Voice Presets Grid */}
+                {/* 56 Voice Presets Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-0.5">
                   {BEDIT_VOICE_PRESETS.filter((preset) => {
                     const matchesCat =

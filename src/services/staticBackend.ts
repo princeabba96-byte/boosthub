@@ -2763,7 +2763,13 @@ export async function handleStaticBackendRequest<T = any>(
       ]);
 
     const list: NotificationItem[] = (notifsRes.data || [])
-      .filter((n) => n.type !== 'dm' && n.type !== 'gift_tx')
+      .filter(
+        (n) =>
+          n.type !== 'dm' &&
+          n.type !== 'gift_tx' &&
+          n.type !== 'ai_voice_req' &&
+          n.type !== 'ai_voice_res'
+      )
       .map((n) => {
         const actorId = n.actor_user
           ? normalizeTargetUserId(String(n.actor_user))

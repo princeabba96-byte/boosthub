@@ -46,8 +46,10 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [muted, setMuted] = useState(true);
   const [paused, setPaused] = useState(false);
+  const [capshotTime, setCapshotTime] = useState(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const voiceoverAudioRef = useRef<HTMLAudioElement>(null);
   const watchStartRef = useRef<number>(Date.now());
   const touchStartYRef = useRef<number | null>(null);
   const likeBusyRef = useRef(false);
@@ -175,9 +177,14 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
     if (!vid) return;
     if (vid.paused) {
       vid.play().catch(() => {});
+      if (voiceoverAudioRef.current && !muted) {
+        voiceoverAudioRef.current.currentTime = vid.currentTime || 0;
+        voiceoverAudioRef.current.play().catch(() => {});
+      }
       setPaused(false);
     } else {
       vid.pause();
+      voiceoverAudioRef.current?.pause();
       setPaused(true);
     }
   };
@@ -368,7 +375,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
       {/* Preload Next Video in Background */}
       {nextVideo?.mediaUrl && (
         <video
-          src={nextVideo.mediaUrl}
+          src={nextVideo.mediaUrl.split('#')[0]}
           preload="auto"
           muted
           className="hidden"
@@ -390,16 +397,30 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
       >
         {currentVideo.mediaUrl ? (() => {
           const studioMeta = parseStudioUrlHash(currentVideo.mediaUrl);
+          const cleanVideoSrc = currentVideo.mediaUrl.split('#')[0];
+          const attachedAudioUrl =
+            studioMeta?.voiceoverAudioUrl || studioMeta?.customAudioUrl || '';
           return (
             <>
+              {attachedAudioUrl && (
+                <audio
+                  ref={voiceoverAudioRef}
+                  src={attachedAudioUrl}
+                  loop
+                  preload="auto"
+                  muted={muted}
+                  className="hidden"
+                />
+              )}
               <video
                 ref={videoRef}
-                src={currentVideo.mediaUrl}
+                src={cleanVideoSrc}
                 poster={currentVideo.thumbnailUrl || undefined}
                 autoPlay
                 loop
                 playsInline
-                muted={muted || Boolean(studioMeta?.muteAudio)}
+                preload="auto"
+                muted={muted || Boolean(attachedAudioUrl) || Boolean(studioMeta?.muteAudio)}
                 style={
                   studioMeta
                     ? {
@@ -410,6 +431,18 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                       }
                     : undefined
                 }
+                onPlay={() => {
+                  setPaused(false);
+                  if (voiceoverAudioRef.current) {
+                    voiceoverAudioRef.current.muted = muted;
+                    if (!muted) {
+                      voiceoverAudioRef.current.play().catch(() => {});
+                    }
+                  }
+                }}
+                onPause={() => {
+                  voiceoverAudioRef.current?.pause();
+                }}
                 onLoadedMetadata={(e) => {
                   const vid = e.currentTarget;
                   if (studioMeta?.playbackSpeed) {
@@ -421,12 +454,16 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                 }}
                 onTimeUpdate={(e) => {
                   const vid = e.currentTarget;
+                  setCapshotTime(vid.currentTime || 0);
                   if (
                     studioMeta?.trimEnd &&
                     studioMeta.trimEnd > 0 &&
                     vid.currentTime >= studioMeta.trimEnd
                   ) {
                     vid.currentTime = studioMeta.trimStart || 0;
+                    if (voiceoverAudioRef.current) {
+                      voiceoverAudioRef.current.currentTime = 0;
+                    }
                   }
                 }}
                 onClick={togglePlayPause}
@@ -437,6 +474,8 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                 <StudioFloatingOverlays
                   stickers={studioMeta.stickers}
                   texts={studioMeta.texts}
+                  subtitles={studioMeta.subtitles}
+                  currentTime={capshotTime}
                 />
               )}
             </>
@@ -466,7 +505,20 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
         {/* Top Controls: Mute & Swipe Up/Down Buttons */}
         <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-20">
           <button
-            onClick={() => setMuted((m) => !m)}
+            onClick={() => {
+              const nextMuted = !muted;
+              setMuted(nextMuted);
+              if (voiceoverAudioRef.current) {
+                voiceoverAudioRef.current.muted = nextMuted;
+                if (!nextMuted) {
+                  voiceoverAudioRef.current.currentTime =
+                    videoRef.current?.currentTime || 0;
+                  voiceoverAudioRef.current.play().catch(() => {});
+                } else {
+                  voiceoverAudioRef.current.pause();
+                }
+              }
+            }}
             className="min-h-[44px] min-w-[44px] rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center"
           >
             {muted ? (

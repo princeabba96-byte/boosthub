@@ -59,9 +59,11 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [mediaError, setMediaError] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
+  const [isVideoPaused, setIsVideoPaused] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(17);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
   const likeBusyRef = useRef(false);
 
   const formatVideoClock = (sec: number) => {
@@ -379,6 +381,9 @@ export const PostCard: React.FC<PostCardProps> = ({
       {/* Media Slot */}
       {post.mediaUrl && !mediaError && (() => {
         const studioMeta = parseStudioUrlHash(post.mediaUrl);
+        const cleanMediaSrc = post.mediaUrl.split('#')[0];
+        const attachedAudioUrl =
+          studioMeta?.voiceoverAudioUrl || studioMeta?.customAudioUrl || '';
         const isVideoPost =
           post.postType === 'video' || post.postType === 'capshot';
         const progressPct =
@@ -396,12 +401,22 @@ export const PostCard: React.FC<PostCardProps> = ({
           >
             {isVideoPost ? (
               <>
+                {attachedAudioUrl && (
+                  <audio
+                    ref={voiceoverAudioRef}
+                    src={attachedAudioUrl}
+                    loop
+                    preload="auto"
+                    muted={isMuted}
+                    className="hidden"
+                  />
+                )}
                 <video
                   ref={videoRef}
                   data-post-id={post.id}
-                  src={post.mediaUrl}
+                  src={cleanMediaSrc}
                   poster={post.thumbnailUrl || undefined}
-                  muted={isMuted}
+                  muted={isMuted || Boolean(attachedAudioUrl) || Boolean(studioMeta?.muteAudio)}
                   playsInline
                   loop
                   preload="auto"
@@ -409,9 +424,27 @@ export const PostCard: React.FC<PostCardProps> = ({
                     const vid = e.currentTarget;
                     if (vid.paused) {
                       vid.play().catch(() => {});
+                      if (voiceoverAudioRef.current && !isMuted) {
+                        voiceoverAudioRef.current.currentTime = vid.currentTime || 0;
+                        voiceoverAudioRef.current.play().catch(() => {});
+                      }
                     } else {
                       vid.pause();
+                      voiceoverAudioRef.current?.pause();
                     }
+                  }}
+                  onPlay={() => {
+                    setIsVideoPaused(false);
+                    if (voiceoverAudioRef.current) {
+                      voiceoverAudioRef.current.muted = isMuted;
+                      if (!isMuted) {
+                        voiceoverAudioRef.current.play().catch(() => {});
+                      }
+                    }
+                  }}
+                  onPause={() => {
+                    setIsVideoPaused(true);
+                    voiceoverAudioRef.current?.pause();
                   }}
                   style={
                     studioMeta
@@ -431,18 +464,26 @@ export const PostCard: React.FC<PostCardProps> = ({
                     if (studioMeta?.playbackSpeed) {
                       vid.playbackRate = studioMeta.playbackSpeed;
                     }
-                    if (studioMeta?.muteAudio) {
+                    if (studioMeta?.muteAudio || attachedAudioUrl) {
                       vid.muted = true;
-                      setIsMuted(true);
                     }
                     if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
                       vid.currentTime = studioMeta.trimStart;
+                    } else if (!post.thumbnailUrl && vid.currentTime === 0) {
+                      try {
+                        vid.currentTime = 0.05;
+                      } catch {
+                        // ignore
+                      }
                     }
                   }}
                   onCanPlay={(e) => {
                     const vid = e.currentTarget;
                     if (vid.dataset.inView === 'true' && vid.paused) {
-                      vid.muted = isMuted;
+                      vid.muted =
+                        isMuted ||
+                        Boolean(attachedAudioUrl) ||
+                        Boolean(studioMeta?.muteAudio);
                       vid.play().catch(() => {});
                     }
                   }}
@@ -458,10 +499,41 @@ export const PostCard: React.FC<PostCardProps> = ({
                       vid.currentTime >= studioMeta.trimEnd
                     ) {
                       vid.currentTime = studioMeta.trimStart || 0;
+                      if (voiceoverAudioRef.current) {
+                        voiceoverAudioRef.current.currentTime = 0;
+                      }
                     }
                   }}
                   className="w-full h-full object-cover cursor-pointer"
                 />
+
+                {/* Paused Play Indicator Overlay */}
+                {isVideoPaused && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const vid = videoRef.current;
+                      if (!vid) return;
+                      vid.play().catch(() => {});
+                      if (voiceoverAudioRef.current && !isMuted) {
+                        voiceoverAudioRef.current.play().catch(() => {});
+                      }
+                    }}
+                    className="absolute inset-0 z-15 flex items-center justify-center bg-black/25 hover:bg-black/35 transition-colors"
+                    aria-label="Play video"
+                  >
+                    <div className="w-14 h-14 rounded-full bg-black/65 backdrop-blur-md border border-white/25 text-white flex items-center justify-center shadow-2xl">
+                      <Play className="w-6 h-6 fill-current ml-0.5" />
+                    </div>
+                  </button>
+                )}
+
+                {studioMeta?.voiceoverName && (
+                  <div className="absolute top-3 left-3 z-20 px-2.5 py-1 rounded-full bg-purple-950/80 backdrop-blur-md border border-purple-400/40 text-[10px] font-extrabold text-purple-200 flex items-center gap-1 shadow">
+                    <span>🎙️ {studioMeta.voiceoverName}</span>
+                  </div>
+                )}
 
                 {/* Top-Right Muted Speaker Icon when Auto-Playing */}
                 <button
@@ -471,7 +543,23 @@ export const PostCard: React.FC<PostCardProps> = ({
                     const nextMuted = !isMuted;
                     setIsMuted(nextMuted);
                     if (videoRef.current) {
-                      videoRef.current.muted = nextMuted;
+                      videoRef.current.muted =
+                        nextMuted ||
+                        Boolean(attachedAudioUrl) ||
+                        Boolean(studioMeta?.muteAudio);
+                      if (videoRef.current.paused && !nextMuted) {
+                        videoRef.current.play().catch(() => {});
+                      }
+                    }
+                    if (voiceoverAudioRef.current) {
+                      voiceoverAudioRef.current.muted = nextMuted;
+                      if (!nextMuted) {
+                        voiceoverAudioRef.current.currentTime =
+                          videoRef.current?.currentTime || 0;
+                        voiceoverAudioRef.current.play().catch(() => {});
+                      } else {
+                        voiceoverAudioRef.current.pause();
+                      }
                     }
                   }}
                   className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-white shadow-lg transition-all"
@@ -495,8 +583,12 @@ export const PostCard: React.FC<PostCardProps> = ({
                       1,
                       Math.max(0, (e.clientX - rect.left) / rect.width)
                     );
-                    videoRef.current.currentTime = ratio * videoDuration;
-                    setVideoCurrentTime(ratio * videoDuration);
+                    const targetTime = ratio * videoDuration;
+                    videoRef.current.currentTime = targetTime;
+                    if (voiceoverAudioRef.current) {
+                      voiceoverAudioRef.current.currentTime = targetTime;
+                    }
+                    setVideoCurrentTime(targetTime);
                   }}
                   className="absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/85 via-black/45 to-transparent pt-6 pb-2.5 px-3.5 cursor-pointer"
                 >
@@ -516,7 +608,7 @@ export const PostCard: React.FC<PostCardProps> = ({
               </>
             ) : (
               <img
-                src={post.mediaUrl}
+                src={cleanMediaSrc}
                 alt={post.caption || 'Post image'}
                 referrerPolicy="no-referrer"
                 loading="lazy"
@@ -528,6 +620,8 @@ export const PostCard: React.FC<PostCardProps> = ({
               <StudioFloatingOverlays
                 stickers={studioMeta.stickers}
                 texts={studioMeta.texts}
+                subtitles={studioMeta.subtitles}
+                currentTime={videoCurrentTime}
               />
             )}
           </div>

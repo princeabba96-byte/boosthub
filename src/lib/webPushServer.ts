@@ -474,7 +474,12 @@ export async function dispatchSupabaseNotificationToWebPush(row: any) {
   if (processedSupabaseNotifIds.has(rowId)) return { sent: 0 };
   processedSupabaseNotifIds.add(rowId);
 
-  if (row.type === 'gift_tx' || row.type === 'test_rt') {
+  if (
+    row.type === 'gift_tx' ||
+    row.type === 'test_rt' ||
+    row.type === 'ai_voice_req' ||
+    row.type === 'ai_voice_res'
+  ) {
     return { sent: 0 };
   }
 

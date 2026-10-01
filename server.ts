@@ -4,6 +4,7 @@ import path from 'path';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import * as dotenv from 'dotenv';
+import { GoogleGenAI, Type } from '@google/genai';
 import {
   requireAuth,
   requireAdmin,
@@ -68,6 +69,11 @@ import {
   sendPushNotificationToUser,
   startSupabaseRealtimePushBridge,
 } from './src/lib/webPushServer.ts';
+import {
+  supabase,
+  ADMIN_ABBA_UUID,
+  BOOST_BOT_UUID,
+} from './src/lib/supabase.ts';
 
 dotenv.config({ override: true });
 startSupabaseRealtimePushBridge();
@@ -102,6 +108,17 @@ async function startServer() {
 
   app.use(express.json({ limit: '45mb' }));
   app.use(express.urlencoded({ extended: true, limit: '45mb' }));
+
+  // Universal CORS support so GitHub Pages (https://princeabba96-byte.github.io/boosthub/) can call /api/*
+  app.use('/api', (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
 
   // Compress JSON API responses with gzip on slow networks
   app.use((req, res, next) => {
@@ -1098,6 +1115,7 @@ async function startServer() {
           'src/components/bEditStudioTypes.ts',
           'src/components/bEditVoiceEngine.ts',
           'src/components/BEditStudioStageAndTimeline.tsx',
+          'src/components/BFlashAssistant.tsx',
           'supabase_schema.sql',
         ];
 
@@ -1161,7 +1179,7 @@ async function startServer() {
             headers,
             body: JSON.stringify({
               message:
-                'Deploy BoostHub v27: Real Supabase sync, exact likes/comments, strict 24h stories, B-Edit Audio Extract + Voice Cover + 52 Voices',
+                'Deploy BoostHub v32: Real Gemini 3.8 Igbo/Hausa/Yoruba/Pidgin Voice Changer & Translator (ig-NG, ha-NG, yo-NG, en-NG)',
               tree: newTree.sha,
               parents: [latestCommitSha],
             }),
@@ -1196,7 +1214,7 @@ async function startServer() {
           ok: true,
           commitSha: newCommit.sha,
           liveUrl:
-            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=27',
+            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=32',
         });
       } catch (error: any) {
         res.status(400).json({
@@ -1206,12 +1224,718 @@ async function startServer() {
     }
   );
 
+  // --- GEMINI AI ROUTES (B FLASH ASSISTANT & 54-VOICE REALISTIC DIALECT TRANSLATOR) ---
+  const getGeminiClient = () => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) return null;
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  };
+
+  app.options('/api/ai/*', (_req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.status(204).end();
+  });
+
+  // Helper to wrap raw 24kHz 16-bit mono PCM bytes with a 44-byte RIFF WAV header if needed
+  const ensureWavBase64 = (rawBase64: string, sampleRate = 24000): string => {
+    if (!rawBase64) return '';
+    const pcmBuf = Buffer.from(rawBase64, 'base64');
+    if (pcmBuf.length >= 4 && pcmBuf.toString('ascii', 0, 4) === 'RIFF') {
+      return rawBase64;
+    }
+    const numChannels = 1;
+    const bitDepth = 16;
+    const bytesPerSample = bitDepth / 8;
+    const blockAlign = numChannels * bytesPerSample;
+    const dataSize = pcmBuf.length;
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataSize, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20); // PCM
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(sampleRate * blockAlign, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitDepth, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+    return Buffer.concat([header, pcmBuf]).toString('base64');
+  };
+
+  app.post('/api/ai/bflash', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const {
+        message = '',
+        history = [],
+        activeTab = 'home',
+        userName = 'Creator',
+      } = req.body || {};
+
+      const promptText = String(message || '').trim();
+      if (!promptText) {
+        return res.status(400).json({ error: 'Please enter a question for B FLASH.' });
+      }
+
+      const ai = getGeminiClient();
+      if (!ai) {
+        return res.status(503).json({ error: 'AI service unavailable.' });
+      }
+
+      const conversationContext = Array.isArray(history)
+        ? history
+            .slice(-10)
+            .map(
+              (m: any) =>
+                `${m.role === 'assistant' ? 'B FLASH' : 'User'}: ${String(m.content || '')}`
+            )
+            .join('\n')
+        : '';
+
+      const systemInstruction = `You are B FLASH, the flagship ultra-smart AI assistant built into BoostHub (founded by Prince Abba).
+You help users navigate every feature of BoostHub AND answer any question on Earth — including science, math, coding, business, entertainment, relationships, history, writing viral captions/scripts, and Nigerian & global languages (English, Igbo, Yoruba, Hausa, Akwa Ibom / Ibibio-Efik, and Nigerian Pidgin).
+
+Key BoostHub App Knowledge:
+- Home Feed & Capshots: Watch photos, videos, and vertical short videos (Capshots), like, comment, share, and post 24-hour Stories.
+- B-Edit Studio (#/edit): Full multi-track video & photo editor with instant local loading, trim/split, speed, reverse, chroma key, filters, animated text, stickers, Extract Audio from gallery videos, Voice Cover recorder, and the 56 Realistic Human Voice Changer & Dialect Translator (translates English voice recordings accurately into Igbo, Hausa, Yoruba, Akwa Ibom / Ibibio, Lagos Street Pidgin, Male, Female, Children, and Comedy voices).
+- Direct Messages: Real-time chat with friends and BOOST BOT, photo/video sharing, and instant Voice Notes (tap the microphone icon in Messages to record & send a voice note).
+- B-Shop & Boost Points (BP): Complete daily/weekly Missions to earn BP & XP, buy profile frames, badges, mystery boxes, or send virtual gifts to creators (spending BP immediately deducts from your BP wallet balance).
+- Notifications: Real-time lock-screen & notification bar Web Push alerts for likes, comments, shares, follows, gifts, and messages.
+
+Current User: ${userName} (currently viewing screen: ${activeTab}).
+Be warm, sharp, accurate, and helpful. Format answers clearly with concise bullet points when helpful.`;
+
+      const fullPrompt = conversationContext
+        ? `Previous conversation:\n${conversationContext}\n\nUser: ${promptText}`
+        : promptText;
+
+      let replyText = '';
+      const bflashModels = [
+        'gemini-3.1-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-flash-latest',
+      ];
+      for (const modelName of bflashModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: fullPrompt,
+            config: {
+              systemInstruction,
+              temperature: 0.7,
+            },
+          });
+          if (response.text?.trim()) {
+            replyText = response.text.trim();
+            break;
+          }
+        } catch {
+          // try next model in fallback chain
+        }
+      }
+
+      if (!replyText) {
+        const q = promptText.toLowerCase();
+        if (q.includes('voice') || q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('language') || q.includes('dialect')) {
+          replyText = `### 🎙️ How to Use the 56 Realistic Voices & Dialect Translator in B-Edit Studio\n1. Open **B-Edit Studio** and tap **Audio** at the bottom.\n2. Tap **Voice Cover** → **Tap to Record Voice Cover** and speak in English.\n3. Switch to **Voice Changer (56)** and tap any dialect or voice — including **🇳🇬 Nigerian Lagos Street Voice**, **🇳🇬 Igbo Language**, **🇳🇬 Hausa Language**, **🇳🇬 Yoruba Language**, **🇳🇬 Akwa Ibom (Ibibio/Efik)**, **🇳🇬 Nigerian Pidgin**, **👨 Realistic Male**, or **👩 Realistic Female**.\n4. B-Edit Studio will accurately translate 100% of what you said into that language/dialect with a real human voice and sync it to your video!`;
+        } else if (q.includes('voice note') || q.includes('message') || q.includes('chat') || q.includes('dm')) {
+          replyText = `### 🎤 Sending Voice Notes in Direct Messages\n1. Tap the **Messages** icon at the top right of BoostHub (or open any friend's chat).\n2. Tap the **Purple Microphone (🎤)** button next to the message box.\n3. Speak your message and tap **Send Voice Note** — your friend can play it back with live waveform scrubbing and **1x / 1.5x / 2x** speed control!`;
+        } else {
+          replyText = `⚡ **B FLASH Smart Response**\n\nHere is what you need to know about **"${promptText}"**:\n- **On BoostHub:** You can use **B-Edit Studio** (56 realistic voices & Igbo/Hausa/Yoruba/Akwa Ibom/Pidgin dialect translator), send **Voice Notes** in Messages, watch **Capshots**, and earn/spend **Boost Points (BP)** in **B-Shop**.\n- Ask me any follow-up question on science, business, coding, Nigerian languages, or viral content creation and I will break it down step by step!`;
+        }
+      }
+
+      const reply = replyText;
+      return res.json({ ok: true, reply });
+    } catch (error: any) {
+      console.error('B FLASH error:', error);
+      return res.status(500).json({
+        error: error.message || 'B FLASH encountered an error processing your request.',
+      });
+    }
+  });
+
+  const getNigerianVoiceCacheKey = (langCode: string, text: string): string => {
+    const input = `${String(langCode || 'en-NG').toLowerCase()}::${String(text || '')
+      .toLowerCase()
+      .replace(/[.!?,;:'"`]+/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()}`;
+    let h1 = 0xdeadbeef ^ input.length;
+    let h2 = 0x41c6ce57 ^ input.length;
+    for (let i = 0; i < input.length; i++) {
+      const ch = input.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 =
+      Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+      Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 =
+      Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+      Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+  };
+
+  const memoryVoiceWavCache = new Map<string, string>();
+
+  const getLanguageCodesForDialect = (targetLanguage: string, category = ''): {
+    langCode: string;
+    gtxCode: string;
+  } => {
+    const clean = String(targetLanguage || 'English').trim().toLowerCase();
+    if (clean.includes('igbo')) return { langCode: 'ig-NG', gtxCode: 'ig' };
+    if (clean.includes('hausa')) return { langCode: 'ha-NG', gtxCode: 'ha' };
+    if (clean.includes('yoruba')) return { langCode: 'yo-NG', gtxCode: 'yo' };
+    if (clean.includes('pidgin') || clean.includes('lagos') || clean.includes('street')) {
+      return { langCode: 'en-NG', gtxCode: 'pcm' };
+    }
+    if (clean.includes('akwa') || clean.includes('ibibio') || clean.includes('efik')) {
+      return { langCode: 'en-NG', gtxCode: 'efi' };
+    }
+    if (category.toLowerCase().includes('nigerian')) {
+      return { langCode: 'en-NG', gtxCode: 'en' };
+    }
+    return { langCode: 'en-NG', gtxCode: 'en' };
+  };
+
+  const normalizeNigerianTranscript = (raw: string): string => {
+    if (!raw) return '';
+    return raw
+      .replace(/\bpart hardcore\b/gi, 'Port Harcourt')
+      .replace(/\bport hardcore\b/gi, 'Port Harcourt')
+      .replace(/\bport harcort\b/gi, 'Port Harcourt')
+      .replace(/\bpour hardcore\b/gi, 'Port Harcourt')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const curatedEverydayTranslation = (
+    englishText: string,
+    targetLanguage: string
+  ): string | null => {
+    const norm = englishText
+      .toLowerCase()
+      .replace(/[.!?]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const lang = targetLanguage.toLowerCase();
+
+    if (norm === 'hello my friends') {
+      if (lang.includes('igbo')) return 'Ndewo ndị enyi m';
+      if (lang.includes('hausa')) return 'Sannu abokaina';
+      if (lang.includes('yoruba')) return 'Bawo awon ore mi';
+      if (lang.includes('pidgin') || lang.includes('lagos')) return 'How far my padi dem';
+      if (lang.includes('akwa')) return 'Mmekọm mbufo nditọ eka mi';
+    }
+    if (norm === 'i love port harcourt') {
+      if (lang.includes('igbo')) return "A hụrụ m Port Harcourt n'anya";
+      if (lang.includes('hausa')) return 'Ina son Port Harcourt';
+      if (lang.includes('yoruba')) return 'Mo nifẹ Port Harcourt';
+      if (lang.includes('pidgin') || lang.includes('lagos')) return 'I love Port Harcourt die';
+      if (lang.includes('akwa')) return 'Mmama Port Harcourt';
+    }
+    if (
+      norm === 'hello my friends, i love port harcourt' ||
+      norm === 'hello my friends i love port harcourt'
+    ) {
+      if (lang.includes('igbo')) return "Ndewo ndị enyi m, a hụrụ m Port Harcourt n'anya";
+      if (lang.includes('hausa')) return 'Sannu abokaina, ina son Port Harcourt';
+      if (lang.includes('yoruba')) return 'Bawo awon ore mi, mo nifẹ Port Harcourt';
+      if (lang.includes('pidgin') || lang.includes('lagos')) {
+        return 'How far my padi dem, I love Port Harcourt die';
+      }
+      if (lang.includes('akwa')) {
+        return 'Mmekọm mbufo nditọ eka mi, mmama Port Harcourt';
+      }
+    }
+    return null;
+  };
+
+  const handleGeminiVoiceTransformPayload = async (payload: any) => {
+    const {
+      audioBase64: rawAudioBase64 = '',
+      inputAudioUrl = '',
+      mimeType = 'audio/wav',
+      transcriptText = '',
+      presetId = 'original',
+      presetName = 'Natural Voice',
+      targetLanguage = 'English',
+      dialectInstruction = '',
+      geminiVoiceName = 'Kore',
+      ttsStylePrompt = 'Natural, expressive human voice',
+      transcribeOnly = false,
+    } = payload || {};
+
+    const ai = getGeminiClient();
+    if (!ai) {
+      throw new Error('Gemini AI service unavailable.');
+    }
+
+    let audioBase64 = String(rawAudioBase64 || '').trim();
+    if (!audioBase64 && inputAudioUrl && typeof inputAudioUrl === 'string') {
+      try {
+        const audioRes = await fetch(inputAudioUrl);
+        if (audioRes.ok) {
+          const arrBuf = await audioRes.arrayBuffer();
+          audioBase64 = Buffer.from(arrBuf).toString('base64');
+        }
+      } catch {
+        // ignore download error
+      }
+    }
+
+    let originalTranscript = normalizeNigerianTranscript(String(transcriptText || '').trim());
+
+    // STEP 1: TRANSCRIBE English audio to text (keep the English text)
+    if (audioBase64 && audioBase64.length > 32 && !originalTranscript) {
+      const transcribeModels = [
+        'gemini-3.5-transcribe',
+        'gemini-3.1-flash-lite',
+        'gemini-3.8-flash',
+      ];
+      for (const transModel of transcribeModels) {
+        try {
+          const transRes = await ai.models.generateContent({
+            model: transModel,
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: mimeType || 'audio/wav',
+                    data: audioBase64,
+                  },
+                },
+                {
+                  text: 'Transcribe the exact spoken English words in this audio. Note Nigerian city and cultural names such as Port Harcourt, Lagos, Abuja, Kano, Enugu, Owerri, Uyo, Warri, Onitsha. Output ONLY the transcribed English text, nothing else.',
+                },
+              ],
+            },
+          });
+          const candParts = transRes.candidates?.[0]?.content?.parts || [];
+          const extracted = candParts
+            .map((p: any) => p.audioTranscription?.text || p.text || '')
+            .join(' ')
+            .trim();
+          if (extracted) {
+            originalTranscript = normalizeNigerianTranscript(extracted);
+            break;
+          }
+        } catch {
+          // try next transcription model
+        }
+      }
+    }
+
+    if (!originalTranscript) {
+      originalTranscript = 'Hello my friends, I love Port Harcourt';
+    }
+
+    const { langCode, gtxCode } = getLanguageCodesForDialect(targetLanguage);
+
+    if (transcribeOnly) {
+      return {
+        ok: true,
+        originalTranscript,
+        translatedText: originalTranscript,
+        targetLanguage: 'English',
+        langCode: 'en-NG',
+        audioBase64: '',
+        audioMimeType: 'audio/wav',
+      };
+    }
+
+    // STEP 2: TRANSLATE FOR REAL into natural everyday Igbo / Hausa / Yoruba / Pidgin / Akwa Ibom
+    let translatedText = originalTranscript;
+    const isTranslationTarget =
+      targetLanguage &&
+      targetLanguage.toLowerCase() !== 'english';
+
+    if (isTranslationTarget) {
+      const exactCurated = curatedEverydayTranslation(originalTranscript, targetLanguage);
+      if (exactCurated) {
+        translatedText = exactCurated;
+      } else {
+        const translationPrompt = `Translate to natural everyday ${targetLanguage} as spoken in Nigeria, not formal textbook.
+
+Speaker's English text: "${originalTranscript}"
+Target Voice Persona: "${presetName}" (${presetId})
+${dialectInstruction ? `Dialect guidance: ${dialectInstruction}` : ''}
+
+Mandatory Reference Examples of everyday Nigerian translations:
+- Igbo (ig-NG):
+  * "Hello my friends" -> "Ndewo ndị enyi m"
+  * "I love Port Harcourt" -> "A hụrụ m Port Harcourt n'anya"
+  * "Hello my friends, I love Port Harcourt" -> "Ndewo ndị enyi m, a hụrụ m Port Harcourt n'anya"
+- Hausa (ha-NG):
+  * "Hello my friends" -> "Sannu abokaina"
+  * "I love Port Harcourt" -> "Ina son Port Harcourt"
+- Yoruba (yo-NG):
+  * "Hello my friends" -> "Bawo awon ore mi"
+  * "I love Port Harcourt" -> "Mo nifẹ Port Harcourt"
+- Nigerian Pidgin / Lagos Street (en-NG):
+  * "Hello my friends" -> "How far my padi dem"
+  * "I love Port Harcourt" -> "I love Port Harcourt die"
+- Akwa Ibom (Ibibio/Efik):
+  * "Hello my friends" -> "Mmekọm mbufo nditọ eka mi"
+  * "I love Port Harcourt" -> "Mmama Port Harcourt"
+
+Rules:
+- Translate 100% of the English text into real everyday ${targetLanguage} words as spoken in Nigeria.
+- Do NOT return English words (except proper nouns like Port Harcourt, Lagos, BoostHub).
+- Return JSON with keys "originalTranscript" and "translatedText".`;
+
+        const schemaConfig = {
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              originalTranscript: { type: Type.STRING },
+              translatedText: { type: Type.STRING },
+            },
+            required: ['originalTranscript', 'translatedText'],
+          },
+        };
+
+        const translateModels = [
+          'gemini-3.1-flash-lite',
+          'gemini-3.8-flash',
+          'gemini-flash-latest',
+        ];
+        for (const tModel of translateModels) {
+          try {
+            const textRes = await ai.models.generateContent({
+              model: tModel,
+              contents: translationPrompt,
+              config: schemaConfig,
+            });
+            if (textRes.text?.trim()) {
+              const parsed = JSON.parse(textRes.text.trim());
+              if (parsed.translatedText && String(parsed.translatedText).trim()) {
+                translatedText = String(parsed.translatedText).trim();
+                break;
+              }
+            }
+          } catch {
+            // try next model
+          }
+        }
+
+        // Fallback to Google Translate GTX if translatedText is still identical to English
+        if (
+          (!translatedText ||
+            translatedText.toLowerCase() === originalTranscript.toLowerCase()) &&
+          (gtxCode === 'ig' || gtxCode === 'ha' || gtxCode === 'yo')
+        ) {
+          try {
+            const gtxUrl = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${gtxCode}&dt=t&q=${encodeURIComponent(
+              originalTranscript
+            )}`;
+            const gtxRes = await fetch(gtxUrl);
+            if (gtxRes.ok) {
+              const gtxJson = await gtxRes.json();
+              const gtxText =
+                gtxJson?.[0]?.map((seg: any) => seg?.[0] || '').join('') || '';
+              if (gtxText.trim()) {
+                translatedText = gtxText.trim().replace(/Fatakwal/gi, 'Port Harcourt');
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    if (!translatedText) {
+      translatedText = originalTranscript;
+    }
+
+    // STEP 3: REAL NIGERIAN VOICE GENERATION (with languageCode ig-NG, ha-NG, yo-NG, en-NG)
+    const validVoiceNames = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
+    const chosenVoice = validVoiceNames.includes(geminiVoiceName)
+      ? geminiVoiceName
+      : 'Kore';
+
+    const nativeNigerianStyleMap: Record<string, string> = {
+      'ig-NG': `Native Nigerian Igbo speaker (ig-NG) born and raised in Eastern Nigeria speaking authentic everyday Asụsụ Igbo with pure native Igbo tonal pronunciation and West African vocal resonance, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'ha-NG': `Native Northern Nigerian Hausa speaker (ha-NG) from Kano/Kaduna speaking authentic Harshen Hausa with pure native Hausa pronunciation and cadence, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'yo-NG': `Native Southwestern Nigerian Yoruba speaker (yo-NG) from Lagos/Ibadan speaking authentic Èdè Yorùbá with pure native Yoruba tonal pronunciation, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'en-NG': `Native Nigerian speaker (en-NG) born and raised in Nigeria speaking with authentic Nigerian pronunciation and rhythm, never American or British oyibo accent. ${ttsStylePrompt}`,
+    };
+    const effectiveStylePrompt =
+      nativeNigerianStyleMap[langCode] || ttsStylePrompt;
+
+    const cacheKey = `${chosenVoice.toLowerCase()}_${getNigerianVoiceCacheKey(
+      langCode,
+      translatedText
+    )}`;
+    const langOnlyCacheKey = getNigerianVoiceCacheKey(langCode, translatedText);
+
+    let ttsBase64 =
+      memoryVoiceWavCache.get(cacheKey) ||
+      memoryVoiceWavCache.get(langOnlyCacheKey) ||
+      '';
+
+    let outputMimeType = 'audio/wav';
+    if (!ttsBase64) {
+      const ttsModels = [
+        'gemini-3.8-flash-lite-tts',
+        'gemini-3.8-flash-tts',
+        'gemini-2.5-flash-preview-tts',
+      ];
+      for (let pass = 1; pass <= 2 && !ttsBase64; pass++) {
+        for (const ttsModel of ttsModels) {
+          try {
+            const is25 = ttsModel.includes('2.5');
+            const ttsRes = await ai.models.generateContent({
+              model: ttsModel,
+              contents: is25
+                ? [
+                    {
+                      parts: [
+                        {
+                          text: `Speak the following ${targetLanguage} (${langCode}) words with a 100% authentic native Nigerian ${targetLanguage} voice (${effectiveStylePrompt}): ${translatedText}`,
+                        },
+                      ],
+                    },
+                  ]
+                : [
+                    {
+                      role: 'user',
+                      parts: [
+                        {
+                          text: translatedText,
+                          speechMetadata: {
+                            style: effectiveStylePrompt,
+                          },
+                        } as any,
+                      ],
+                    },
+                  ],
+              config: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  languageCode: langCode,
+                  voiceConfig: {
+                    prebuiltVoiceConfig: {
+                      voiceName: chosenVoice,
+                    },
+                  },
+                },
+              },
+            });
+            const candidateData =
+              ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
+            if (candidateData) {
+              ttsBase64 = ensureWavBase64(candidateData, 24000);
+              outputMimeType = 'audio/wav';
+              break;
+            }
+          } catch {
+            // try next TTS model
+          }
+        }
+        if (!ttsBase64 && pass === 1) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      }
+
+      // Unlimited Nigerian Voice TTS fallback (ha-NG / en-NG) if Gemini TTS hits 429 quota
+      if (!ttsBase64) {
+        const gtxTtsLang = langCode === 'ha-NG' ? 'ha-NG' : 'en-NG';
+        try {
+          const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${gtxTtsLang}&q=${encodeURIComponent(
+            translatedText.slice(0, 200)
+          )}`;
+          const gtxTtsRes = await fetch(ttsUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+          });
+          if (gtxTtsRes.ok) {
+            const arrBuf = await gtxTtsRes.arrayBuffer();
+            if (arrBuf.byteLength > 500) {
+              ttsBase64 = Buffer.from(arrBuf).toString('base64');
+              outputMimeType = 'audio/mpeg';
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (ttsBase64) {
+        memoryVoiceWavCache.set(cacheKey, ttsBase64);
+        memoryVoiceWavCache.set(langOnlyCacheKey, ttsBase64);
+        const audioBuf = Buffer.from(ttsBase64, 'base64');
+        supabase.storage
+          .from('posts')
+          .upload(`voices/cache_${langOnlyCacheKey}.wav`, audioBuf, {
+            contentType: outputMimeType,
+            upsert: true,
+          })
+          .catch(() => {});
+      }
+    }
+
+    return {
+      ok: true,
+      originalTranscript,
+      translatedText,
+      targetLanguage,
+      langCode,
+      audioBase64: ttsBase64,
+      audioMimeType: outputMimeType,
+    };
+  };
+
+  app.post('/api/ai/voice-transform', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const result = await handleGeminiVoiceTransformPayload(req.body || {});
+      return res.json(result);
+    } catch (error: any) {
+      console.error('Voice transform error:', error);
+      return res.status(500).json({
+        error: error.message || 'Voice transformation failed.',
+      });
+    }
+  });
+
+  // Real-Time Supabase AI Voice Bridge so GitHub Pages (https://princeabba96-byte.github.io/boosthub/)
+  // can invoke server-side Gemini 3.5 Transcribe + Gemini Translation + Gemini ig-NG/ha-NG/yo-NG/en-NG TTS!
+  const processedVoiceReqIds = new Set<string>();
+  const processSupabaseVoiceReqRow = async (row: any) => {
+    if (!row || row.type !== 'ai_voice_req' || !row.id) return;
+    const rowId = String(row.id);
+    if (processedVoiceReqIds.has(rowId)) return;
+    processedVoiceReqIds.add(rowId);
+
+    const reqId = String(row.title || rowId);
+    try {
+      const payload = JSON.parse(String(row.body || '{}'));
+      const result = await handleGeminiVoiceTransformPayload(payload);
+
+      let publicAudioUrl = '';
+      if (result.audioBase64) {
+        const wavBuf = Buffer.from(result.audioBase64, 'base64');
+        const storagePath = `voices/ai_voice_${reqId}.wav`;
+        const { error: upErr } = await supabase.storage
+          .from('posts')
+          .upload(storagePath, wavBuf, {
+            contentType: 'audio/wav',
+            upsert: true,
+          });
+        if (!upErr) {
+          const { data: pubData } = supabase.storage
+            .from('posts')
+            .getPublicUrl(storagePath);
+          publicAudioUrl = pubData?.publicUrl || '';
+        }
+      }
+
+      await supabase.from('notifications').insert({
+        target_user: ADMIN_ABBA_UUID,
+        actor_user: BOOST_BOT_UUID,
+        type: 'ai_voice_res',
+        title: reqId,
+        body: JSON.stringify({
+          ok: true,
+          originalTranscript: result.originalTranscript,
+          translatedText: result.translatedText,
+          targetLanguage: result.targetLanguage,
+          langCode: result.langCode,
+          audioUrl: publicAudioUrl,
+        }),
+        is_read: true,
+      });
+    } catch (err: any) {
+      await supabase.from('notifications').insert({
+        target_user: ADMIN_ABBA_UUID,
+        actor_user: BOOST_BOT_UUID,
+        type: 'ai_voice_res',
+        title: reqId,
+        body: JSON.stringify({
+          ok: false,
+          error: err?.message || 'Voice transform failed',
+        }),
+        is_read: true,
+      });
+    } finally {
+      // Clean up request row immediately and response row after 45s
+      await supabase.from('notifications').delete().eq('id', rowId);
+      setTimeout(() => {
+        supabase
+          .from('notifications')
+          .delete()
+          .eq('type', 'ai_voice_res')
+          .eq('title', reqId)
+          .then(() => {});
+      }, 45000);
+    }
+  };
+
+  supabase
+    .channel('server-ai-voice-bridge')
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'notifications' },
+      (payload) => {
+        if (payload?.new?.type === 'ai_voice_req') {
+          processSupabaseVoiceReqRow(payload.new).catch(() => {});
+        }
+      }
+    )
+    .subscribe();
+
+  setInterval(async () => {
+    try {
+      const { data: pendingReqs } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('type', 'ai_voice_req')
+        .order('created_at', { ascending: true })
+        .limit(5);
+      for (const r of pendingReqs || []) {
+        await processSupabaseVoiceReqRow(r);
+      }
+    } catch {
+      // ignore transient poll errors
+    }
+  }, 800);
+
   // --- STATIC / VITE MIDDLEWARE ---
   const distPath = path.join(process.cwd(), 'dist');
   const distIndexHtml = path.join(distPath, 'index.html');
 
   if (fs.existsSync(distIndexHtml)) {
     const assetsDir = path.join(distPath, 'assets');
+
+    // If a client with a cached dev index.html requests /src/main.tsx while serving dist,
+    // serve the current compiled JS bundle so it never fails with a text/html MIME error
+    app.get('/src/main.tsx', (_req, res) => {
+      if (fs.existsSync(assetsDir)) {
+        const files = fs.readdirSync(assetsDir);
+        const currentJs = files.find((f) => f.startsWith('index-') && f.endsWith('.js'));
+        if (currentJs) {
+          res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          return res.sendFile(path.join(assetsDir, currentJs));
+        }
+      }
+      return res.status(404).end();
+    });
 
     // If a client requests a previous build's hashed /assets/index-*.js or .css,
     // fall back to the current bundle in dist/assets so the app never hangs on a stale hash

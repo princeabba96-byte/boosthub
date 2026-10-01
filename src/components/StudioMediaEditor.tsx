@@ -251,6 +251,8 @@ export interface StudioEditConfig {
   soundTrackId?: string;
   customAudioUrl?: string;
   customAudioName?: string;
+  voiceoverAudioUrl?: string;
+  voiceoverName?: string;
   soundTrimStart?: number;
   soundTrimEnd?: number;
   soundDuration?: number;
@@ -540,6 +542,7 @@ export function encodeStudioUrlHash(
     (config.clipSegments && config.clipSegments.length > 0) ||
     (config.soundTrackId && config.soundTrackId !== 'none') ||
     Boolean(config.customAudioUrl) ||
+    Boolean(config.voiceoverAudioUrl) ||
     Boolean(config.pipUrl) ||
     (config.subtitles && config.subtitles.length > 0) ||
     config.stickers.length > 0 ||
@@ -572,6 +575,9 @@ export function encodeStudioUrlHash(
     teas: config.transitionEasing || 'ease_in_out',
     csg: config.clipSegments || [],
     snd: config.soundTrackId || 'none',
+    ca: config.customAudioUrl || '',
+    vo: config.voiceoverAudioUrl || '',
+    vn: config.voiceoverName || '',
     sts: Number((config.soundTrimStart || 0).toFixed(1)),
     ste: Number((config.soundTrimEnd || 12).toFixed(1)),
     slp: config.soundLoop !== false ? 1 : 0,
@@ -583,11 +589,7 @@ export function encodeStudioUrlHash(
 
   try {
     const encoded = btoa(encodeURIComponent(JSON.stringify(compactPayload)));
-    const timeFrag =
-      isVideo && config.trimEnd > config.trimStart
-        ? `t=${config.trimStart.toFixed(1)},${config.trimEnd.toFixed(1)}&`
-        : '';
-    return `${cleanBase}#${timeFrag}studio=${encoded}`;
+    return `${cleanBase}#studio=${encoded}`;
   } catch {
     return cleanBase;
   }
@@ -625,6 +627,9 @@ export function parseStudioUrlHash(mediaUrl?: string): Partial<StudioEditConfig>
       transitionEasing: raw.teas || 'ease_in_out',
       clipSegments: Array.isArray(raw.csg) ? raw.csg : [],
       soundTrackId: raw.snd || 'none',
+      customAudioUrl: raw.ca || '',
+      voiceoverAudioUrl: raw.vo || '',
+      voiceoverName: raw.vn || '',
       soundTrimStart: Number(raw.sts) || 0,
       soundTrimEnd: Number(raw.ste) || 12,
       soundLoop: raw.slp !== 0,
@@ -879,8 +884,13 @@ function roundRect(
 export const StudioFloatingOverlays: React.FC<{
   stickers?: StudioStickerLayer[];
   texts?: StudioTextLayer[];
-}> = ({ stickers = [], texts = [] }) => {
-  if (stickers.length === 0 && texts.length === 0) return null;
+  subtitles?: StudioSubtitleCue[];
+  currentTime?: number;
+}> = ({ stickers = [], texts = [], subtitles = [], currentTime = 0 }) => {
+  const activeSubtitle = subtitles.find(
+    (s) => currentTime >= s.startTime && currentTime <= s.endTime
+  );
+  if (stickers.length === 0 && texts.length === 0 && !activeSubtitle) return null;
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden z-10 select-none">
       {stickers.map((st) => (
@@ -938,6 +948,14 @@ export const StudioFloatingOverlays: React.FC<{
           {tx.text}
         </div>
       ))}
+
+      {activeSubtitle && (
+        <div className="absolute bottom-14 inset-x-4 flex justify-center">
+          <div className="px-3.5 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs sm:text-sm font-extrabold text-center shadow-lg">
+            {activeSubtitle.text}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

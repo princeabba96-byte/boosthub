@@ -43,6 +43,7 @@ import { CommentsDrawer } from './components/CommentsDrawer';
 import { ShareModal } from './components/ShareModal';
 import { SearchModal } from './components/SearchModal';
 import { MessagesModal } from './components/MessagesModal';
+import { BFlashAssistant } from './components/BFlashAssistant';
 
 const BoostHubAppShell: React.FC = () => {
   const { userProfile, loading, isOffline, toasts } = useAuth();
@@ -433,6 +434,16 @@ const BoostHubAppShell: React.FC = () => {
           )}
         </main>
       </div>
+
+      {/* B FLASH Smart AI Assistant (Lower-Right Just Above Menu) */}
+      <BFlashAssistant
+        activeTab={activeTab}
+        onChangeTab={handleChangeTab}
+        onOpenMessages={() => {
+          setMessagePartner(null);
+          setMessagesOpen(true);
+        }}
+      />
 
       {/* Mobile Bottom Tab Bar */}
       <BottomNavigationBar
