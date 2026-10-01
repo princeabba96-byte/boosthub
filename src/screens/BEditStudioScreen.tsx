@@ -62,6 +62,7 @@ import {
   BEDIT_VOICE_CATEGORIES,
   BEDIT_VOICE_PRESETS,
   BEditVoiceCategory,
+  cleanEnglishRemovePidginClient,
   decodeMediaToAudioBuffer,
   extractAudioFromVideoSource,
   getLanguageCodeForDialect,
@@ -1012,6 +1013,8 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       return;
     }
     el.currentTime = 0;
+    (el as any).preservesPitch = true;
+    el.playbackRate = activeLangCode === 'ig-NG' ? 0.85 : 1.0;
     el.volume = Math.max(0, Math.min(1, (project.voiceoverVolume ?? 100) / 100));
     setIsVoicePreviewing(true);
     el.onended = () => setIsVoicePreviewing(false);
@@ -1053,15 +1056,18 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }
       }
 
-      const effectiveEnglishText =
+      const rawInputText =
         (overrideEnglishInput !== undefined
           ? overrideEnglishInput
           : voiceTranscriptText
         ).trim() || recordedTranscriptHintRef.current;
 
+      // PRE-PROCESS: Clean the English & remove pidgin before translating
+      const effectiveEnglishText = cleanEnglishRemovePidginClient(rawInputText);
+
       if (effectiveEnglishText) {
         setVoiceTranscriptText(effectiveEnglishText);
-        // Immediately translate and display real Igbo/Hausa/Yoruba/Pidgin letters in UI
+        // Immediately translate and display flawless Igbo Izugbe / Hausa / Yoruba / Pidgin in UI
         translateEnglishToNigerianLanguageClient(
           effectiveEnglishText,
           targetLang
@@ -1113,11 +1119,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
             : prev.clips,
       }));
 
-      // Automatically play the real translated Nigerian voice audio
+      // Automatically play the real translated Nigerian voice audio (0.8x slower rate for Igbo tones)
       window.setTimeout(() => {
         if (voiceoverAudioRef.current) {
           voiceoverAudioRef.current.src = rendered.wavUrl;
           voiceoverAudioRef.current.currentTime = 0;
+          (voiceoverAudioRef.current as any).preservesPitch = true;
+          voiceoverAudioRef.current.playbackRate =
+            (rendered.langCode || langCode) === 'ig-NG' ? 0.85 : 1.0;
           voiceoverAudioRef.current.volume = Math.max(
             0,
             Math.min(1, (project.voiceoverVolume ?? 100) / 100)
@@ -2248,18 +2257,30 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       <span className="text-[11px] font-extrabold text-emerald-300">
                         🇳🇬 Translate & Speak in Real Nigerian Language:
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <button
                           type="button"
                           disabled={applyingVoiceBusy}
                           onClick={() => {
-                            const sample = 'I love Port Harcourt';
+                            const sample = 'I am going to the market to buy some foodstuff';
                             setVoiceTranscriptText(sample);
                             handleApplyVoicePreset('igbo_language_male', sample);
                           }}
                           className="px-2 py-0.5 rounded-md bg-purple-500/20 border border-purple-400/40 text-[10px] font-bold text-purple-200 hover:bg-purple-500/30"
                         >
-                          Test: "I love Port Harcourt" → Igbo
+                          Test: "Going to market..." → Igbo
+                        </button>
+                        <button
+                          type="button"
+                          disabled={applyingVoiceBusy}
+                          onClick={() => {
+                            const sample = 'I hope you buy cheap before I come back';
+                            setVoiceTranscriptText(sample);
+                            handleApplyVoicePreset('igbo_language_male', sample);
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 text-[10px] font-bold text-emerald-200 hover:bg-emerald-500/30"
+                        >
+                          Test: "Hope you buy cheap..." → Igbo
                         </button>
                       </div>
                     </div>
@@ -2451,33 +2472,33 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     <span className="text-[11px] font-extrabold text-purple-200">
                       🎙️ Gemini 3.8 Flash Transcription & Real Nigerian Translator
                     </span>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       <button
                         type="button"
                         disabled={applyingVoiceBusy}
                         onClick={() => {
-                          const sample = 'I love Port Harcourt';
+                          const sample = 'I am going to the market to buy some foodstuff';
                           setVoiceTranscriptText(sample);
                           handleApplyVoicePreset('igbo_language_male', sample);
                         }}
                         className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200 border border-purple-400/40 hover:bg-purple-500/30"
                       >
-                        Test: "I love Port Harcourt"
+                        Test: "Going to market..."
                       </button>
                       <button
                         type="button"
                         disabled={applyingVoiceBusy}
                         onClick={() => {
-                          const sample = 'Hello my friends';
+                          const sample = 'I hope you buy cheap before I come back';
                           setVoiceTranscriptText(sample);
                           handleApplyVoicePreset('igbo_language_male', sample);
                         }}
                         className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/40 hover:bg-blue-500/30"
                       >
-                        Test: "Hello my friends"
+                        Test: "Hope you buy cheap..."
                       </button>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                        {activeDialectLabel} ({activeLangCode})
+                        {activeDialectLabel} ({activeLangCode}) · 0.8x Rate
                       </span>
                     </div>
                   </div>

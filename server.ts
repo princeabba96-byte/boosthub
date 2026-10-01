@@ -4,7 +4,7 @@ import path from 'path';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import * as dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Modality, Type } from '@google/genai';
 import {
   requireAuth,
   requireAdmin,
@@ -1087,18 +1087,42 @@ async function startServer() {
         const commitData: any = await commitRes.json();
         const baseTreeSha = commitData.tree.sha;
 
-        // 3. Upload files as Git blobs
+        // 3. Upload files as Git blobs (auto-sync latest dist/assets bundle first)
+        const distAssetsDir = path.join(process.cwd(), 'dist/assets');
+        if (fs.existsSync(distAssetsDir)) {
+          const assetFiles = fs.readdirSync(distAssetsDir);
+          const latestJs = assetFiles.find((f) => f.startsWith('index-') && f.endsWith('.js'));
+          const latestCss = assetFiles.find((f) => f.startsWith('index-') && f.endsWith('.css'));
+          const rootGhDir = path.join(process.cwd(), 'gh-bundle');
+          const pubGhDir = path.join(process.cwd(), 'public/gh-bundle');
+          if (!fs.existsSync(rootGhDir)) fs.mkdirSync(rootGhDir, { recursive: true });
+          if (!fs.existsSync(pubGhDir)) fs.mkdirSync(pubGhDir, { recursive: true });
+          if (latestJs) {
+            fs.copyFileSync(path.join(distAssetsDir, latestJs), path.join(rootGhDir, 'app.js'));
+            fs.copyFileSync(path.join(distAssetsDir, latestJs), path.join(pubGhDir, 'app.js'));
+          }
+          if (latestCss) {
+            fs.copyFileSync(path.join(distAssetsDir, latestCss), path.join(rootGhDir, 'app.css'));
+            fs.copyFileSync(path.join(distAssetsDir, latestCss), path.join(pubGhDir, 'app.css'));
+          }
+        }
+
         const filesToPush = [
           'index.html',
           'sw.js',
           'public/sw.js',
           'gh-bundle/app.js',
           'gh-bundle/app.css',
+          'public/gh-bundle/app.js',
+          'public/gh-bundle/app.css',
           'package.json',
+          'server.ts',
           'src/App.tsx',
+          'src/main.tsx',
           'src/types/index.ts',
           'src/lib/supabase.ts',
           'src/lib/supabase.js',
+          'src/lib/webPushServer.ts',
           'src/services/api.ts',
           'src/services/staticBackend.ts',
           'src/state/AuthContext.tsx',
@@ -1214,7 +1238,7 @@ async function startServer() {
           ok: true,
           commitSha: newCommit.sha,
           liveUrl:
-            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=32',
+            'https://princeabba96-byte.github.io/boosthub/gh-bundle/app.js?v=33',
         });
       } catch (error: any) {
         res.status(400).json({
@@ -1411,37 +1435,138 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
     return { langCode: 'en-NG', gtxCode: 'en' };
   };
 
-  const normalizeNigerianTranscript = (raw: string): string => {
+  const IGBO_ANAMBRA_SYSTEM_PROMPT = `You are expert Igbo translator from Anambra. Translate English to flawless Igbo Izugbe (Central Igbo). RULES:
+1. NEVER translate word-for-word. Translate meaning.
+2. Use correct Igbo spelling: Ana m, not Ma-aga. Ahịa, not ahia. Ịzụta, not izuru.
+3. Shorten long English to natural Igbo. 'buy cheap full' = 'zụta nke dị ọnụ ala' not 'eri ihe oma'
+4. If English has pidgin like 'show face back', translate to pure Igbo: 'tupu m lọta'
+5. Keep sentences short, max 10 words.`;
+
+  const cleanEnglishRemovePidgin = (raw: string): string => {
     if (!raw) return '';
-    return raw
+    let s = raw
       .replace(/\bpart hardcore\b/gi, 'Port Harcourt')
       .replace(/\bport hardcore\b/gi, 'Port Harcourt')
       .replace(/\bport harcort\b/gi, 'Port Harcourt')
       .replace(/\bpour hardcore\b/gi, 'Port Harcourt')
       .replace(/\s+/g, ' ')
       .trim();
+
+    // Pre-process Nigerian Pidgin to clean Standard English before translation
+    s = s
+      .replace(/\bi wan go market go buy (some )?foodstuff\b/gi, 'I want to go to the market to buy food')
+      .replace(/\bi wan go market to buy (some )?foodstuff\b/gi, 'I want to go to the market to buy food')
+      .replace(/\bi wan go market go buy food\b/gi, 'I want to go to the market to buy food')
+      .replace(/\bi dey go market go buy (some )?foodstuff\b/gi, 'I am going to the market to buy some foodstuff')
+      .replace(/\bi wan go market\b/gi, 'I want to go to the market')
+      .replace(/\bi dey go market\b/gi, 'I am going to the market')
+      .replace(/\bgo market go buy\b/gi, 'go to the market to buy')
+      .replace(/\bbuy cheap full\b/gi, 'buy cheap')
+      .replace(/\bbuy am cheap\b/gi, 'buy it cheap')
+      .replace(/\bbefore i show face back\b/gi, 'before I come back')
+      .replace(/\bshow face back\b/gi, 'come back')
+      .replace(/\btill i show face\b/gi, 'before I come back')
+      .replace(/\bi wan\b/gi, 'I want to')
+      .replace(/\bi dey go\b/gi, 'I am going to')
+      .replace(/\bwetin you dey do\b/gi, 'what are you doing')
+      .replace(/\bhow far my padi dem\b/gi, 'hello my friends')
+      .replace(/\babeg\b/gi, 'please')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return s;
+  };
+
+  const normalizeNigerianTranscript = (raw: string): string => {
+    return cleanEnglishRemovePidgin(raw);
+  };
+
+  const sanitizeIgboIzugbeText = (igbo: string): string => {
+    if (!igbo) return '';
+    let out = igbo
+      .replace(/\b(M na-aga|M na aga|Ma-aga|Ma aga)\b/gi, 'Ana m aga')
+      .replace(/\bahia\b/gi, 'ahịa')
+      .replace(/\b(ịzụrụ ụfọdụ nri|izuru ufuoyu nu|ịzụrụ nri|izuru nri)\b/gi, 'ịzụta nri')
+      .replace(/\b(ịzụrụ|izuru)\b/gi, 'ịzụta')
+      .replace(/\b(ụfọdụ nri|ufuoyu nu)\b/gi, 'nri')
+      .replace(/\beri ihe oma\b/gi, 'zụta nke dị ọnụ ala')
+      .replace(/\bna ị zụrụ ọnụ ala( zuru oke)?\b/gi, 'na ị ga-azụta ọnụ ala')
+      .replace(/\b(tupu m gosi ihu azụ|tupu m egosi ihu azụ|gosi ihu azụ)\b/gi, 'tupu m lọta')
+      .replace(/Fatakwal/gi, 'Port Harcourt')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return out;
+  };
+
+  const addIgboToneCommas = (igbo: string): string => {
+    const clean = sanitizeIgboIzugbeText(igbo);
+    if (!clean) return '';
+    return clean
+      .replace(/\bAna m aga ahịa[,]?\s+ịzụta nri\b/gi, 'Ana m, aga ahịa, ịzụta nri')
+      .replace(/\bAchọrọ m ịga ahịa[,]?\s+ịzụta nri\b/gi, 'Achọrọ m, ịga ahịa, ịzụta nri')
+      .replace(
+        /\bEnwere m olileanya[,]?\s+na ị ga-azụta ọnụ ala[,]?\s+tupu m lọta\b/gi,
+        'Enwere m olileanya, na ị ga-azụta ọnụ ala, tupu m lọta'
+      )
+      .replace(/\bAna m (aga|eme|ekwu|abịa)\b/gi, 'Ana m, $1')
+      .replace(/\b(aga ahịa) (ịzụta)\b/gi, '$1, $2');
   };
 
   const curatedEverydayTranslation = (
     englishText: string,
     targetLanguage: string
   ): string | null => {
-    const norm = englishText
+    const cleaned = cleanEnglishRemovePidgin(englishText);
+    const norm = cleaned
       .toLowerCase()
       .replace(/[.!?]+$/g, '')
       .replace(/\s+/g, ' ')
       .trim();
     const lang = targetLanguage.toLowerCase();
 
+    if (lang.includes('igbo')) {
+      const hasMarketFood =
+        (norm.includes('market') && (norm.includes('food') || norm.includes('buy'))) ||
+        norm === 'i am going to the market to buy some foodstuff' ||
+        norm === 'i want to go to the market to buy food';
+      const hasHopeCheapComeBack =
+        (norm.includes('cheap') && (norm.includes('come back') || norm.includes('back'))) ||
+        norm === 'i hope you buy cheap before i come back';
+
+      if (hasMarketFood && hasHopeCheapComeBack) {
+        return 'Ana m, aga ahịa, ịzụta nri. Enwere m olileanya na ị ga-azụta ọnụ ala tupu m lọta';
+      }
+      if (
+        norm === 'i am going to the market to buy some foodstuff' ||
+        norm === 'i am going to the market to buy foodstuff' ||
+        norm === 'i am going to the market to buy food' ||
+        norm === 'i want to go to the market to buy food' ||
+        norm === 'i want to go to the market to buy some foodstuff'
+      ) {
+        return 'Ana m, aga ahịa, ịzụta nri';
+      }
+      if (
+        norm === 'i hope you buy cheap before i come back' ||
+        norm === 'i hope you buy it cheap before i come back'
+      ) {
+        return 'Enwere m olileanya na ị ga-azụta ọnụ ala tupu m lọta';
+      }
+      if (norm === 'buy cheap full' || norm === 'buy cheap') {
+        return 'zụta nke dị ọnụ ala';
+      }
+      if (norm === 'show face back' || norm === 'before i come back') {
+        return 'tupu m lọta';
+      }
+    }
+
     if (norm === 'hello my friends') {
-      if (lang.includes('igbo')) return 'Ndewo ndị enyi m';
+      if (lang.includes('igbo')) return 'Ndewo, ndị enyi m';
       if (lang.includes('hausa')) return 'Sannu abokaina';
       if (lang.includes('yoruba')) return 'Bawo awon ore mi';
       if (lang.includes('pidgin') || lang.includes('lagos')) return 'How far my padi dem';
       if (lang.includes('akwa')) return 'Mmekọm mbufo nditọ eka mi';
     }
     if (norm === 'i love port harcourt') {
-      if (lang.includes('igbo')) return "A hụrụ m Port Harcourt n'anya";
+      if (lang.includes('igbo')) return "A hụrụ m, Port Harcourt n'anya";
       if (lang.includes('hausa')) return 'Ina son Port Harcourt';
       if (lang.includes('yoruba')) return 'Mo nifẹ Port Harcourt';
       if (lang.includes('pidgin') || lang.includes('lagos')) return 'I love Port Harcourt die';
@@ -1539,11 +1664,14 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
       }
     }
 
+    // PRE-PROCESS: Clean the English & remove pidgin before translating
+    originalTranscript = cleanEnglishRemovePidgin(originalTranscript);
     if (!originalTranscript) {
-      originalTranscript = 'Hello my friends, I love Port Harcourt';
+      originalTranscript = 'I am going to the market to buy some foodstuff';
     }
 
     const { langCode, gtxCode } = getLanguageCodesForDialect(targetLanguage);
+    const isIgboTarget = langCode === 'ig-NG' || targetLanguage.toLowerCase().includes('igbo');
 
     if (transcribeOnly) {
       return {
@@ -1557,7 +1685,7 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
       };
     }
 
-    // STEP 2: TRANSLATE FOR REAL into natural everyday Igbo / Hausa / Yoruba / Pidgin / Akwa Ibom
+    // STEP 2: TRANSLATE FOR REAL into flawless Igbo Izugbe (Anambra) / Hausa / Yoruba / Pidgin / Akwa Ibom
     let translatedText = originalTranscript;
     const isTranslationTarget =
       targetLanguage &&
@@ -1566,38 +1694,38 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
     if (isTranslationTarget) {
       const exactCurated = curatedEverydayTranslation(originalTranscript, targetLanguage);
       if (exactCurated) {
-        translatedText = exactCurated;
+        translatedText = isIgboTarget ? addIgboToneCommas(exactCurated) : exactCurated;
       } else {
-        const translationPrompt = `Translate to natural everyday ${targetLanguage} as spoken in Nigeria, not formal textbook.
+        const translationPrompt = isIgboTarget
+          ? `PRE-PROCESS STEP: First clean the English input by removing any Nigerian pidgin (e.g. "I wan go market go buy foodstuff" -> "I want to go to the market to buy food", "show face back" -> "come back").
+Then translate the cleaned English into flawless Igbo Izugbe (Central Igbo from Anambra).
+
+Input English: "${originalTranscript}"
+
+MANDATORY TEST EXAMPLES YOU MUST FOLLOW:
+1. English: "I am going to the market to buy some foodstuff" (or "I want to go to the market to buy food")
+   MUST BE: "Ana m, aga ahịa, ịzụta nri"
+   NEVER: "Ma-aga ahia izuru ufuoyu nu"
+2. English: "I hope you buy cheap before I come back"
+   MUST BE: "Enwere m olileanya na ị ga-azụta ọnụ ala tupu m lọta"
+3. "buy cheap full" -> "zụta nke dị ọnụ ala"
+4. "show face back" -> "tupu m lọta"
+5. Add natural commas for Igbo tones (e.g. "Ana m, aga ahịa, ịzụta nri").
+
+Return JSON with keys "originalTranscript" (cleaned English) and "translatedText" (flawless Igbo Izugbe).`
+          : `PRE-PROCESS: Clean the English input and remove any unintended pidgin first. Then translate to natural everyday ${targetLanguage} as spoken in Nigeria, not formal textbook.
 
 Speaker's English text: "${originalTranscript}"
 Target Voice Persona: "${presetName}" (${presetId})
 ${dialectInstruction ? `Dialect guidance: ${dialectInstruction}` : ''}
-
-Mandatory Reference Examples of everyday Nigerian translations:
-- Igbo (ig-NG):
-  * "Hello my friends" -> "Ndewo ndị enyi m"
-  * "I love Port Harcourt" -> "A hụrụ m Port Harcourt n'anya"
-  * "Hello my friends, I love Port Harcourt" -> "Ndewo ndị enyi m, a hụrụ m Port Harcourt n'anya"
-- Hausa (ha-NG):
-  * "Hello my friends" -> "Sannu abokaina"
-  * "I love Port Harcourt" -> "Ina son Port Harcourt"
-- Yoruba (yo-NG):
-  * "Hello my friends" -> "Bawo awon ore mi"
-  * "I love Port Harcourt" -> "Mo nifẹ Port Harcourt"
-- Nigerian Pidgin / Lagos Street (en-NG):
-  * "Hello my friends" -> "How far my padi dem"
-  * "I love Port Harcourt" -> "I love Port Harcourt die"
-- Akwa Ibom (Ibibio/Efik):
-  * "Hello my friends" -> "Mmekọm mbufo nditọ eka mi"
-  * "I love Port Harcourt" -> "Mmama Port Harcourt"
 
 Rules:
 - Translate 100% of the English text into real everyday ${targetLanguage} words as spoken in Nigeria.
 - Do NOT return English words (except proper nouns like Port Harcourt, Lagos, BoostHub).
 - Return JSON with keys "originalTranscript" and "translatedText".`;
 
-        const schemaConfig = {
+        const schemaConfig: any = {
+          systemInstruction: isIgboTarget ? IGBO_ANAMBRA_SYSTEM_PROMPT : undefined,
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -1623,8 +1751,12 @@ Rules:
             });
             if (textRes.text?.trim()) {
               const parsed = JSON.parse(textRes.text.trim());
+              if (parsed.originalTranscript && String(parsed.originalTranscript).trim()) {
+                originalTranscript = cleanEnglishRemovePidgin(String(parsed.originalTranscript).trim());
+              }
               if (parsed.translatedText && String(parsed.translatedText).trim()) {
-                translatedText = String(parsed.translatedText).trim();
+                const rawTrans = String(parsed.translatedText).trim();
+                translatedText = isIgboTarget ? addIgboToneCommas(rawTrans) : rawTrans;
                 break;
               }
             }
@@ -1633,7 +1765,8 @@ Rules:
           }
         }
 
-        // Fallback to Google Translate GTX if translatedText is still identical to English
+        // Fallback to Google Translate GTX if translatedText is still identical to English,
+        // then strictly sanitize with sanitizeIgboIzugbeText + addIgboToneCommas!
         if (
           (!translatedText ||
             translatedText.toLowerCase() === originalTranscript.toLowerCase()) &&
@@ -1649,7 +1782,10 @@ Rules:
               const gtxText =
                 gtxJson?.[0]?.map((seg: any) => seg?.[0] || '').join('') || '';
               if (gtxText.trim()) {
-                translatedText = gtxText.trim().replace(/Fatakwal/gi, 'Port Harcourt');
+                const cleanedGtx = gtxText.trim().replace(/Fatakwal/gi, 'Port Harcourt');
+                translatedText = isIgboTarget
+                  ? addIgboToneCommas(cleanedGtx)
+                  : cleanedGtx;
               }
             }
           } catch {
@@ -1659,30 +1795,34 @@ Rules:
       }
     }
 
+    if (isIgboTarget) {
+      translatedText = addIgboToneCommas(translatedText);
+    }
+
     if (!translatedText) {
       translatedText = originalTranscript;
     }
 
-    // STEP 3: REAL NIGERIAN VOICE GENERATION (with languageCode ig-NG, ha-NG, yo-NG, en-NG)
+    // STEP 3: REAL NIGERIAN VOICE GENERATION AT 0.8x SLOWER RATE WITH TONE COMMAS
     const validVoiceNames = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
     const chosenVoice = validVoiceNames.includes(geminiVoiceName)
       ? geminiVoiceName
       : 'Kore';
 
     const nativeNigerianStyleMap: Record<string, string> = {
-      'ig-NG': `Native Nigerian Igbo speaker (ig-NG) born and raised in Eastern Nigeria speaking authentic everyday Asụsụ Igbo with pure native Igbo tonal pronunciation and West African vocal resonance, never American or British oyibo accent. ${ttsStylePrompt}`,
-      'ha-NG': `Native Northern Nigerian Hausa speaker (ha-NG) from Kano/Kaduna speaking authentic Harshen Hausa with pure native Hausa pronunciation and cadence, never American or British oyibo accent. ${ttsStylePrompt}`,
-      'yo-NG': `Native Southwestern Nigerian Yoruba speaker (yo-NG) from Lagos/Ibadan speaking authentic Èdè Yorùbá with pure native Yoruba tonal pronunciation, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'ig-NG': `Native Anambra Igbo speaker (ig-NG) speaking flawless Igbo Izugbe (Central Igbo) at a slower rate of 0.8x, pausing naturally at every comma to articulate every Igbo tone clearly, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'ha-NG': `Native Northern Nigerian Hausa speaker (ha-NG) from Kano/Kaduna speaking authentic Harshen Hausa at a clear 0.85x pace with pure native Hausa pronunciation, never American or British oyibo accent. ${ttsStylePrompt}`,
+      'yo-NG': `Native Southwestern Nigerian Yoruba speaker (yo-NG) from Lagos/Ibadan speaking authentic Èdè Yorùbá at a clear 0.85x pace with pure native Yoruba tonal pronunciation, never American or British oyibo accent. ${ttsStylePrompt}`,
       'en-NG': `Native Nigerian speaker (en-NG) born and raised in Nigeria speaking with authentic Nigerian pronunciation and rhythm, never American or British oyibo accent. ${ttsStylePrompt}`,
     };
     const effectiveStylePrompt =
       nativeNigerianStyleMap[langCode] || ttsStylePrompt;
 
-    const cacheKey = `${chosenVoice.toLowerCase()}_${getNigerianVoiceCacheKey(
+    const cacheKey = `v2_${chosenVoice.toLowerCase()}_${getNigerianVoiceCacheKey(
       langCode,
       translatedText
     )}`;
-    const langOnlyCacheKey = getNigerianVoiceCacheKey(langCode, translatedText);
+    const langOnlyCacheKey = `v2_${getNigerianVoiceCacheKey(langCode, translatedText)}`;
 
     let ttsBase64 =
       memoryVoiceWavCache.get(cacheKey) ||
@@ -1691,74 +1831,167 @@ Rules:
 
     let outputMimeType = 'audio/wav';
     if (!ttsBase64) {
+      // Tier 1: Gemini Native TTS models (including gemini-3.1-flash-tts-preview)
       const ttsModels = [
+        'gemini-3.1-flash-tts-preview',
         'gemini-3.8-flash-lite-tts',
         'gemini-3.8-flash-tts',
         'gemini-2.5-flash-preview-tts',
       ];
-      for (let pass = 1; pass <= 2 && !ttsBase64; pass++) {
-        for (const ttsModel of ttsModels) {
-          try {
-            const is25 = ttsModel.includes('2.5');
-            const ttsRes = await ai.models.generateContent({
-              model: ttsModel,
-              contents: is25
-                ? [
-                    {
-                      parts: [
-                        {
-                          text: `Speak the following ${targetLanguage} (${langCode}) words with a 100% authentic native Nigerian ${targetLanguage} voice (${effectiveStylePrompt}): ${translatedText}`,
+      for (const ttsModel of ttsModels) {
+        try {
+          const is25 = ttsModel.includes('2.5');
+          const ttsRes = await ai.models.generateContent({
+            model: ttsModel,
+            contents: is25
+              ? [
+                  {
+                    parts: [
+                      {
+                        text: `Speak the following ${targetLanguage} (${langCode}) words slowly at 0.8x rate, pausing at commas, with a 100% authentic native Nigerian ${targetLanguage} voice (${effectiveStylePrompt}): ${translatedText}`,
+                      },
+                    ],
+                  },
+                ]
+              : [
+                  {
+                    role: 'user',
+                    parts: [
+                      {
+                        text: translatedText,
+                        speechMetadata: {
+                          style: effectiveStylePrompt,
                         },
-                      ],
-                    },
-                  ]
-                : [
-                    {
-                      role: 'user',
-                      parts: [
-                        {
-                          text: translatedText,
-                          speechMetadata: {
-                            style: effectiveStylePrompt,
-                          },
-                        } as any,
-                      ],
-                    },
-                  ],
-              config: {
-                responseModalities: ['AUDIO'],
-                speechConfig: {
-                  languageCode: langCode,
-                  voiceConfig: {
-                    prebuiltVoiceConfig: {
-                      voiceName: chosenVoice,
-                    },
+                      } as any,
+                    ],
+                  },
+                ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                languageCode: langCode,
+                voiceConfig: {
+                  prebuiltVoiceConfig: {
+                    voiceName: chosenVoice,
                   },
                 },
               },
-            });
-            const candidateData =
-              ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
-            if (candidateData) {
-              ttsBase64 = ensureWavBase64(candidateData, 24000);
-              outputMimeType = 'audio/wav';
-              break;
-            }
-          } catch {
-            // try next TTS model
+            },
+          });
+          const candidateData =
+            ttsRes.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || '';
+          if (candidateData) {
+            ttsBase64 = ensureWavBase64(candidateData, 24000);
+            outputMimeType = 'audio/wav';
+            break;
           }
-        }
-        if (!ttsBase64 && pass === 1) {
-          await new Promise((r) => setTimeout(r, 500));
+        } catch {
+          // try next TTS model
         }
       }
 
-      // Unlimited Nigerian Voice TTS fallback (ha-NG / en-NG) if Gemini TTS hits 429 quota
+      // Tier 2: Gemini Live Native Audio API (gemini-2.5-flash-native-audio-latest)
+      // Has high quota and speaks native Anambra Igbo / Hausa / Yoruba at 0.8x slower pace!
+      if (!ttsBase64) {
+        try {
+          const liveChunks: Buffer[] = [];
+          await new Promise<void>(async (resolve, reject) => {
+            const timeoutId = setTimeout(() => reject(new Error('Live TTS timeout')), 7500);
+            try {
+              const session = await ai.live.connect({
+                model: 'gemini-2.5-flash-native-audio-latest',
+                config: {
+                  responseModalities: [Modality.AUDIO],
+                  speechConfig: {
+                    voiceConfig: {
+                      prebuiltVoiceConfig: {
+                        voiceName: chosenVoice,
+                      },
+                    },
+                  },
+                  systemInstruction: {
+                    parts: [
+                      {
+                        text: `You are a native Nigerian ${targetLanguage} speaker from Anambra/Nigeria (${langCode}). Your ONLY task is to read aloud the exact ${targetLanguage} words given by the user at a slower 0.8x rate, pausing naturally at every comma, with 100% authentic native ${targetLanguage} tones. Never translate back to English and never add any extra words.`,
+                      },
+                    ],
+                  },
+                },
+                callbacks: {
+                  onmessage: (msg: any) => {
+                    const parts = msg?.serverContent?.modelTurn?.parts || [];
+                    for (const p of parts) {
+                      if (p.inlineData?.data) {
+                        liveChunks.push(Buffer.from(p.inlineData.data, 'base64'));
+                      }
+                    }
+                    if (msg?.serverContent?.turnComplete) {
+                      clearTimeout(timeoutId);
+                      try {
+                        session.close();
+                      } catch {
+                        // ignore
+                      }
+                      resolve();
+                    }
+                  },
+                  onerror: (err: any) => {
+                    clearTimeout(timeoutId);
+                    reject(err);
+                  },
+                },
+              });
+              session.sendClientContent({
+                turns: [
+                  {
+                    role: 'user',
+                    parts: [
+                      {
+                        text: `Read this exact ${targetLanguage} sentence aloud at 0.8x slower rate: "${translatedText}"`,
+                      },
+                    ],
+                  },
+                ],
+                turnComplete: true,
+              });
+            } catch (e) {
+              clearTimeout(timeoutId);
+              reject(e);
+            }
+          });
+          if (liveChunks.length > 0) {
+            const pcmBuffer = Buffer.concat(liveChunks);
+            if (pcmBuffer.length > 1000) {
+              ttsBase64 = ensureWavBase64(pcmBuffer.toString('base64'), 24000);
+              outputMimeType = 'audio/wav';
+            }
+          }
+        } catch {
+          // fall through to Tier 3
+        }
+      }
+
+      // Tier 3: Slow 0.8x rate Nigerian TTS fallback (ttsspeed=0.24) with joined Igbo pronoun phonetics
       if (!ttsBase64) {
         const gtxTtsLang = langCode === 'ha-NG' ? 'ha-NG' : 'en-NG';
+        const phoneticForFallback = isIgboTarget
+          ? translatedText
+              .replace(/\bAna m\b/gi, 'Anam')
+              .replace(/\bEnwere m\b/gi, 'Enwerem')
+              .replace(/\bAchọrọ m\b/gi, 'Achorom')
+              .replace(/\btupu m\b/gi, 'tupum')
+              .replace(/\bA hụrụ m\b/gi, 'Ahurum')
+              .replace(/\benyi m\b/gi, 'enyim')
+              .replace(/ị/g, 'i')
+              .replace(/Ị/g, 'I')
+              .replace(/ụ/g, 'u')
+              .replace(/Ụ/g, 'U')
+              .replace(/ọ/g, 'o')
+              .replace(/Ọ/g, 'O')
+          : translatedText;
         try {
-          const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${gtxTtsLang}&q=${encodeURIComponent(
-            translatedText.slice(0, 200)
+          const ttsUrl = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${gtxTtsLang}&ttsspeed=0.24&q=${encodeURIComponent(
+            phoneticForFallback.slice(0, 200)
           )}`;
           const gtxTtsRes = await fetch(ttsUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' },

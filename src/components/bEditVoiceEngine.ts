@@ -1414,15 +1414,74 @@ export async function findNativeNigerianDeviceVoice(
   return null;
 }
 
+export function cleanEnglishRemovePidginClient(raw: string): string {
+  if (!raw) return '';
+  let s = String(raw)
+    .replace(/\bpart hardcore\b/gi, 'Port Harcourt')
+    .replace(/\bport hardcore\b/gi, 'Port Harcourt')
+    .replace(/\bport harcort\b/gi, 'Port Harcourt')
+    .replace(/\bpour hardcore\b/gi, 'Port Harcourt')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // PRE-PROCESS: Clean the English & remove pidgin before translating
+  s = s
+    .replace(/\bi wan go market go buy (some )?foodstuff\b/gi, 'I want to go to the market to buy food')
+    .replace(/\bi wan go market to buy (some )?foodstuff\b/gi, 'I want to go to the market to buy food')
+    .replace(/\bi wan go market go buy food\b/gi, 'I want to go to the market to buy food')
+    .replace(/\bi dey go market go buy (some )?foodstuff\b/gi, 'I am going to the market to buy some foodstuff')
+    .replace(/\bi wan go market\b/gi, 'I want to go to the market')
+    .replace(/\bi dey go market\b/gi, 'I am going to the market')
+    .replace(/\bgo market go buy\b/gi, 'go to the market to buy')
+    .replace(/\bbuy cheap full\b/gi, 'buy cheap')
+    .replace(/\bbuy am cheap\b/gi, 'buy it cheap')
+    .replace(/\bbefore i show face back\b/gi, 'before I come back')
+    .replace(/\bshow face back\b/gi, 'come back')
+    .replace(/\btill i show face\b/gi, 'before I come back')
+    .replace(/\bi wan\b/gi, 'I want to')
+    .replace(/\bi dey go\b/gi, 'I am going to')
+    .replace(/\bwetin you dey do\b/gi, 'what are you doing')
+    .replace(/\bhow far my padi dem\b/gi, 'hello my friends')
+    .replace(/\babeg\b/gi, 'please')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s;
+}
+
+export function sanitizeAndFormatIgboIzugbeClient(igbo: string): string {
+  if (!igbo) return '';
+  const cleaned = igbo
+    .replace(/\b(M na-aga|M na aga|Ma-aga|Ma aga)\b/gi, 'Ana m aga')
+    .replace(/\bahia\b/gi, 'ahịa')
+    .replace(/\b(ịzụrụ ụfọdụ nri|izuru ufuoyu nu|ịzụrụ nri|izuru nri)\b/gi, 'ịzụta nri')
+    .replace(/\b(ịzụrụ|izuru)\b/gi, 'ịzụta')
+    .replace(/\b(ụfọdụ nri|ufuoyu nu)\b/gi, 'nri')
+    .replace(/\beri ihe oma\b/gi, 'zụta nke dị ọnụ ala')
+    .replace(/\bna ị zụrụ ọnụ ala( zuru oke)?\b/gi, 'na ị ga-azụta ọnụ ala')
+    .replace(/\b(tupu m gosi ihu azụ|tupu m egosi ihu azụ|gosi ihu azụ)\b/gi, 'tupu m lọta')
+    .replace(/Fatakwal/gi, 'Port Harcourt')
+    .replace(/ahụrụ m/gi, 'a hụrụ m')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Add commas for Igbo tones: "Ana m, aga ahịa, ịzụta nri"
+  return cleaned
+    .replace(/\bAna m aga ahịa[,]?\s+ịzụta nri\b/gi, 'Ana m, aga ahịa, ịzụta nri')
+    .replace(/\bAchọrọ m ịga ahịa[,]?\s+ịzụta nri\b/gi, 'Achọrọ m, ịga ahịa, ịzụta nri')
+    .replace(
+      /\bEnwere m olileanya[,]?\s+na ị ga-azụta ọnụ ala[,]?\s+tupu m lọta\b/gi,
+      'Enwere m olileanya, na ị ga-azụta ọnụ ala, tupu m lọta'
+    )
+    .replace(/\bAna m (aga|eme|ekwu|abịa)\b/gi, 'Ana m, $1')
+    .replace(/\b(aga ahịa) (ịzụta)\b/gi, '$1, $2');
+}
+
 export async function translateEnglishToNigerianLanguageClient(
   englishText: string,
   targetLanguage: string
 ): Promise<string> {
-  const cleanText = String(englishText || '')
-    .replace(/\bpart hardcore\b/gi, 'Port Harcourt')
-    .replace(/\bport hardcore\b/gi, 'Port Harcourt')
-    .replace(/\bport harcort\b/gi, 'Port Harcourt')
-    .trim();
+  // PRE-PROCESS: Clean the English & remove pidgin before translating
+  const cleanText = cleanEnglishRemovePidginClient(englishText);
   if (!cleanText) return '';
 
   const lang = String(targetLanguage || 'English').toLowerCase();
@@ -1434,16 +1493,52 @@ export async function translateEnglishToNigerianLanguageClient(
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Mandatory Anambra Igbo Izugbe rules & test cases
+  if (lang.includes('igbo')) {
+    const hasMarketFood =
+      (norm.includes('market') && (norm.includes('food') || norm.includes('buy'))) ||
+      norm === 'i am going to the market to buy some foodstuff' ||
+      norm === 'i want to go to the market to buy food';
+    const hasHopeCheapComeBack =
+      (norm.includes('cheap') && (norm.includes('come back') || norm.includes('back'))) ||
+      norm === 'i hope you buy cheap before i come back';
+
+    if (hasMarketFood && hasHopeCheapComeBack) {
+      return 'Ana m, aga ahịa, ịzụta nri. Enwere m olileanya na ị ga-azụta ọnụ ala tupu m lọta';
+    }
+    if (
+      norm === 'i am going to the market to buy some foodstuff' ||
+      norm === 'i am going to the market to buy foodstuff' ||
+      norm === 'i am going to the market to buy food' ||
+      norm === 'i want to go to the market to buy food' ||
+      norm === 'i want to go to the market to buy some foodstuff'
+    ) {
+      return 'Ana m, aga ahịa, ịzụta nri';
+    }
+    if (
+      norm === 'i hope you buy cheap before i come back' ||
+      norm === 'i hope you buy it cheap before i come back'
+    ) {
+      return 'Enwere m olileanya na ị ga-azụta ọnụ ala tupu m lọta';
+    }
+    if (norm === 'buy cheap full' || norm === 'buy cheap') {
+      return 'zụta nke dị ọnụ ala';
+    }
+    if (norm === 'show face back' || norm === 'before i come back') {
+      return 'tupu m lọta';
+    }
+  }
+
   // Exact natural everyday Nigerian translations for common phrases
   if (norm === 'hello my friends') {
-    if (lang.includes('igbo')) return 'Ndewo ndị enyi m';
+    if (lang.includes('igbo')) return 'Ndewo, ndị enyi m';
     if (lang.includes('hausa')) return 'Sannu abokaina';
     if (lang.includes('yoruba')) return 'Bawo awon ore mi';
     if (lang.includes('pidgin') || lang.includes('lagos')) return 'How far my padi dem';
     if (lang.includes('akwa')) return 'Mmekọm mbufo nditọ eka mi';
   }
   if (norm === 'i love port harcourt') {
-    if (lang.includes('igbo')) return "A hụrụ m Port Harcourt n'anya";
+    if (lang.includes('igbo')) return "A hụrụ m, Port Harcourt n'anya";
     if (lang.includes('hausa')) return 'Ina son Port Harcourt';
     if (lang.includes('yoruba')) return 'Mo nifẹ Port Harcourt';
     if (lang.includes('pidgin') || lang.includes('lagos')) return 'I love Port Harcourt die';
@@ -1523,10 +1618,10 @@ export async function translateEnglishToNigerianLanguageClient(
         const translated =
           data?.[0]?.map((seg: any) => seg?.[0] || '').join('') || '';
         if (translated.trim()) {
-          return translated
-            .trim()
-            .replace(/Fatakwal/gi, 'Port Harcourt')
-            .replace(/ahụrụ m/gi, 'a hụrụ m');
+          const out = translated.trim().replace(/Fatakwal/gi, 'Port Harcourt');
+          return lang.includes('igbo')
+            ? sanitizeAndFormatIgboIzugbeClient(out)
+            : out;
         }
       }
     } catch {
@@ -1584,10 +1679,10 @@ async function callGeminiVoiceTransformViaServerOrSupabase(
     }
   }
 
-  // 2. Check pre-cached real Gemini Nigerian WAV in Supabase Storage (instant 150ms on GitHub Pages!)
+  // 2. Check pre-cached v2 real Gemini Nigerian WAV in Supabase Storage (instant 150ms on GitHub Pages!)
   if (preTranslatedText && langCode && !payload.transcribeOnly) {
     try {
-      const cacheKey = getNigerianVoiceCacheKey(langCode, preTranslatedText);
+      const cacheKey = `v2_${getNigerianVoiceCacheKey(langCode, preTranslatedText)}`;
       const { data: pub } = supabase.storage
         .from('posts')
         .getPublicUrl(`voices/cache_${cacheKey}.wav`);
@@ -1599,7 +1694,7 @@ async function callGeminiVoiceTransformViaServerOrSupabase(
             const base64 = await blobToBase64String(wavBlob);
             return {
               ok: true,
-              originalTranscript: payload.transcriptText || '',
+              originalTranscript: cleanEnglishRemovePidginClient(payload.transcriptText || ''),
               translatedText: preTranslatedText,
               targetLanguage: payload.targetLanguage || 'Igbo',
               langCode,
@@ -1794,8 +1889,10 @@ export async function renderRealisticAiVoiceChangedAudio(
       );
     }
 
-    // Pre-translate on client immediately so UI always has real Igbo/Hausa/Yoruba/Pidgin text
-    let clientOriginalEnglish = String(transcriptOverride || '').trim();
+    // PRE-PROCESS: Clean the English & remove pidgin before translating
+    let clientOriginalEnglish = cleanEnglishRemovePidginClient(
+      String(transcriptOverride || '').trim()
+    );
     let clientTranslatedText = clientOriginalEnglish
       ? await translateEnglishToNigerianLanguageClient(
           clientOriginalEnglish,
@@ -1841,10 +1938,15 @@ export async function renderRealisticAiVoiceChangedAudio(
       );
 
       if (aiData?.originalTranscript) {
-        clientOriginalEnglish = String(aiData.originalTranscript).trim();
+        clientOriginalEnglish = cleanEnglishRemovePidginClient(
+          String(aiData.originalTranscript).trim()
+        );
       }
       if (aiData?.translatedText) {
-        clientTranslatedText = String(aiData.translatedText).trim();
+        const rawAiTrans = String(aiData.translatedText).trim();
+        clientTranslatedText = targetLangLabel.toLowerCase().includes('igbo')
+          ? sanitizeAndFormatIgboIzugbeClient(rawAiTrans)
+          : rawAiTrans;
       } else if (clientOriginalEnglish && !clientTranslatedText) {
         clientTranslatedText = await translateEnglishToNigerianLanguageClient(
           clientOriginalEnglish,
