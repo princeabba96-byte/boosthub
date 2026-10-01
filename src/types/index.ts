@@ -71,6 +71,7 @@ export interface GiftActivityEntry {
 
 export interface BShopUserState {
   boostPoints: number;
+  balance?: number;
   xp: number;
   giftPrivacy: 'public' | 'showcase_only' | 'private';
   showcaseGifts: string[];
@@ -152,6 +153,7 @@ export interface UserProfile {
   wantToCreate: string;
   xp: number;
   boostPoints: number;
+  balance?: number;
   giftPrivacy?: 'public' | 'showcase_only' | 'private';
   showcaseGifts?: string;
   equippedFrame?: string;

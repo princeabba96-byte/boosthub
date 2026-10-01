@@ -87,7 +87,7 @@
               ? '/boosthub/'
               : '/';
             navigator.serviceWorker
-              .register(baseScope + 'sw.js?v=31', { scope: baseScope })
+              .register(baseScope + 'sw.js?v=34', { scope: baseScope })
               .then(function (reg) {
                 if (reg && typeof reg.update === 'function') {
                   reg.update().catch(function () {});
@@ -147,11 +147,11 @@
       ) {
         var ghCss = document.createElement('link');
         ghCss.rel = 'stylesheet';
-        ghCss.href = './gh-bundle/app.css?v=33';
+        ghCss.href = './gh-bundle/app.css?v=34';
         document.head.appendChild(ghCss);
         var ghJs = document.createElement('script');
         ghJs.type = 'module';
-        ghJs.src = './gh-bundle/app.js?v=33';
+        ghJs.src = './gh-bundle/app.js?v=34';
         document.body.appendChild(ghJs);
       }
     </script>

@@ -43,7 +43,14 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
   onGoToMyGifts,
   initialRecipient,
 }) => {
-  const { userProfile, refreshProfile, showToast } = useAuth();
+  const {
+    userProfile,
+    balance,
+    refreshProfile,
+    purchaseBShopItem,
+    sendBShopGift,
+    showToast,
+  } = useAuth();
   const [shopState, setShopState] = useState<BShopUserState | null>(null);
   const [creators, setCreators] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -184,7 +191,11 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
     userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
   const currentBp = isOwnerAdmin
     ? 999999999
-    : shopState?.boostPoints ?? userProfile?.boostPoints ?? 0;
+    : shopState?.balance ??
+      shopState?.boostPoints ??
+      balance ??
+      userProfile?.boostPoints ??
+      0;
 
   const getOwnedCount = (code: string): number => {
     if (isOwnerAdmin) return 999999;
@@ -224,22 +235,8 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       setUnboxingBusy(true);
     }
     try {
-      const res = await apiFetch<{
-        state: BShopUserState;
-        unboxedReward?: {
-          code: string;
-          name: string;
-          icon: string;
-          rarity: string;
-          quantity: number;
-        } | null;
-        message: string;
-      }>('/api/bshop/buy', {
-        method: 'POST',
-        body: JSON.stringify({ itemCode: item.code, quantity: qty }),
-      });
+      const res = await purchaseBShopItem(item.code, qty);
       setShopState(res.state);
-      await refreshProfile();
       if (res.unboxedReward) {
         setUnboxedResult(res.unboxedReward);
       } else {
@@ -270,21 +267,15 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
     setSubmittingAction(true);
     try {
-      const res = await apiFetch<{
-        state: BShopUserState;
-        message: string;
-      }>('/api/bshop/send-gift', {
-        method: 'POST',
-        body: JSON.stringify({
-          receiverId: selectedRecipientId,
-          itemCode: selectedGiftModalItem.code,
-          quantity: giftQuantity,
-          message: giftMessage,
-          useInventory: useOwnedInventory,
-        }),
+      const res = await sendBShopGift({
+        receiverId: selectedRecipientId,
+        itemCode: selectedGiftModalItem.code,
+        quantity: giftQuantity,
+        message: giftMessage,
+        useInventory: useOwnedInventory,
+        ownedCount: getOwnedCount(selectedGiftModalItem.code),
       });
       setShopState(res.state);
-      await refreshProfile();
       showToast(res.message, 'success');
       setSelectedGiftModalItem(null);
     } catch (err: any) {

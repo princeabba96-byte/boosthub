@@ -1130,6 +1130,7 @@ async function startServer() {
           'src/screens/HomeScreen.tsx',
           'src/screens/CapshotsScreen.tsx',
           'src/screens/FriendsScreen.tsx',
+          'src/screens/BShopScreen.tsx',
           'src/screens/MenuScreen.tsx',
           'src/screens/BEditStudioScreen.tsx',
           'src/screens/ProfileScreen.tsx',

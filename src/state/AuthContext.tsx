@@ -17,8 +17,13 @@ import {
   showBrowserSystemNotification,
   enableBackgroundPushNotifications,
 } from '../services/pushNotifications';
-import { supabase, ADMIN_ABBA_UUID } from '../lib/supabase';
-import { UserProfile } from '../types';
+import {
+  supabase,
+  ADMIN_ABBA_UUID,
+  ADMIN_ABBA_ALT_UUID,
+} from '../lib/supabase';
+import { getBShopItemByCode } from '../data/bshopCatalog';
+import { BShopUserState, UserProfile } from '../types';
 
 interface ToastMessage {
   id: string;
@@ -28,6 +33,7 @@ interface ToastMessage {
 
 interface AuthContextValue {
   userProfile: UserProfile | null;
+  balance: number;
   loading: boolean;
   isOffline: boolean;
   unreadNotifications: number;
@@ -38,6 +44,33 @@ interface AuthContextValue {
   showToast: (message: string, type?: 'info' | 'success' | 'error') => void;
   refreshProfile: () => Promise<void>;
   refreshBadgesCount: () => Promise<void>;
+  purchaseBShopItem: (
+    itemCode: string,
+    quantity?: number
+  ) => Promise<{
+    state: BShopUserState;
+    unboxedReward?: {
+      code: string;
+      name: string;
+      icon: string;
+      rarity: string;
+      quantity: number;
+    } | null;
+    newBalance: number;
+    message: string;
+  }>;
+  sendBShopGift: (params: {
+    receiverId: string;
+    itemCode: string;
+    quantity?: number;
+    message?: string;
+    useInventory?: boolean;
+    ownedCount?: number;
+  }) => Promise<{
+    state: BShopUserState;
+    newBalance: number;
+    message: string;
+  }>;
   loginWithEmail: (
     email: string,
     password: string,
@@ -66,7 +99,7 @@ function normalizeUserAdminState(
 ): UserProfile | null {
   if (!profile) return null;
   const isOwnerAdmin =
-    profile.id === ADMIN_ABBA_UUID &&
+    (profile.id === ADMIN_ABBA_UUID || profile.id === ADMIN_ABBA_ALT_UUID) &&
     (String(profile.username || '').toLowerCase() === 'abba' ||
       String(profile.email || '')
         .trim()
@@ -81,9 +114,16 @@ function normalizeUserAdminState(
       isVerified: true,
       professionalMode: true,
       monetizationEligible: true,
+      boostPoints: 999999999,
+      balance: 999999999,
     };
   }
-  return profile;
+  const syncedBp = Number(profile.balance ?? profile.boostPoints ?? 0);
+  return {
+    ...profile,
+    boostPoints: syncedBp,
+    balance: syncedBp,
+  };
 }
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
@@ -370,6 +410,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           pushEvent('follow_update', data);
           refreshProfile();
           refreshBadgesCount();
+        } else if (
+          data.type === 'balance_updated' &&
+          data.userId === userProfile.id &&
+          typeof data.balance === 'number'
+        ) {
+          setUserProfileState((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  boostPoints: data.balance,
+                  balance: data.balance,
+                  xp: typeof data.xp === 'number' ? data.xp : prev.xp,
+                }
+              : prev
+          );
+          pushEvent('balance_updated', data);
         }
       })
       .on(
@@ -568,6 +624,200 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     showToast('Password updated successfully.', 'success');
   };
 
+  const purchaseBShopItem = useCallback(
+    async (itemCode: string, quantity = 1) => {
+      const item = getBShopItemByCode(itemCode);
+      if (!item) {
+        throw new Error('Selected item was not found in B-Shop.');
+      }
+      const cleanQty = Math.max(1, Math.min(50, Number(quantity) || 1));
+      const totalCost = item.costBp * cleanQty;
+      const snapshotProfile = userProfile;
+      const isOwnerAdmin =
+        snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+      const currentBalance = isOwnerAdmin
+        ? 999999999
+        : Number(
+            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
+          );
+
+      if (!isOwnerAdmin && currentBalance < totalCost) {
+        throw new Error(
+          `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
+        );
+      }
+
+      // Optimistic balance decrement in central state prior to Supabase transaction commit
+      if (snapshotProfile && !isOwnerAdmin) {
+        const optimisticBalance = Math.max(0, currentBalance - totalCost);
+        setUserProfile({
+          ...snapshotProfile,
+          boostPoints: optimisticBalance,
+          balance: optimisticBalance,
+        });
+      }
+
+      try {
+        const res = await apiFetch<{
+          state: BShopUserState;
+          unboxedReward?: {
+            code: string;
+            name: string;
+            icon: string;
+            rarity: string;
+            quantity: number;
+          } | null;
+          newBalance?: number;
+          message: string;
+        }>('/api/bshop/buy', {
+          method: 'POST',
+          body: JSON.stringify({ itemCode: item.code, quantity: cleanQty }),
+        });
+
+        const committedBalance = isOwnerAdmin
+          ? 999999999
+          : Number(
+              res.newBalance ??
+                res.state?.balance ??
+                res.state?.boostPoints ??
+                Math.max(0, currentBalance - totalCost)
+            );
+
+        if (snapshotProfile) {
+          setUserProfile({
+            ...snapshotProfile,
+            boostPoints: committedBalance,
+            balance: committedBalance,
+            xp: res.state?.xp ?? snapshotProfile.xp,
+            equippedFrame:
+              res.state?.equippedFrame ?? snapshotProfile.equippedFrame,
+            equippedBadge:
+              res.state?.equippedBadge ?? snapshotProfile.equippedBadge,
+            equippedNameStyle:
+              res.state?.equippedNameStyle ?? snapshotProfile.equippedNameStyle,
+          });
+        }
+        await refreshProfile();
+
+        return {
+          state: {
+            ...res.state,
+            boostPoints: committedBalance,
+            balance: committedBalance,
+          },
+          unboxedReward: res.unboxedReward || null,
+          newBalance: committedBalance,
+          message: res.message,
+        };
+      } catch (err) {
+        // Roll back optimistic central state if Supabase transaction fails
+        if (snapshotProfile) {
+          setUserProfile(snapshotProfile);
+        }
+        throw err;
+      }
+    },
+    [refreshProfile, setUserProfile, userProfile]
+  );
+
+  const sendBShopGift = useCallback(
+    async (params: {
+      receiverId: string;
+      itemCode: string;
+      quantity?: number;
+      message?: string;
+      useInventory?: boolean;
+      ownedCount?: number;
+    }) => {
+      const item = getBShopItemByCode(params.itemCode);
+      if (!item) {
+        throw new Error('Selected gift was not found in B-Shop.');
+      }
+      const cleanQty = Math.max(1, Math.min(99, Number(params.quantity) || 1));
+      const snapshotProfile = userProfile;
+      const isOwnerAdmin =
+        snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+      const currentBalance = isOwnerAdmin
+        ? 999999999
+        : Number(
+            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
+          );
+
+      const owned = Math.max(0, Number(params.ownedCount || 0));
+      const fromInv =
+        !isOwnerAdmin && params.useInventory ? Math.min(owned, cleanQty) : 0;
+      const toBuyQty = Math.max(0, cleanQty - fromInv);
+      const bpCost = isOwnerAdmin ? 0 : item.costBp * toBuyQty;
+
+      if (!isOwnerAdmin && currentBalance < bpCost) {
+        throw new Error(
+          `Not enough Boost Points! Sending ${item.icon} ${item.name} ×${cleanQty} requires ${bpCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
+        );
+      }
+
+      if (snapshotProfile && !isOwnerAdmin && bpCost > 0) {
+        const optimisticBalance = Math.max(0, currentBalance - bpCost);
+        setUserProfile({
+          ...snapshotProfile,
+          boostPoints: optimisticBalance,
+          balance: optimisticBalance,
+        });
+      }
+
+      try {
+        const res = await apiFetch<{
+          state: BShopUserState;
+          newBalance?: number;
+          message: string;
+        }>('/api/bshop/send-gift', {
+          method: 'POST',
+          body: JSON.stringify({
+            receiverId: params.receiverId,
+            itemCode: item.code,
+            quantity: cleanQty,
+            message: params.message || '',
+            useInventory: Boolean(params.useInventory),
+          }),
+        });
+
+        const committedBalance = isOwnerAdmin
+          ? 999999999
+          : Number(
+              res.newBalance ??
+                res.state?.balance ??
+                res.state?.boostPoints ??
+                Math.max(0, currentBalance - bpCost)
+            );
+
+        if (snapshotProfile) {
+          setUserProfile({
+            ...snapshotProfile,
+            boostPoints: committedBalance,
+            balance: committedBalance,
+            xp: res.state?.xp ?? snapshotProfile.xp,
+          });
+        }
+        await refreshProfile();
+
+        return {
+          state: {
+            ...res.state,
+            boostPoints: committedBalance,
+            balance: committedBalance,
+          },
+          newBalance: committedBalance,
+          message: res.message,
+        };
+      } catch (err) {
+        if (snapshotProfile) {
+          setUserProfile(snapshotProfile);
+        }
+        throw err;
+      }
+    },
+    [refreshProfile, setUserProfile, userProfile]
+  );
+
   const logout = async () => {
     clearAllUserCaches();
     setAuthToken(null);
@@ -577,10 +827,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     showToast('Signed out of BoostHub.', 'info');
   };
 
+  const resolvedBalance =
+    userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+      ? 999999999
+      : Number(userProfile?.balance ?? userProfile?.boostPoints ?? 0);
+
   return (
     <AuthContext.Provider
       value={{
         userProfile,
+        balance: resolvedBalance,
         loading,
         isOffline,
         unreadNotifications,
@@ -591,6 +847,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         showToast,
         refreshProfile,
         refreshBadgesCount,
+        purchaseBShopItem,
+        sendBShopGift,
         loginWithEmail,
         signupWithEmail,
         loginWithGoogle,

@@ -29,6 +29,7 @@ import {
 import {
   supabase,
   ADMIN_ABBA_UUID,
+  ADMIN_ABBA_ALT_UUID,
   BOOST_BOT_UUID,
 } from '../lib/supabase';
 
@@ -48,6 +49,7 @@ interface ProfileMeta {
   shares_count?: number;
   verified?: boolean;
   bp?: string;
+  balance?: number;
   showcase_gifts?: string;
   gifts_received_count?: number;
   gift_recognition_score?: number;
@@ -210,6 +212,7 @@ export function mapSupabaseRowToUserProfile(
 ): UserProfile {
   const isAbba =
     row.id === ADMIN_ABBA_UUID ||
+    row.id === ADMIN_ABBA_ALT_UUID ||
     String(row.username || '').toLowerCase() === 'abba' ||
     String(row.username || '').toLowerCase() === 'princeabba';
 
@@ -313,7 +316,12 @@ export function mapSupabaseRowToUserProfile(
     wantToWatch: meta.want_to_watch || 'Creators & Tech',
     wantToCreate: meta.want_to_create || 'Capshots & Posts',
     xp: Number(row.xp ?? (isAbba ? 100200 : 0)),
-    boostPoints: isAbba ? 999999999 : Number(row.boost_points ?? 0),
+    boostPoints: isAbba
+      ? 999999999
+      : Number((row as any).balance ?? row.boost_points ?? meta.balance ?? 0),
+    balance: isAbba
+      ? 999999999
+      : Number((row as any).balance ?? row.boost_points ?? meta.balance ?? 0),
     giftPrivacy: meta.gift_privacy || 'public',
     showcaseGifts:
       meta.showcase_gifts ??
@@ -344,6 +352,125 @@ export function mapSupabaseRowToUserProfile(
     friendshipStatus,
     friendshipId,
     createdAt: row.created_at || new Date().toISOString(),
+  };
+}
+
+export async function executeSupabaseBalanceTransaction(params: {
+  userId: string;
+  costBp: number;
+  xpBonus?: number;
+  mutateMeta?: (currentMeta: ProfileMeta) => ProfileMeta;
+}): Promise<{
+  previousBalance: number;
+  newBalance: number;
+  previousRow: any;
+  updatedRow: any;
+  rollback: () => Promise<void>;
+}> {
+  const { data: meRow, error: fetchError } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', params.userId)
+    .maybeSingle();
+
+  if (fetchError || !meRow) {
+    throw new Error(
+      fetchError?.message || 'Unable to verify user balance in Supabase.'
+    );
+  }
+
+  const isAbba =
+    params.userId === ADMIN_ABBA_UUID ||
+    params.userId === ADMIN_ABBA_ALT_UUID ||
+    String(meRow.username || '').toLowerCase() === 'abba' ||
+    Boolean(meRow.is_admin);
+
+  const currentMeta = parseProfileMeta(meRow.join_reason);
+  const previousBalance = isAbba
+    ? 999999999
+    : Number((meRow as any).balance ?? meRow.boost_points ?? currentMeta.balance ?? 0);
+
+  const cleanCost = Math.max(0, Number(params.costBp || 0));
+  if (!isAbba && cleanCost > 0 && previousBalance < cleanCost) {
+    throw new Error(
+      `Not enough Boost Points (BP) for this purchase! You need ${cleanCost.toLocaleString()} BP, but your balance is ${previousBalance.toLocaleString()} BP.`
+    );
+  }
+
+  const newBalance = isAbba
+    ? 999999999
+    : Math.max(0, previousBalance - cleanCost);
+  const newXp = Number(meRow.xp || 0) + Math.max(0, Number(params.xpBonus || 0));
+
+  const mutatedMeta = params.mutateMeta
+    ? params.mutateMeta({ ...currentMeta })
+    : { ...currentMeta };
+  const nextMeta: ProfileMeta = {
+    ...mutatedMeta,
+    balance: newBalance,
+    bp: isAbba ? 'Unlimited BP' : String(newBalance),
+  };
+
+  const updatePayload: Record<string, any> = {
+    boost_points: newBalance,
+    xp: newXp,
+    join_reason: JSON.stringify(nextMeta),
+  };
+  if (Object.prototype.hasOwnProperty.call(meRow, 'balance')) {
+    updatePayload.balance = newBalance;
+  }
+
+  const { data: updatedRow, error: updateError } = await supabase
+    .from('profiles')
+    .update(updatePayload)
+    .eq('id', params.userId)
+    .select('*')
+    .single();
+
+  if (updateError || !updatedRow) {
+    throw new Error(
+      updateError?.message ||
+        'Transaction failed while updating Boost Points balance in Supabase.'
+    );
+  }
+
+  const rollback = async () => {
+    const revertPayload: Record<string, any> = {
+      boost_points: Number(meRow.boost_points ?? previousBalance),
+      xp: Number(meRow.xp || 0),
+      join_reason: meRow.join_reason,
+    };
+    if (Object.prototype.hasOwnProperty.call(meRow, 'balance')) {
+      revertPayload.balance = (meRow as any).balance;
+    }
+    await supabase
+      .from('profiles')
+      .update(revertPayload)
+      .eq('id', params.userId);
+  };
+
+  try {
+    supabase.channel('boosthub-global-realtime').send({
+      type: 'broadcast',
+      event: 'sync',
+      payload: {
+        type: 'balance_updated',
+        userId: params.userId,
+        balance: newBalance,
+        boostPoints: newBalance,
+        xp: newXp,
+      },
+    });
+  } catch {
+    // ignore realtime broadcast errors
+  }
+
+  return {
+    previousBalance,
+    newBalance,
+    previousRow: meRow,
+    updatedRow,
+    rollback,
   };
 }
 
@@ -2908,8 +3035,13 @@ export async function handleStaticBackendRequest<T = any>(
         };
       });
 
+    const resolvedBalance = isAbba
+      ? 999999999
+      : Number((meRow as any)?.balance ?? meRow?.boost_points ?? meta.balance ?? 0);
+
     const state: BShopUserState = {
-      boostPoints: isAbba ? 999999999 : Number(meRow?.boost_points || 0),
+      boostPoints: resolvedBalance,
+      balance: resolvedBalance,
       xp: Number(meRow?.xp || (isAbba ? 100200 : 0)),
       giftPrivacy: meta.gift_privacy || 'public',
       showcaseGifts: (
@@ -2937,46 +3069,72 @@ export async function handleStaticBackendRequest<T = any>(
   }
 
   if (pathname === '/api/bshop/buy' && method === 'POST') {
+    if (!currentUserId) {
+      throw new Error('Please sign in to purchase items from B-Shop.');
+    }
     const item = getBShopItemByCode(String(body.itemCode || ''));
     if (!item) throw new Error('Item not found in B-Shop catalog.');
-    const qty = Math.max(1, Number(body.quantity || 1));
+    const qty = Math.max(1, Math.min(50, Number(body.quantity || 1)));
     const totalCost = item.costBp * qty;
 
-    const { data: meRow } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', currentUserId)
-      .maybeSingle();
-    const isAbba = currentUserId === ADMIN_ABBA_UUID;
-    const currentBp = isAbba ? 999999999 : Number(meRow?.boost_points || 0);
+    const rolled =
+      item.category === 'mystery_box' ? rollMysteryBoxReward() : null;
+    const rewardItem = rolled ? rolled.item : item;
+    const rewardQty = rolled
+      ? rolled.quantity * qty
+      : item.category === 'gift'
+        ? qty
+        : 1;
 
-    if (!isAbba && currentBp < totalCost) {
-      throw new Error('Not enough Boost Points (BP) for this purchase.');
-    }
+    const unboxedReward = rolled
+      ? {
+          code: rewardItem.code,
+          name: rewardItem.name,
+          icon: rewardItem.icon,
+          rarity: rewardItem.rarity,
+          quantity: rewardQty,
+        }
+      : null;
 
-    const rewardItem =
-      item.category === 'mystery_box' ? rollMysteryBoxReward().item : item;
-    const meta = parseProfileMeta(meRow?.join_reason);
-    const inv = Array.isArray(meta.inventory) ? [...meta.inventory] : [];
-    const existingIdx = inv.findIndex((i) => i.itemCode === rewardItem.code);
-    if (existingIdx >= 0) {
-      inv[existingIdx].quantity += qty;
-    } else {
-      inv.push({
-        itemCode: rewardItem.code,
-        category: rewardItem.category,
-        quantity: qty,
-      });
-    }
+    // Execute explicit transaction-like update on user's balance in Supabase
+    const tx = await executeSupabaseBalanceTransaction({
+      userId: currentUserId,
+      costBp: totalCost,
+      xpBonus: rewardItem.creatorXpBonus * qty,
+      mutateMeta: (meta) => {
+        const inv = Array.isArray(meta.inventory)
+          ? meta.inventory.map((entry) => ({ ...entry }))
+          : [];
+        const existingIdx = inv.findIndex(
+          (i) => i.itemCode === rewardItem.code
+        );
+        if (existingIdx >= 0) {
+          inv[existingIdx].quantity =
+            rewardItem.category === 'gift'
+              ? inv[existingIdx].quantity + rewardQty
+              : 1;
+        } else {
+          inv.push({
+            itemCode: rewardItem.code,
+            category: rewardItem.category,
+            quantity: rewardQty,
+          });
+        }
 
-    await supabase
-      .from('profiles')
-      .update({
-        boost_points: isAbba ? 999999999 : currentBp - totalCost,
-        xp: Number(meRow?.xp || 0) + rewardItem.creatorXpBonus * qty,
-        join_reason: JSON.stringify({ ...meta, inventory: inv }),
-      })
-      .eq('id', currentUserId);
+        const nextMeta: ProfileMeta = {
+          ...meta,
+          inventory: inv,
+        };
+        if (rewardItem.category === 'frame') {
+          nextMeta.equipped_frame = rewardItem.code;
+        } else if (rewardItem.category === 'badge') {
+          nextMeta.equipped_badge = rewardItem.code;
+        } else if (rewardItem.category === 'name_style') {
+          nextMeta.equipped_name_style = rewardItem.code;
+        }
+        return nextMeta;
+      },
+    });
 
     const state = await handleStaticBackendRequest<BShopUserState>(
       '/api/bshop/state',
@@ -2984,73 +3142,180 @@ export async function handleStaticBackendRequest<T = any>(
       null,
       token
     );
-    return { state, mysteryReward: rewardItem } as unknown as T;
+
+    const message = unboxedReward
+      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
+      : rewardItem.category === 'gift'
+        ? `Purchased ${item.icon} ${item.name} ×${qty} (-${totalCost.toLocaleString()} BP)! Added to your Gift Inventory.`
+        : `Unlocked & equipped ${item.icon} ${item.name} (-${totalCost.toLocaleString()} BP)!`;
+
+    return {
+      state: {
+        ...state,
+        boostPoints: tx.newBalance,
+        balance: tx.newBalance,
+      },
+      unboxedReward,
+      mysteryReward: rewardItem,
+      newBalance: tx.newBalance,
+      message,
+    } as unknown as T;
   }
 
   if (pathname === '/api/bshop/send-gift' && method === 'POST') {
+    if (!currentUserId) {
+      throw new Error('Please sign in to send gifts.');
+    }
     const receiverId = normalizeTargetUserId(String(body.receiverId || ''));
     const item = getBShopItemByCode(String(body.itemCode || 'rose'));
     if (!item) throw new Error('Gift not found.');
-    const qty = Math.max(1, Number(body.quantity || 1));
-    const totalCost = item.costBp * qty;
+    const qty = Math.max(1, Math.min(99, Number(body.quantity || 1)));
+    const useInventory = Boolean(body.useInventory);
 
     const [{ byId }] = await Promise.all([fetchAllProfilesMap()]);
     const senderRow = byId.get(currentUserId);
     const receiverRow = byId.get(receiverId);
+    if (!senderRow) throw new Error('Sender profile not found.');
     if (!receiverRow) throw new Error('Recipient not found.');
 
-    const isAbba = currentUserId === ADMIN_ABBA_UUID;
-    const senderBp = isAbba ? 999999999 : Number(senderRow?.boost_points || 0);
-    if (!isAbba && senderBp < totalCost) {
-      throw new Error('Not enough Boost Points (BP) to send this gift.');
-    }
+    const isAbba =
+      currentUserId === ADMIN_ABBA_UUID ||
+      currentUserId === ADMIN_ABBA_ALT_UUID ||
+      String(senderRow?.username || '').toLowerCase() === 'abba' ||
+      Boolean(senderRow?.is_admin);
 
-    // Record gift transaction in Supabase notifications
-    await supabase.from('notifications').insert({
-      target_user: receiverId,
-      actor_user: currentUserId,
-      type: 'gift_tx',
-      title: `${item.icon} Gift Received`,
-      body: String(body.message || ''),
-      is_read: false,
-      subscription: {
-        itemCode: item.code,
-        quantity: qty,
-        bpSpent: totalCost,
-        recognitionEarned: item.recognitionPoints * qty,
+    const senderMeta = parseProfileMeta(senderRow.join_reason);
+    const senderInv = Array.isArray(senderMeta.inventory)
+      ? senderMeta.inventory
+      : [];
+    const ownedEntry = senderInv.find((i) => i.itemCode === item.code);
+    const ownedQty = isAbba ? 999999 : Number(ownedEntry?.quantity || 0);
+
+    const fromInv = !isAbba && useInventory ? Math.min(ownedQty, qty) : 0;
+    const toBuyQty = Math.max(0, qty - fromInv);
+    const bpToDeduct = isAbba ? 0 : item.costBp * toBuyQty;
+    const totalGiftBpValue = item.costBp * qty;
+
+    // Step 1: Explicitly execute transaction-like deduction on sender's balance & inventory in Supabase
+    const senderTx = await executeSupabaseBalanceTransaction({
+      userId: currentUserId,
+      costBp: bpToDeduct,
+      xpBonus: 20 * qty,
+      mutateMeta: (meta) => {
+        if (fromInv <= 0) return meta;
+        const inv = Array.isArray(meta.inventory)
+          ? meta.inventory.map((entry) => ({ ...entry }))
+          : [];
+        const idx = inv.findIndex((i) => i.itemCode === item.code);
+        if (idx >= 0) {
+          const remaining = inv[idx].quantity - fromInv;
+          if (remaining <= 0) {
+            inv.splice(idx, 1);
+          } else {
+            inv[idx].quantity = remaining;
+          }
+        }
+        return {
+          ...meta,
+          inventory: inv,
+        };
       },
     });
 
-    // Also create visible alert for recipient and deliver to lock screen & notification bar
-    await createAndDeliverNotification({
-      targetUser: receiverId,
-      actorUser: currentUserId,
-      type: 'badge',
-      title: `${item.icon} ${
-        isAbba ? 'Prince Abba' : senderRow?.display_name || 'Someone'
-      } sent you ${qty} ${item.name}`,
-      body: body.message || `Added +${item.recognitionPoints * qty} Recognition`,
-    });
+    // Step 2: Credit recipient & record gift transaction; roll back sender balance if any error occurs
+    try {
+      const { error: txInsertErr } = await supabase
+        .from('notifications')
+        .insert({
+          target_user: receiverId,
+          actor_user: currentUserId,
+          type: 'gift_tx',
+          title: `${item.icon} Gift Received`,
+          body: String(body.message || ''),
+          is_read: false,
+          subscription: {
+            itemCode: item.code,
+            quantity: qty,
+            bpSpent: totalGiftBpValue,
+            recognitionEarned: item.recognitionPoints * qty,
+          },
+        });
+      if (txInsertErr) {
+        throw new Error(txInsertErr.message);
+      }
 
-    const recMeta = parseProfileMeta(receiverRow.join_reason);
-    await supabase
-      .from('profiles')
-      .update({
-        xp: Number(receiverRow.xp || 0) + item.creatorXpBonus * qty,
-        boost_points:
-          receiverId === ADMIN_ABBA_UUID
-            ? 999999999
-            : Number(receiverRow.boost_points || 0) + Math.round(totalCost * 0.5),
-        join_reason: JSON.stringify({
-          ...recMeta,
-          gifts_received_count:
-            Number(recMeta.gifts_received_count || 0) + qty,
-          gift_recognition_score:
-            Number(recMeta.gift_recognition_score || 0) +
-            item.recognitionPoints * qty,
-        }),
-      })
-      .eq('id', receiverId);
+      if (receiverId !== currentUserId) {
+        const recMeta = parseProfileMeta(receiverRow.join_reason);
+        const recInv = Array.isArray(recMeta.inventory)
+          ? recMeta.inventory.map((entry) => ({ ...entry }))
+          : [];
+        const recIdx = recInv.findIndex((i) => i.itemCode === item.code);
+        if (recIdx >= 0) {
+          recInv[recIdx].quantity += qty;
+        } else {
+          recInv.push({
+            itemCode: item.code,
+            category: 'gift',
+            quantity: qty,
+          });
+        }
+
+        const isReceiverAbba =
+          receiverId === ADMIN_ABBA_UUID ||
+          receiverId === ADMIN_ABBA_ALT_UUID ||
+          String(receiverRow.username || '').toLowerCase() === 'abba' ||
+          Boolean(receiverRow.is_admin);
+        const nextReceiverBp = isReceiverAbba
+          ? 999999999
+          : Number(
+              (receiverRow as any).balance ??
+                receiverRow.boost_points ??
+                recMeta.balance ??
+                0
+            ) + Math.round(totalGiftBpValue * 0.5);
+
+        const recUpdatePayload: Record<string, any> = {
+          xp: Number(receiverRow.xp || 0) + item.creatorXpBonus * qty,
+          boost_points: nextReceiverBp,
+          join_reason: JSON.stringify({
+            ...recMeta,
+            balance: nextReceiverBp,
+            bp: isReceiverAbba ? 'Unlimited BP' : String(nextReceiverBp),
+            inventory: recInv,
+            gifts_received_count:
+              Number(recMeta.gifts_received_count || 0) + qty,
+            gift_recognition_score:
+              Number(recMeta.gift_recognition_score || 0) +
+              item.recognitionPoints * qty,
+          }),
+        };
+        if (Object.prototype.hasOwnProperty.call(receiverRow, 'balance')) {
+          recUpdatePayload.balance = nextReceiverBp;
+        }
+
+        const { error: recUpdateErr } = await supabase
+          .from('profiles')
+          .update(recUpdatePayload)
+          .eq('id', receiverId);
+        if (recUpdateErr) {
+          throw new Error(recUpdateErr.message);
+        }
+      }
+
+      await createAndDeliverNotification({
+        targetUser: receiverId,
+        actorUser: currentUserId,
+        type: 'badge',
+        title: `${item.icon} ${
+          isAbba ? 'Prince Abba' : senderRow?.display_name || 'Someone'
+        } sent you ${qty} ${item.name}`,
+        body:
+          body.message || `Added +${item.recognitionPoints * qty} Recognition`,
+      });
+    } catch (err) {
+      await senderTx.rollback();
+      throw err;
+    }
 
     const state = await handleStaticBackendRequest<BShopUserState>(
       '/api/bshop/state',
@@ -3058,7 +3323,19 @@ export async function handleStaticBackendRequest<T = any>(
       null,
       token
     );
-    return { state } as unknown as T;
+    const receiverName =
+      receiverRow.display_name || receiverRow.username || 'Creator';
+    return {
+      state: {
+        ...state,
+        boostPoints: senderTx.newBalance,
+        balance: senderTx.newBalance,
+      },
+      newBalance: senderTx.newBalance,
+      message: `Sent ${item.icon} ${item.name} ×${qty} to ${receiverName}${
+        bpToDeduct > 0 ? ` (-${bpToDeduct.toLocaleString()} BP)` : ''
+      }!`,
+    } as unknown as T;
   }
 
   if (pathname === '/api/bshop/settings' && method === 'PUT') {
