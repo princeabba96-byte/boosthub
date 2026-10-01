@@ -36,6 +36,12 @@ const ADMIN_EMAIL = 'princeabba96@gmail.com';
 interface ProfileMeta {
   email?: string;
   bio?: string;
+  onboarding_completed?: boolean;
+  professional_mode?: boolean;
+  join_reason_text?: string;
+  want_to_watch?: string;
+  want_to_create?: string;
+  claimed_missions?: string[];
   following_count?: number;
   friends_count?: number;
   shares_count?: number;
@@ -56,6 +62,7 @@ interface ProfileMeta {
   password?: string;
   inventory?: Array<{ itemCode: string; category: string; quantity: number }>;
   blocked_users?: string[];
+  joined_competitions?: string[];
 }
 
 function parseProfileMeta(rawJoinReason: any): ProfileMeta {
@@ -136,6 +143,24 @@ export function mapSupabaseRowToUserProfile(
     }
   }
 
+  const isProfessionalMode = Boolean(
+    isAbba || row.has_channel === true || meta.professional_mode === true
+  );
+  const isOnboardingDone = Boolean(
+    isAbba ||
+      row.id === BOOST_BOT_UUID ||
+      meta.onboarding_completed === true
+  );
+  const totalFollowers = Math.max(baseFollowers, followerCountFromTable);
+  const isMonetized = Boolean(
+    isAbba ||
+      row.monetization_eligible === true ||
+      (isProfessionalMode &&
+        totalFollowers >= 1000 &&
+        baseViews >= 10000 &&
+        Number(row.xp ?? 0) >= 5000)
+  );
+
   return {
     id: String(row.id),
     email,
@@ -149,13 +174,21 @@ export function mapSupabaseRowToUserProfile(
       (isAbba
         ? 'Primary Administrator of BoostHub • Creator & Visionary'
         : ''),
-    role: isAbba ? 'admin' : row.is_admin ? 'admin' : 'creator',
+    role: isAbba
+      ? 'admin'
+      : row.is_admin
+        ? 'admin'
+        : isProfessionalMode
+          ? 'creator'
+          : 'user',
     isAdmin: Boolean(isAbba || row.is_admin),
     isVerified: Boolean(isAbba || meta.verified || row.creator_of_week),
-    onboardingCompleted: true,
-    joinReason: 'Connect & Create',
-    wantToWatch: 'Creators & Tech',
-    wantToCreate: 'Capshots & Posts',
+    professionalMode: isProfessionalMode,
+    monetizationEligible: isMonetized,
+    onboardingCompleted: isOnboardingDone,
+    joinReason: meta.join_reason_text || 'Connect & Create',
+    wantToWatch: meta.want_to_watch || 'Creators & Tech',
+    wantToCreate: meta.want_to_create || 'Capshots & Posts',
     xp: Number(row.xp ?? (isAbba ? 100200 : 0)),
     boostPoints: isAbba ? 999999999 : Number(row.boost_points ?? 0),
     giftPrivacy: meta.gift_privacy || 'public',
@@ -176,10 +209,8 @@ export function mapSupabaseRowToUserProfile(
     isPrivate: Boolean(meta.is_private),
     notificationsEnabled: meta.notifications_enabled !== false,
     notificationPreferences: meta.notification_preferences,
-    interests: Array.isArray(row.interests)
-      ? row.interests
-      : ['Creators', 'Technology', 'Music'],
-    followersCount: Math.max(baseFollowers, followerCountFromTable),
+    interests: Array.isArray(row.interests) ? row.interests : [],
+    followersCount: totalFollowers,
     followingCount: Math.max(baseFollowing, followingCountFromTable),
     friendsCount: Math.max(baseFriends, acceptedFriendsCount),
     likesReceivedCount: baseLikes,
@@ -244,25 +275,16 @@ async function resolveCurrentUserId(token: string | null): Promise<string> {
   if (token && token.startsWith('sb_user_')) {
     const rawId = token.replace('sb_user_', '').trim();
     if (
-      !rawId ||
       rawId === 'bh_5c82dc8e3aa243a28413' ||
       rawId.toLowerCase() === 'abba'
     ) {
       return ADMIN_ABBA_UUID;
     }
-    return rawId;
-  }
-
-  try {
-    const { data } = await supabase.auth.getUser();
-    if (data?.user?.id) {
-      return data.user.id;
+    if (rawId) {
+      return rawId;
     }
-  } catch {
-    // ignore
   }
-
-  return ADMIN_ABBA_UUID;
+  return '';
 }
 
 function normalizeTargetUserId(rawId: string): string {
@@ -372,19 +394,92 @@ function mapSupabasePostToPostItem(
   const postComments = commentsRows.filter(
     (c) => String(c.post_id) === postIdStr
   );
-  const uniqueCommentIds = new Set(postComments.map((c) => String(c.id)));
+  const seenCommentIds = new Set<string>();
+  const dedupedPostComments = postComments.filter((c) => {
+    const cid = String(c.id || '');
+    if (!cid || seenCommentIds.has(cid)) return false;
+    seenCommentIds.add(cid);
+    return true;
+  });
   const postShares = sharesRows.filter((s) => String(s.post_id) === postIdStr);
   const postSaves = savesRows.filter((s) => String(s.post_id) === postIdStr);
 
+  const recentComments: CommentItem[] = dedupedPostComments
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.created_at || 0).getTime() -
+        new Date(a.created_at || 0).getTime()
+    )
+    .slice(0, 3)
+    .map((c) => {
+      const cUid = normalizeTargetUserId(String(c.user_id || ''));
+      const isCAbba = cUid === ADMIN_ABBA_UUID;
+      const cRow = isCAbba
+        ? profilesById.get(ADMIN_ABBA_UUID)
+        : profilesById.get(cUid) ||
+          profilesById.get(String(c.user_id || '').toLowerCase());
+      const cMeta = parseProfileMeta(cRow?.join_reason);
+      let rawText = String(c.comment || c.text || c.content || '');
+      let parentId: string | null = c.parent_id || null;
+      let reactionsCount = 0;
+      const replyMatch = rawText.match(/^\[\[reply:([^\]]+)\]\]\s*/);
+      if (replyMatch) {
+        parentId = replyMatch[1];
+        rawText = rawText.slice(replyMatch[0].length);
+      }
+      const reactMatch = rawText.match(/^\[\[react:(\d+)\]\]\s*/);
+      if (reactMatch) {
+        reactionsCount = Number(reactMatch[1] || 0);
+        rawText = rawText.slice(reactMatch[0].length);
+      }
+      return {
+        id: c.id,
+        postId: row.id,
+        userId: cUid,
+        parentId,
+        content: rawText,
+        isPinned: false,
+        reactionsCount,
+        createdAt: c.created_at || new Date().toISOString(),
+        updatedAt: c.created_at || new Date().toISOString(),
+        author: {
+          id: cUid,
+          username: isCAbba
+            ? 'Abba'
+            : String(cRow?.username || c.username || 'user'),
+          displayName: isCAbba
+            ? 'Prince Abba'
+            : String(
+                cRow?.display_name ||
+                  cRow?.username ||
+                  c.username ||
+                  'BoostHub User'
+              ),
+          avatarUrl: String(cRow?.avatar_url || ''),
+          isVerified: Boolean(
+            isCAbba || cMeta.verified || cRow?.creator_of_week
+          ),
+        },
+      };
+    });
+
   const likesCount = uniqueLikedUsers.size;
-  const isLiked = uniqueLikedUsers.has(currentUserId);
-  const isSaved = postSaves.some(
-    (s) => normalizeTargetUserId(String(s.user_id || '')) === currentUserId
+  const isLiked = Boolean(currentUserId && uniqueLikedUsers.has(currentUserId));
+  const isSaved = Boolean(
+    currentUserId &&
+      postSaves.some(
+        (s) => normalizeTargetUserId(String(s.user_id || '')) === currentUserId
+      )
   );
-  const isFollowingAuthor = followsRows.some(
-    (f) =>
-      normalizeTargetUserId(String(f.follower_id || '')) === currentUserId &&
-      normalizeTargetUserId(String(f.following_id || '')) === authorId
+  const isFollowingAuthor = Boolean(
+    currentUserId &&
+      followsRows.some(
+        (f) =>
+          normalizeTargetUserId(String(f.follower_id || '')) ===
+            currentUserId &&
+          normalizeTargetUserId(String(f.following_id || '')) === authorId
+      )
   );
 
   return {
@@ -424,12 +519,13 @@ function mapSupabasePostToPostItem(
       role: isAbbaAuthor || authorRow?.is_admin ? 'admin' : 'creator',
     },
     likesCount,
-    commentsCount: uniqueCommentIds.size,
+    commentsCount: seenCommentIds.size,
     sharesCount: postShares.length,
     savesCount: postSaves.length,
     isLiked,
     isSaved,
     isFollowingAuthor,
+    recentComments,
   };
 }
 
@@ -451,26 +547,14 @@ export async function handleStaticBackendRequest<T = any>(
 
   // 1. Auth Login / Signup via Supabase profiles + supabase.auth
   if (pathname === '/api/auth/login' || pathname === '/api/auth/signup') {
-    const email = String(body.email || ADMIN_EMAIL)
+    const email = String(body.email || '')
       .trim()
       .toLowerCase();
-    const password = String(body.password || '');
-    const isOwnerAdmin =
-      email === ADMIN_EMAIL ||
-      String(body.username || '').trim().toLowerCase() === 'abba';
-
-    // Attempt Supabase Auth sign-in if configured, without blocking profile lookup
-    if (email && password) {
-      try {
-        if (pathname === '/api/auth/signup') {
-          await supabase.auth.signUp({ email, password });
-        } else {
-          await supabase.auth.signInWithPassword({ email, password });
-        }
-      } catch {
-        // fallback to profiles table lookup
-      }
+    if (!email) {
+      throw new Error('Please enter your email or Gmail address.');
     }
+    const password = String(body.password || '');
+    const isOwnerAdmin = email === ADMIN_EMAIL;
 
     const { rows: allProfiles } = await fetchAllProfilesMap();
     const [followsRes, friendshipsRes, postsRes] = await Promise.all([
@@ -504,20 +588,24 @@ export async function handleStaticBackendRequest<T = any>(
       } as unknown as T;
     }
 
-    // Check existing non-admin user by email or username
-    const requestedUsername = String(
-      body.username || email.split('@')[0] || 'creator'
+    // Check existing non-admin user strictly by email first, or by username if signing in without @
+    let requestedUsername = String(
+      body.username || email.split('@')[0] || 'user'
     )
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9_]/g, '');
+    if (!requestedUsername || requestedUsername === 'abba') {
+      requestedUsername = `user_${Date.now().toString().slice(-4)}`;
+    }
 
     let existingRow = allProfiles.find((r) => {
+      if (r.id === ADMIN_ABBA_UUID || r.id === BOOST_BOT_UUID) return false;
       const m = parseProfileMeta(r.join_reason);
-      return (
-        String(m.email || '').toLowerCase() === email ||
-        String(r.username || '').toLowerCase() === requestedUsername
-      );
+      if (email.includes('@')) {
+        return String(m.email || '').toLowerCase() === email;
+      }
+      return String(r.username || '').toLowerCase() === email;
     });
 
     if (existingRow) {
@@ -544,11 +632,21 @@ export async function handleStaticBackendRequest<T = any>(
       } as unknown as T;
     }
 
-    // Create new user row in Supabase `profiles`
+    // Ensure unique username for the brand-new user account
+    const usernameTaken = allProfiles.some(
+      (r) => String(r.username || '').toLowerCase() === requestedUsername
+    );
+    const finalUsername = usernameTaken
+      ? `${requestedUsername}_${Math.floor(100 + Math.random() * 900)}`
+      : requestedUsername;
+
+    // Create new user row in Supabase `profiles` (Starts in Friends Mode, onboarding_completed: false)
     const newId = crypto.randomUUID();
     const newMeta: ProfileMeta = {
       email,
-      bio: 'Creating and connecting on BoostHub',
+      bio: 'Connecting with friends on BoostHub',
+      onboarding_completed: false,
+      professional_mode: false,
       following_count: 0,
       friends_count: 0,
       shares_count: 0,
@@ -559,9 +657,9 @@ export async function handleStaticBackendRequest<T = any>(
       .from('profiles')
       .insert({
         id: newId,
-        username: requestedUsername || `user_${Date.now().toString().slice(-4)}`,
+        username: finalUsername,
         display_name:
-          body.displayName || requestedUsername || email.split('@')[0],
+          body.displayName || finalUsername || email.split('@')[0],
         avatar_url: body.avatarUrl || '',
         xp: 0,
         followers: 0,
@@ -569,8 +667,10 @@ export async function handleStaticBackendRequest<T = any>(
         views: 0,
         engagement: 0,
         boost_points: 0,
+        has_channel: false,
+        monetization_eligible: false,
         is_admin: false,
-        interests: ['Creators', 'Technology', 'Music'],
+        interests: [],
         join_reason: JSON.stringify(newMeta),
       })
       .select()
@@ -606,6 +706,9 @@ export async function handleStaticBackendRequest<T = any>(
     pathname === '/api/profile' ||
     pathname === '/api/profiles/me'
   ) {
+    if (!currentUserId) {
+      throw new Error('Please sign in to access your account.');
+    }
     const [profRes, followsRes, friendshipsRes, postsRes] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', currentUserId).maybeSingle(),
       supabase.from('follows').select('*'),
@@ -615,12 +718,11 @@ export async function handleStaticBackendRequest<T = any>(
 
     let row = profRes.data;
     if (!row) {
-      const { data: abbaRow } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', ADMIN_ABBA_UUID)
-        .maybeSingle();
-      row = abbaRow || { id: ADMIN_ABBA_UUID, username: 'Abba' };
+      if (currentUserId === ADMIN_ABBA_UUID) {
+        row = { id: ADMIN_ABBA_UUID, username: 'Abba' };
+      } else {
+        throw new Error('User profile not found. Please sign in.');
+      }
     }
 
     if (method === 'PUT' || method === 'POST') {
@@ -688,10 +790,34 @@ export async function handleStaticBackendRequest<T = any>(
       .select('*')
       .eq('id', currentUserId)
       .maybeSingle();
-    if (row && Array.isArray(body.interests)) {
+    const selectedCats = Array.isArray(body.categories)
+      ? body.categories
+      : Array.isArray(body.interests)
+        ? body.interests
+        : [];
+    if (row) {
+      const meta = parseProfileMeta(row.join_reason);
+      const nextMeta: ProfileMeta = {
+        ...meta,
+        onboarding_completed: true,
+        join_reason_text:
+          String(body.joinReason || '').trim() ||
+          meta.join_reason_text ||
+          'Connect with friends & discover content',
+        want_to_watch: String(body.wantToWatch || '').trim(),
+        want_to_create: String(body.wantToCreate || '').trim(),
+      };
       await supabase
         .from('profiles')
-        .update({ interests: body.interests })
+        .update({
+          interests: selectedCats,
+          xp: Number(row.xp || 0) + 50,
+          boost_points:
+            currentUserId === ADMIN_ABBA_UUID
+              ? 999999999
+              : Number(row.boost_points || 0) + 25,
+          join_reason: JSON.stringify(nextMeta),
+        })
         .eq('id', currentUserId);
     }
     return { ok: true } as unknown as T;
@@ -1362,6 +1488,24 @@ export async function handleStaticBackendRequest<T = any>(
     const postId = decodeURIComponent(postCommentsMatch[1]);
     const { byId } = await fetchAllProfilesMap();
 
+    const parseEncodedComment = (rawStr: string) => {
+      let text = String(rawStr || '');
+      let parentId: string | null = null;
+      let reactionsCount = 0;
+
+      const replyMatch = text.match(/^\[\[reply:([^\]]+)\]\]\s*/);
+      if (replyMatch) {
+        parentId = replyMatch[1];
+        text = text.slice(replyMatch[0].length);
+      }
+      const reactMatch = text.match(/^\[\[react:(\d+)\]\]\s*/);
+      if (reactMatch) {
+        reactionsCount = Number(reactMatch[1] || 0);
+        text = text.slice(reactMatch[0].length);
+      }
+      return { text, parentId, reactionsCount };
+    };
+
     if (method === 'GET') {
       const [pcRes, legacyRes] = await Promise.all([
         supabase
@@ -1377,33 +1521,52 @@ export async function handleStaticBackendRequest<T = any>(
       ]);
 
       const rawList = [...(pcRes.data || []), ...(legacyRes.data || [])];
-      const mapped: CommentItem[] = rawList.map((c) => {
-        const uid = normalizeTargetUserId(String(c.user_id || ADMIN_ABBA_UUID));
-        const uRow =
-          byId.get(uid) ||
-          byId.get(String(c.user_id || '').toLowerCase()) ||
-          byId.get(ADMIN_ABBA_UUID);
+      const seenIds = new Set<string>();
+      const dedupedList = rawList.filter((item) => {
+        const cid = String(item.id || '');
+        if (!cid || seenIds.has(cid)) return false;
+        seenIds.add(cid);
+        return true;
+      });
+
+      const mapped: CommentItem[] = dedupedList.map((c) => {
+        const uid = normalizeTargetUserId(String(c.user_id || ''));
         const isAbba = uid === ADMIN_ABBA_UUID;
+        const uRow = isAbba
+          ? byId.get(ADMIN_ABBA_UUID)
+          : byId.get(uid) || byId.get(String(c.user_id || '').toLowerCase());
         const meta = parseProfileMeta(uRow?.join_reason);
+        const decoded = parseEncodedComment(
+          String(c.comment || c.text || c.content || '')
+        );
 
         return {
           id: c.id,
           postId,
           userId: uid,
-          parentId: null,
-          content: String(c.comment || c.text || c.content || ''),
+          parentId: decoded.parentId || c.parent_id || null,
+          content: decoded.text,
           isPinned: false,
-          reactionsCount: 0,
+          reactionsCount: decoded.reactionsCount,
           createdAt: c.created_at || new Date().toISOString(),
           updatedAt: c.created_at || new Date().toISOString(),
           author: {
             id: uid,
-            username: isAbba ? 'Abba' : String(uRow?.username || 'user'),
+            username: isAbba
+              ? 'Abba'
+              : String(uRow?.username || c.username || 'user'),
             displayName: isAbba
               ? 'Prince Abba'
-              : String(uRow?.display_name || uRow?.username || 'BoostHub User'),
+              : String(
+                  uRow?.display_name ||
+                    uRow?.username ||
+                    c.username ||
+                    'BoostHub User'
+                ),
             avatarUrl: String(uRow?.avatar_url || ''),
-            isVerified: Boolean(isAbba || meta.verified),
+            isVerified: Boolean(
+              isAbba || meta.verified || uRow?.creator_of_week
+            ),
           },
         };
       });
@@ -1417,12 +1580,17 @@ export async function handleStaticBackendRequest<T = any>(
         throw new Error('Comment cannot be empty.');
       }
 
+      const parentId = body.parentId ? String(body.parentId) : null;
+      const storedCommentText = parentId
+        ? `[[reply:${parentId}]] ${content}`
+        : content;
+
       const { data: inserted, error } = await supabase
         .from('post_comments')
         .insert({
           post_id: postId,
           user_id: currentUserId,
-          comment: content,
+          comment: storedCommentText,
         })
         .select()
         .single();
@@ -1431,8 +1599,13 @@ export async function handleStaticBackendRequest<T = any>(
         throw new Error(error?.message || 'Failed to save comment to Supabase.');
       }
 
-      const uRow = byId.get(currentUserId) || byId.get(ADMIN_ABBA_UUID);
       const isAbba = currentUserId === ADMIN_ABBA_UUID;
+      const uRow = isAbba
+        ? byId.get(ADMIN_ABBA_UUID)
+        : byId.get(currentUserId);
+      const actorDisplayName = isAbba
+        ? 'Prince Abba'
+        : uRow?.display_name || uRow?.username || 'Someone';
 
       // Notify post author
       const { data: postRow } = await supabase
@@ -1448,13 +1621,40 @@ export async function handleStaticBackendRequest<T = any>(
           target_user: postOwnerId,
           actor_user: currentUserId,
           type: 'comment',
-          title: 'New Comment',
-          body: `${
-            isAbba ? 'Prince Abba' : uRow?.display_name || 'Someone'
-          } commented: "${content.slice(0, 60)}"`,
+          title: parentId ? 'New Reply on Your Post' : 'New Comment',
+          body: `${actorDisplayName} ${
+            parentId ? 'replied' : 'commented'
+          }: "${content.slice(0, 60)}"`,
           post_id: postId,
           is_read: false,
         });
+      }
+
+      // If this is a reply to another user's comment, also notify that comment's author!
+      if (parentId) {
+        const { data: parentRow } = await supabase
+          .from('post_comments')
+          .select('user_id')
+          .eq('id', parentId)
+          .maybeSingle();
+        const parentOwnerId = parentRow?.user_id
+          ? normalizeTargetUserId(String(parentRow.user_id))
+          : null;
+        if (
+          parentOwnerId &&
+          parentOwnerId !== currentUserId &&
+          parentOwnerId !== postOwnerId
+        ) {
+          await supabase.from('notifications').insert({
+            target_user: parentOwnerId,
+            actor_user: currentUserId,
+            type: 'reply',
+            title: 'New Reply to Your Comment',
+            body: `${actorDisplayName} replied: "${content.slice(0, 60)}"`,
+            post_id: postId,
+            is_read: false,
+          });
+        }
       }
 
       const [pcCountRes, legacyCountRes] = await Promise.all([
@@ -1466,11 +1666,12 @@ export async function handleStaticBackendRequest<T = any>(
         ...(legacyCountRes.data || []).map((r) => String(r.id)),
       ]).size;
 
+      const meta = parseProfileMeta(uRow?.join_reason);
       const createdItem: CommentItem & { commentsCount?: number } = {
         id: inserted.id,
         postId,
         userId: currentUserId,
-        parentId: body.parentId || null,
+        parentId,
         content,
         isPinned: false,
         reactionsCount: 0,
@@ -1479,11 +1680,11 @@ export async function handleStaticBackendRequest<T = any>(
         author: {
           id: currentUserId,
           username: isAbba ? 'Abba' : String(uRow?.username || 'user'),
-          displayName: isAbba
-            ? 'Prince Abba'
-            : String(uRow?.display_name || uRow?.username || 'BoostHub User'),
+          displayName: actorDisplayName,
           avatarUrl: String(uRow?.avatar_url || ''),
-          isVerified: Boolean(isAbba),
+          isVerified: Boolean(
+            isAbba || meta.verified || uRow?.creator_of_week
+          ),
         },
         commentsCount: exactCommentsCount,
       };
@@ -1549,16 +1750,60 @@ export async function handleStaticBackendRequest<T = any>(
       }
       return { ok: true, commentsCount: exactCommentsCount } as unknown as T;
     }
+    if (body.action === 'react') {
+      const { data: existingC } = await supabase
+        .from('post_comments')
+        .select('*')
+        .eq('id', commentId)
+        .maybeSingle();
+      if (existingC) {
+        let raw = String(existingC.comment || '');
+        let replyPrefix = '';
+        const replyMatch = raw.match(/^\[\[reply:([^\]]+)\]\]\s*/);
+        if (replyMatch) {
+          replyPrefix = replyMatch[0];
+          raw = raw.slice(replyMatch[0].length);
+        }
+        let currentReacts = 0;
+        const reactMatch = raw.match(/^\[\[react:(\d+)\]\]\s*/);
+        if (reactMatch) {
+          currentReacts = Number(reactMatch[1] || 0);
+          raw = raw.slice(reactMatch[0].length);
+        }
+        const nextReacts = currentReacts + 1;
+        const nextRaw = `${replyPrefix}[[react:${nextReacts}]] ${raw}`;
+        await supabase
+          .from('post_comments')
+          .update({ comment: nextRaw })
+          .eq('id', commentId);
+        return {
+          id: commentId,
+          reactionsCount: nextReacts,
+        } as unknown as T;
+      }
+    }
     if (body.action === 'edit' && body.content) {
+      const { data: existingC } = await supabase
+        .from('post_comments')
+        .select('*')
+        .eq('id', commentId)
+        .maybeSingle();
+      let prefix = '';
+      if (existingC?.comment) {
+        const rm = String(existingC.comment).match(
+          /^(\[\[reply:[^\]]+\]\]\s*)?(\[\[react:\d+\]\]\s*)?/
+        );
+        if (rm && rm[0]) prefix = rm[0];
+      }
       const { data: updated } = await supabase
         .from('post_comments')
-        .update({ comment: String(body.content) })
+        .update({ comment: `${prefix}${String(body.content)}` })
         .eq('id', commentId)
         .select()
         .maybeSingle();
       return {
         id: commentId,
-        content: updated?.comment || body.content,
+        content: String(body.content || updated?.comment || ''),
       } as unknown as T;
     }
     return { id: commentId } as unknown as T;
@@ -2632,35 +2877,248 @@ export async function handleStaticBackendRequest<T = any>(
     return handleStaticBackendRequest<T>('/api/bshop/state', 'GET', null, token);
   }
 
-  // 12. Creator Dashboard & Search
-  if (pathname === '/api/creator-dashboard') {
-    const [prof, missionsRes] = await Promise.all([
-      handleStaticBackendRequest<UserProfile>('/api/me', 'GET', null, token),
-      supabase.from('missions').select('*'),
+  // 12. Creator Dashboard, Daily Missions & Professional Mode Activation
+  if (
+    pathname === '/api/creator-dashboard' ||
+    pathname === '/api/missions'
+  ) {
+    const requestedUserId = searchParams.get('userId')
+      ? normalizeTargetUserId(String(searchParams.get('userId')))
+      : currentUserId;
+
+    const [
+      prof,
+      rawRowRes,
+      userPostsRes,
+      userLikesGivenRes,
+      userCommentsGivenRes,
+      userFollowsGivenRes,
+      userStoriesRes,
+      userWatchRes,
+    ] = await Promise.all([
+      handleStaticBackendRequest<UserProfile>(
+        `/api/profiles/${encodeURIComponent(requestedUserId)}`,
+        'GET',
+        null,
+        token
+      ),
+      supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', requestedUserId)
+        .maybeSingle(),
+      supabase.from('posts').select('*').eq('user_id', requestedUserId),
+      supabase.from('post_likes').select('id').eq('user_id', requestedUserId),
+      supabase
+        .from('post_comments')
+        .select('id')
+        .eq('user_id', requestedUserId),
+      supabase.from('follows').select('id').eq('follower_id', requestedUserId),
+      supabase.from('stories').select('id').eq('user_id', requestedUserId),
+      supabase
+        .from('video_watch_history')
+        .select('id')
+        .eq('user_id', requestedUserId),
     ]);
 
-    const missions: MissionItem[] = (missionsRes.data || []).map((m, idx) => ({
-      id: m.id || idx + 1,
-      code: `mission_${idx + 1}`,
-      title: String(m.name || 'Creator Mission'),
-      description: 'Complete this mission on BoostHub to earn XP and rewards.',
-      missionType: 'daily',
-      targetAction: 'create_post',
-      targetCount: 1,
-      xpReward: Number(m.reward || 100),
-      boostPointsReward: 50,
-      progress: 1,
-      completed: false,
-      completedAt: null,
+    const rawRow = rawRowRes.data;
+    const meta = parseProfileMeta(rawRow?.join_reason);
+    const claimedSet = new Set<string>(meta.claimed_missions || []);
+
+    const watchCount = (userWatchRes.data || []).length;
+    const likesGivenCount = (userLikesGivenRes.data || []).length;
+    const commentsGivenCount = (userCommentsGivenRes.data || []).length;
+    const postsAndStoriesCount =
+      (userPostsRes.data || []).length + (userStoriesRes.data || []).length;
+    const followsGivenCount = (userFollowsGivenRes.data || []).length;
+    const totalViewsReceived = Number(prof.viewsReceivedCount || 0);
+
+    const buildMission = (
+      id: number,
+      code: string,
+      title: string,
+      description: string,
+      missionType: 'daily' | 'weekly',
+      targetAction: string,
+      targetCount: number,
+      rawProgress: number,
+      xpReward: number,
+      boostPointsReward: number
+    ): MissionItem => {
+      const isClaimed = claimedSet.has(code);
+      const progress = isClaimed
+        ? targetCount
+        : Math.min(targetCount, Math.max(0, rawProgress));
+      const completed = isClaimed || progress >= targetCount;
+      return {
+        id,
+        code,
+        title,
+        description,
+        missionType,
+        targetAction,
+        targetCount,
+        xpReward,
+        boostPointsReward,
+        progress,
+        completed,
+        claimed: isClaimed,
+        completedAt: completed ? new Date().toISOString() : null,
+      };
+    };
+
+    const missions: MissionItem[] = [
+      buildMission(
+        1,
+        'daily_watch_video',
+        'Watch a Capshot Video',
+        'Watch at least 1 vertical video in the feed or Capshots stream.',
+        'daily',
+        'watch_video',
+        1,
+        watchCount,
+        100,
+        40
+      ),
+      buildMission(
+        2,
+        'daily_like_posts',
+        'Support 2 Creator Posts',
+        'Like 2 posts or videos from creators across BoostHub.',
+        'daily',
+        'like_post',
+        2,
+        likesGivenCount,
+        120,
+        50
+      ),
+      buildMission(
+        3,
+        'daily_post_comment',
+        'Join the Conversation',
+        'Leave a comment or reply to another user on any post.',
+        'daily',
+        'comment_post',
+        1,
+        commentsGivenCount,
+        150,
+        60
+      ),
+      buildMission(
+        4,
+        'daily_create_post',
+        'Publish a Capshot or Story',
+        'Upload a photo, 24-hour story, or vertical Capshot video.',
+        'daily',
+        'create_post',
+        1,
+        postsAndStoriesCount,
+        200,
+        100
+      ),
+      buildMission(
+        5,
+        'daily_connect_creator',
+        'Follow a Creator or Add a Friend',
+        'Expand your network by following a creator or connecting with a friend.',
+        'daily',
+        'follow_user',
+        1,
+        followsGivenCount,
+        150,
+        75
+      ),
+      buildMission(
+        6,
+        'weekly_views_100',
+        'Creator Competition: 100 Video Views',
+        'Reach 100 cumulative views across your videos to climb the monetization leaderboard.',
+        'weekly',
+        'reach_views',
+        100,
+        totalViewsReceived,
+        500,
+        250
+      ),
+    ];
+
+    // Build 7-day trend series for CreatorDashboard
+    const myPosts = userPostsRes.data || [];
+    const totalViews = prof.viewsReceivedCount || 0;
+    const totalLikes = prof.likesReceivedCount || 0;
+    const totalShares = prof.sharesReceivedCount || 0;
+    const now = new Date();
+    const dailySeries = Array.from({ length: 7 }).map((_, idx) => {
+      const d = new Date(now);
+      d.setDate(now.getDate() - (6 - idx));
+      const shortLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+      const label = d.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+      const weight = (idx + 1) / 28;
+      const dayViews = Math.round(totalViews * weight);
+      const dayLikes = Math.round(totalLikes * weight);
+      const dayShares = Math.round(totalShares * weight);
+      return {
+        dateKey: d.toISOString().slice(0, 10),
+        label,
+        shortLabel,
+        views: dayViews,
+        likes: dayLikes,
+        shares: dayShares,
+        comments: commentsGivenCount,
+        watchDurationSeconds: dayViews * 8,
+        avgCompletionPercentage: dayViews > 0 ? 84 : 0,
+        cumulativeViews: Math.round((totalViews * (idx + 1)) / 7),
+        cumulativeLikes: Math.round((totalLikes * (idx + 1)) / 7),
+        viewsDelta: idx > 0 ? Math.round(totalViews / 14) : dayViews,
+        likesDelta: idx > 0 ? Math.round(totalLikes / 14) : dayLikes,
+        viewsGrowthPct: totalViews > 0 ? 18 : 0,
+        likesGrowthPct: totalLikes > 0 ? 14 : 0,
+        engagementGrowthPct: totalViews > 0 ? 16 : 0,
+      };
+    });
+
+    const postSeries = myPosts.map((p: any, i: number) => ({
+      postId: p.id,
+      label: `Post #${i + 1}`,
+      caption: String(p.description || p.title || 'Capshot'),
+      postType: String(p.type || 'video'),
+      views: Number(p.views || 0),
+      likes: Number(p.likes || 0),
+      shares: 0,
+      comments: 0,
+      saves: 0,
+      createdAt: p.created_at || new Date().toISOString(),
     }));
 
     return {
       profile: prof,
+      hasCreatorStatus: Boolean(prof.professionalMode),
       missions,
+      joinedCompetitions: Array.isArray(meta.joined_competitions)
+        ? meta.joined_competitions
+        : [],
+      dailySeries,
+      postSeries,
       stats: {
-        totalViews: prof.viewsReceivedCount || 0,
-        totalLikes: prof.likesReceivedCount || 0,
-        totalShares: prof.sharesReceivedCount || 0,
+        views: totalViews,
+        likes: totalLikes,
+        shares: totalShares,
+        comments: commentsGivenCount,
+        saves: 0,
+        followers: prof.followersCount || 0,
+        postsCount: myPosts.length,
+        watchTimeSeconds: totalViews * 8,
+        engagementRate:
+          totalViews > 0
+            ? Number((((totalLikes + totalShares) / totalViews) * 100).toFixed(1))
+            : 0,
+        totalViews,
+        totalLikes,
+        totalShares,
         followersCount: prof.followersCount || 0,
         xp: prof.xp || 0,
         boostPoints: prof.boostPoints || 0,
@@ -2668,7 +3126,122 @@ export async function handleStaticBackendRequest<T = any>(
     } as unknown as T;
   }
 
+  if (pathname === '/api/competitions/join' && method === 'POST') {
+    const compId = String(body.competitionId || '').trim();
+    const xpBonus = Number(body.xpBonus || 150);
+    const bpBonus = Number(body.bpBonus || 75);
+
+    const { data: meRow } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', currentUserId)
+      .maybeSingle();
+
+    if (meRow && compId) {
+      const meta = parseProfileMeta(meRow.join_reason);
+      const joinedList = Array.isArray(meta.joined_competitions)
+        ? meta.joined_competitions
+        : [];
+      if (!joinedList.includes(compId)) {
+        const nextJoined = [...joinedList, compId];
+        const nextXp = Number(meRow.xp || 0) + xpBonus;
+        const nextBp =
+          currentUserId === ADMIN_ABBA_UUID
+            ? 999999999
+            : Number(meRow.boost_points || 0) + bpBonus;
+
+        await supabase
+          .from('profiles')
+          .update({
+            xp: nextXp,
+            boost_points: nextBp,
+            join_reason: JSON.stringify({
+              ...meta,
+              joined_competitions: nextJoined,
+            }),
+          })
+          .eq('id', currentUserId);
+      }
+    }
+
+    return handleStaticBackendRequest<T>(
+      '/api/creator-dashboard',
+      'GET',
+      null,
+      token
+    );
+  }
+
+  if (pathname === '/api/missions/claim' && method === 'POST') {
+    const missionCode = String(body.code || '').trim();
+    const xpReward = Number(body.xpReward || 100);
+    const bpReward = Number(body.boostPointsReward || 50);
+
+    const { data: meRow } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', currentUserId)
+      .maybeSingle();
+
+    if (meRow && missionCode) {
+      const meta = parseProfileMeta(meRow.join_reason);
+      const claimedList = Array.isArray(meta.claimed_missions)
+        ? meta.claimed_missions
+        : [];
+      const alreadyClaimed = claimedList.includes(missionCode);
+
+      if (!alreadyClaimed) {
+        const nextClaimed = [...claimedList, missionCode];
+        const nextXp = Number(meRow.xp || 0) + xpReward;
+        const nextBp =
+          currentUserId === ADMIN_ABBA_UUID
+            ? 999999999
+            : Number(meRow.boost_points || 0) + bpReward;
+
+        await supabase
+          .from('profiles')
+          .update({
+            xp: nextXp,
+            boost_points: nextBp,
+            join_reason: JSON.stringify({
+              ...meta,
+              claimed_missions: nextClaimed,
+            }),
+          })
+          .eq('id', currentUserId);
+      }
+    }
+
+    return handleStaticBackendRequest<T>(
+      '/api/creator-dashboard',
+      'GET',
+      null,
+      token
+    );
+  }
+
   if (pathname === '/api/creator-dashboard/activate') {
+    const enabled = body.enabled !== undefined ? Boolean(body.enabled) : true;
+    const { data: meRow } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', currentUserId)
+      .maybeSingle();
+
+    if (meRow) {
+      const meta = parseProfileMeta(meRow.join_reason);
+      await supabase
+        .from('profiles')
+        .update({
+          has_channel: enabled,
+          join_reason: JSON.stringify({
+            ...meta,
+            professional_mode: enabled,
+          }),
+        })
+        .eq('id', currentUserId);
+    }
+
     return handleStaticBackendRequest<T>(
       '/api/creator-dashboard',
       'GET',

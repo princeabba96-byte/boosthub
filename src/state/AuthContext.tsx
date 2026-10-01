@@ -11,13 +11,13 @@ import {
   getAuthToken,
   setCachedProfile,
   updateCachedPostStats,
+  clearAllUserCaches,
 } from '../services/api';
 import {
   showBrowserSystemNotification,
   enableBackgroundPushNotifications,
 } from '../services/pushNotifications';
 import { supabase, ADMIN_ABBA_UUID } from '../lib/supabase';
-import { mapSupabaseRowToUserProfile } from '../services/staticBackend';
 import { UserProfile } from '../types';
 
 interface ToastMessage {
@@ -66,11 +66,11 @@ function normalizeUserAdminState(
 ): UserProfile | null {
   if (!profile) return null;
   const isOwnerAdmin =
-    profile.id === ADMIN_ABBA_UUID ||
-    String(profile.username || '').toLowerCase() === 'abba' ||
-    String(profile.email || '')
-      .trim()
-      .toLowerCase() === 'princeabba96@gmail.com';
+    profile.id === ADMIN_ABBA_UUID &&
+    (String(profile.username || '').toLowerCase() === 'abba' ||
+      String(profile.email || '')
+        .trim()
+        .toLowerCase() === 'princeabba96@gmail.com');
   if (isOwnerAdmin) {
     return {
       ...profile,
@@ -79,6 +79,8 @@ function normalizeUserAdminState(
       role: 'admin',
       isAdmin: true,
       isVerified: true,
+      professionalMode: true,
+      monetizationEligible: true,
     };
   }
   return profile;
@@ -87,24 +89,8 @@ function normalizeUserAdminState(
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [userProfile, setUserProfileState] = useState<UserProfile | null>(() =>
-    normalizeUserAdminState(
-      mapSupabaseRowToUserProfile({
-        id: ADMIN_ABBA_UUID,
-        username: 'Abba',
-        display_name: 'Prince Abba',
-        xp: 100200,
-        followers: 1400,
-        likes: 4200,
-        views: 18500,
-        engagement: 310,
-        boost_points: 999999999,
-        is_admin: true,
-        creator_of_week: true,
-      })
-    )
-  );
-  const [loading, setLoading] = useState<boolean>(false);
+  const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState<boolean>(() => Boolean(getAuthToken()));
   const [isOffline, setIsOffline] = useState<boolean>(
     typeof navigator !== 'undefined' ? !navigator.onLine : false
   );
@@ -135,10 +121,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const refreshBadgesCount = useCallback(async () => {
     const token = getAuthToken();
-    if (!token) return;
-    const uid = token.startsWith('sb_user_')
-      ? token.replace('sb_user_', '')
-      : ADMIN_ABBA_UUID;
+    if (!token || !token.startsWith('sb_user_')) return;
+    const uid = token.replace('sb_user_', '').trim();
+    if (!uid) return;
 
     try {
       const { data: unreadRows } = await supabase
@@ -188,25 +173,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     };
   }, [refreshProfile, showToast]);
 
-  // Initial load from Supabase real backend
+  // Initial load from Supabase real backend for the currently signed-in account
   useEffect(() => {
     let isMounted = true;
 
     const loadInitialSupabaseSession = async () => {
       try {
-        if (!getAuthToken()) {
-          setAuthToken(`sb_user_${ADMIN_ABBA_UUID}`);
+        const currentTok = getAuthToken();
+        if (!currentTok) {
+          if (isMounted) {
+            setUserProfile(null);
+            setLoading(false);
+          }
+          return;
         }
 
         const profile = await apiFetch<UserProfile>('/api/me');
-        if (isMounted && profile) {
+        if (isMounted && profile && profile.id) {
           setUserProfile(profile);
-        }
-        if (isMounted) {
           refreshBadgesCount();
+        } else if (isMounted) {
+          setAuthToken(null);
+          setUserProfile(null);
         }
       } catch (err) {
         console.warn('Error loading Supabase profile:', err);
+        if (isMounted) {
+          setAuthToken(null);
+          setUserProfile(null);
+        }
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -216,26 +211,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     loadInitialSupabaseSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (session?.user?.id) {
-          window.setTimeout(async () => {
-            setAuthToken(`sb_user_${session.user.id}`);
-            try {
-              const profile = await apiFetch<UserProfile>('/api/me');
-              if (isMounted) setUserProfile(profile);
-              refreshBadgesCount();
-            } catch {
-              // ignore
-            }
-          }, 0);
-        }
-      }
-    );
-
     return () => {
       isMounted = false;
-      authListener?.subscription?.unsubscribe();
     };
   }, [refreshBadgesCount, setUserProfile]);
 
@@ -409,6 +386,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     password: string,
     avatarUrl?: string
   ) => {
+    clearAllUserCaches();
     const res = await apiFetch<{
       token: string;
       profile?: UserProfile;
@@ -422,7 +400,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       res.profile || res.user || (await apiFetch<UserProfile>('/api/me'));
     setUserProfile(resolvedProfile);
     refreshBadgesCount();
-    showToast(`Welcome back, ${resolvedProfile.displayName}!`, 'success');
+    showToast(`Welcome, ${resolvedProfile.displayName}!`, 'success');
   };
 
   const signupWithEmail = async (
@@ -432,6 +410,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     username: string,
     avatarUrl?: string
   ) => {
+    clearAllUserCaches();
     const res = await apiFetch<{
       token: string;
       profile?: UserProfile;
@@ -459,9 +438,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
     googleEmail?: string,
     googleDisplayName?: string
   ) => {
-    const cleanEmail = (googleEmail || 'princeabba96@gmail.com')
-      .trim()
-      .toLowerCase();
+    const rawEmail = (googleEmail || '').trim().toLowerCase();
+    if (!rawEmail) {
+      const err: any = new Error('NEEDS_GOOGLE_EMAIL');
+      err.code = 'NEEDS_GOOGLE_EMAIL';
+      throw err;
+    }
+    clearAllUserCaches();
+    const cleanEmail = rawEmail;
     const localPart = cleanEmail.split('@')[0] || 'user';
     const cleanName =
       (googleDisplayName || '').trim() ||
@@ -478,6 +462,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         displayName: cleanName,
         username: localPart.replace(/[^a-z0-9_]/g, ''),
         avatarUrl,
+        isGoogleAuth: true,
       }),
     });
     setAuthToken(res.token);
@@ -485,7 +470,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       res.profile || res.user || (await apiFetch<UserProfile>('/api/me'));
     setUserProfile(resolvedProfile);
     refreshBadgesCount();
-    showToast(`Signed in as ${resolvedProfile.displayName}`, 'success');
+    showToast(`Signed in as ${resolvedProfile.displayName} (${cleanEmail})`, 'success');
   };
 
   const resetPassword = async (email: string, newPassword?: string) => {
@@ -497,13 +482,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   };
 
   const logout = async () => {
+    clearAllUserCaches();
     setAuthToken(null);
     setUserProfile(null);
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      // ignore
-    }
+    setUnreadMessages(0);
+    setUnreadNotifications(0);
     showToast('Signed out of BoostHub.', 'info');
   };
 
@@ -535,6 +518,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
+  if (!ctx) {
+    throw new Error('useAuth must be used within AuthProvider');
+  }
   return ctx;
 }

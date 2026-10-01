@@ -156,19 +156,36 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
                   @{userProfile.username}
                 </p>
                 <div className="flex items-center gap-3 mt-1.5 text-xs text-slate-300">
-                  <span>
-                    <strong className="text-white font-bold tabular-nums">
-                      {followerCount.toLocaleString()}
-                    </strong>{' '}
-                    Followers
-                  </span>
-                  <span className="text-slate-600">•</span>
-                  <span>
-                    <strong className="text-white font-bold tabular-nums">
-                      {followingCount.toLocaleString()}
-                    </strong>{' '}
-                    Following
-                  </span>
+                  {userProfile.professionalMode ? (
+                    <>
+                      <span>
+                        <strong className="text-white font-bold tabular-nums">
+                          {followerCount.toLocaleString()}
+                        </strong>{' '}
+                        Followers
+                      </span>
+                      <span className="text-slate-600">•</span>
+                      <span>
+                        <strong className="text-white font-bold tabular-nums">
+                          {followingCount.toLocaleString()}
+                        </strong>{' '}
+                        Following
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span>
+                        <strong className="text-white font-bold tabular-nums">
+                          {(userProfile.friendsCount ?? 0).toLocaleString()}
+                        </strong>{' '}
+                        Friends
+                      </span>
+                      <span className="text-slate-600">•</span>
+                      <span className="text-amber-300 font-semibold">
+                        Friends Mode (Turn on Professional Mode in Settings for Followers)
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

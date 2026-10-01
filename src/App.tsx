@@ -3,6 +3,25 @@ import { WifiOff } from 'lucide-react';
 import { AuthProvider, useAuth } from './state/AuthContext';
 import { MainTab, NotificationItem, PostItem, UserProfile } from './types';
 import { apiFetch } from './services/api';
+import { supabase } from './lib/supabase';
+
+/*
+-- RUN THIS SQL IN SUPABASE DASHBOARD SQL EDITOR:
+drop table if exists push_subscriptions;
+create table push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references users(id) on delete cascade,
+  endpoint text not null,
+  p256dh text not null,
+  auth text not null,
+  subscription jsonb,
+  created_at timestamp default now(),
+  unique(user_id, endpoint)
+);
+alter table push_subscriptions enable row level security;
+drop policy if exists "Allow all for push" on push_subscriptions;
+create policy "Allow all for push" on push_subscriptions for all using (true) with check (true);
+*/
 import {
   TopNavigationBar,
   BottomNavigationBar,
@@ -47,6 +66,13 @@ const BoostHubAppShell: React.FC = () => {
   const [searchInitialQuery, setSearchInitialQuery] = useState('');
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messagePartner, setMessagePartner] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    supabase.rpc('create_push_table_if_not_exists').then(
+      () => {},
+      () => {}
+    );
+  }, []);
 
   const openDeepLinkDestination = useCallback(
     async (opts: {

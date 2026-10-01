@@ -1,6 +1,7 @@
 import { CommentItem, MissionItem, PostItem, StoryItem, UserProfile } from '../types';
 import { handleStaticBackendRequest } from './staticBackend';
-import { ADMIN_ABBA_UUID } from '../lib/supabase';
+
+const SESSION_TOKEN_KEY = 'boosthub_session_token';
 
 // Purge any legacy localStorage mock/cache keys so all devices show identical Supabase data
 if (typeof window !== 'undefined') {
@@ -23,7 +24,20 @@ if (typeof window !== 'undefined') {
   }
 }
 
-let inMemoryAuthToken: string | null = `sb_user_${ADMIN_ABBA_UUID}`;
+let inMemoryAuthToken: string | null = (() => {
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = window.localStorage.getItem(SESSION_TOKEN_KEY);
+      if (saved && saved.startsWith('sb_user_')) {
+        return saved;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+})();
+
 let inMemoryProfile: UserProfile | null = null;
 const commentsMemoryCache = new Map<any, CommentItem[]>();
 const feedMemoryCache = new Map<string, PostItem[]>();
@@ -31,10 +45,31 @@ let storiesMemoryCache: StoryItem[] | null = null;
 let missionsMemoryCache: MissionItem[] | null = null;
 const inFlightGetRequests = new Map<string, Promise<any>>();
 
+export function clearAllUserCaches() {
+  inMemoryProfile = null;
+  commentsMemoryCache.clear();
+  feedMemoryCache.clear();
+  storiesMemoryCache = null;
+  missionsMemoryCache = null;
+  inFlightGetRequests.clear();
+}
+
 export function setAuthToken(token: string | null) {
+  const prevToken = inMemoryAuthToken;
   inMemoryAuthToken = token;
-  if (!token) {
-    inMemoryProfile = null;
+  if (prevToken !== token) {
+    clearAllUserCaches();
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      if (token) {
+        window.localStorage.setItem(SESSION_TOKEN_KEY, token);
+      } else {
+        window.localStorage.removeItem(SESSION_TOKEN_KEY);
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 
@@ -114,12 +149,11 @@ export async function apiFetch<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
-  const activeToken = getAuthToken() || `sb_user_${ADMIN_ABBA_UUID}`;
+  const activeToken = getAuthToken();
 
   // Route all data API requests directly to the real Supabase backend engine
-  // so AI Studio preview, Chrome, and APK always read/write the exact same cloud data.
   if (path.startsWith('/api/') && path !== '/api/admin/github-pages-push') {
-    const dedupeKey = method === 'GET' ? `${activeToken}:${path}` : '';
+    const dedupeKey = method === 'GET' ? `${activeToken || 'anon'}:${path}` : '';
     if (dedupeKey && inFlightGetRequests.has(dedupeKey)) {
       return inFlightGetRequests.get(dedupeKey) as Promise<T>;
     }

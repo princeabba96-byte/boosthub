@@ -1,4 +1,4 @@
-const CACHE_NAME = 'boosthub-pwa-v29';
+const CACHE_NAME = 'boosthub-pwa-v30';
 
 function getBasePath() {
   try {

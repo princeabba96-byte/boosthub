@@ -587,6 +587,47 @@ export const PostCard: React.FC<PostCardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Inline Recent Comments Preview & Quick Reply / Comment Trigger */}
+      <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-2">
+        {post.recentComments && post.recentComments.length > 0 && (
+          <div className="space-y-1.5">
+            {post.recentComments.slice(0, 3).map((c) => (
+              <div
+                key={c.id}
+                onClick={() => onOpenComments({ ...post, commentsCount })}
+                className="flex items-start justify-between gap-2 text-xs bg-[#0B1220]/70 hover:bg-[#0B1220] px-3 py-2 rounded-xl border border-white/[0.05] cursor-pointer transition-colors"
+              >
+                <div className="min-w-0 flex-1">
+                  <span className="font-bold text-white mr-1.5">
+                    {c.author.displayName}
+                  </span>
+                  <span className="text-slate-500 text-[11px] mr-1.5">
+                    @{c.author.username}
+                  </span>
+                  <span className="text-slate-200 break-words">{c.content}</span>
+                </div>
+                <span className="text-[11px] font-semibold text-[#2B8CFF] shrink-0">
+                  Reply
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => onOpenComments({ ...post, commentsCount })}
+          className="w-full px-3.5 py-2 rounded-xl bg-[#0B1220]/80 hover:bg-[#0B1220] border border-white/[0.07] flex items-center justify-between text-xs text-slate-400 hover:text-white transition-colors"
+        >
+          <span>
+            {commentsCount > 0
+              ? `View all ${commentsCount} comment${commentsCount === 1 ? '' : 's'} or write a reply...`
+              : 'Write a comment...'}
+          </span>
+          <span className="font-semibold text-[#2B8CFF]">Comment →</span>
+        </button>
+      </div>
     </article>
   );
 };

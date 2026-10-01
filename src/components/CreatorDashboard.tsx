@@ -15,11 +15,17 @@ import {
   ArrowUpRight,
   Clock,
   Activity,
+  Trophy,
+  DollarSign,
+  Users,
+  BookOpen,
 } from 'lucide-react';
 import { UserProfile } from '../types';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { formatCompactNumber } from '../utils/format';
+import { MissionsPanel } from './MissionsPanel';
+import { ProfessionalModeGuideModal } from './ProfessionalModeGuideModal';
 
 interface CreatorDashboardProps {
   profile: UserProfile;
@@ -68,6 +74,8 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [activating, setActivating] = useState(false);
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [joiningCompId, setJoiningCompId] = useState<string | null>(null);
 
   // Default to Trend Analysis View ('line' chart on 'daily' 7-day data source)
   const [dashboardView, setDashboardView] = useState<'trend' | 'breakdown'>(
@@ -106,7 +114,7 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
   const hasCreatorStatus = Boolean(
     data?.hasCreatorStatus !== undefined
       ? data.hasCreatorStatus
-      : profile.role === 'creator' || profile.role === 'admin'
+      : profile.professionalMode || profile.role === 'creator' || profile.role === 'admin'
   );
 
   const handleSetCreatorStatus = async (enabled: boolean) => {
@@ -119,16 +127,44 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
       setData(updated);
       await refreshProfile();
       onProfileUpdated?.();
+      if (enabled) {
+        setShowGuideModal(true);
+      }
       showToast(
         enabled
-          ? 'Creator status activated! Analytics unlocked.'
-          : 'Switched to standard user mode.',
-        'info'
+          ? 'Professional Mode activated! Followers, Creator Studio & Monetization Competitions unlocked!'
+          : 'Switched back to Friends Mode.',
+        'success'
       );
     } catch (err: any) {
-      showToast(err.message || 'Could not update creator status.', 'error');
+      showToast(err.message || 'Could not update Professional Mode.', 'error');
     } finally {
       setActivating(false);
+    }
+  };
+
+  const handleJoinCompetition = async (compId: string, title: string) => {
+    setJoiningCompId(compId);
+    try {
+      const updated = await apiFetch('/api/competitions/join', {
+        method: 'POST',
+        body: JSON.stringify({
+          competitionId: compId,
+          xpBonus: 150,
+          bpBonus: 75,
+        }),
+      });
+      setData(updated);
+      await refreshProfile();
+      onProfileUpdated?.();
+      showToast(
+        `Joined "${title}"! +150 XP & +75 BP Competition Entry Boost awarded!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Could not join competition.', 'error');
+    } finally {
+      setJoiningCompId(null);
     }
   };
 
@@ -146,42 +182,42 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
     );
   }
 
-  // Gate: Require Creator Status
+  // Gate: Require Professional Mode (Creator Status) for Followers, Competitions & Studio
   if (!hasCreatorStatus) {
     return (
-      <section className="bg-[#0B1021] border border-white/10 rounded-3xl p-8 text-center space-y-5">
-        <div className="w-12 h-12 rounded-2xl bg-blue-600/15 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto">
-          <BarChart3 className="w-6 h-6" />
-        </div>
-        <div className="max-w-md mx-auto space-y-2">
-          <h2 className="font-display text-xl font-bold text-white">
-            Creator Status Required
-          </h2>
-          <p className="text-xs text-slate-400 leading-relaxed">
-            The Creator Dashboard aggregates real-time database engagement
-            metrics (Views, Likes, and Shares) and 7-day trend analysis
-            exclusively for accounts with Creator status.
-          </p>
-        </div>
-        {isOwnProfile ? (
-          <button
-            onClick={() => handleSetCreatorStatus(true)}
-            disabled={activating}
-            className="px-6 py-3 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-xs font-semibold inline-flex items-center gap-2 transition-all"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>
-              {activating
-                ? 'Activating Creator Status...'
-                : 'Enable Creator Status'}
-            </span>
-          </button>
-        ) : (
-          <p className="text-xs text-slate-500">
-            @{profile.username} has not enabled Creator Status yet.
-          </p>
+      <div className="space-y-6">
+        {isOwnProfile && (
+          <MissionsPanel
+            userId={profile.id}
+            initialMissions={data?.missions}
+            onMissionClaimed={() => {
+              fetchDashboard();
+              onProfileUpdated?.();
+            }}
+          />
         )}
-      </section>
+
+        {isOwnProfile ? (
+          <ProfessionalModeGuideModal
+            inline={true}
+            isProfessionalMode={false}
+            activating={activating}
+            onConfirmActivate={() => handleSetCreatorStatus(true)}
+          />
+        ) : (
+          <section className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 text-center space-y-2">
+            <div className="w-10 h-10 rounded-2xl bg-blue-600/15 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto">
+              <Users className="w-5 h-5" />
+            </div>
+            <h3 className="font-display text-base font-bold text-white">
+              @{profile.username} is in Personal Friends Mode
+            </h3>
+            <p className="text-xs text-slate-400">
+              Add @{profile.username} as a friend to connect and share posts.
+            </p>
+          </section>
+        )}
+      </div>
     );
   }
 
@@ -1211,60 +1247,183 @@ export const CreatorDashboard: React.FC<CreatorDashboardProps> = ({
         </div>
       </div>
 
-      {/* Daily & Weekly Creator Missions */}
-      {isOwnProfile && data?.missions && (
-        <section className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <Target className="w-4 h-4 text-blue-400" />
-              <span>Daily & Weekly Creator Missions</span>
-            </h3>
-            <span className="font-mono text-xs text-purple-400 font-semibold tabular-nums">
-              {stats.xp} XP · {stats.boostPoints} Boost Points
-            </span>
+      {/* Daily & Weekly Creator Missions via MissionsPanel with Confetti */}
+      {isOwnProfile && (
+        <MissionsPanel
+          userId={profile.id}
+          initialMissions={data?.missions}
+          onMissionClaimed={() => {
+            fetchDashboard();
+            onProfileUpdated?.();
+          }}
+        />
+      )}
+
+      {/* CREATOR COMPETITIONS TO GET MONETIZED (Unlocked in Professional Mode) */}
+      {isOwnProfile && (
+        <section className="bg-gradient-to-br from-[#0B1021] via-[#131836] to-[#1A1033] border border-amber-500/30 rounded-3xl p-6 space-y-5 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-zinc-950 shadow-lg shadow-amber-500/20 shrink-0">
+                <Trophy className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    Professional Mode Exclusive
+                  </span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                    Monetization Pathway
+                  </span>
+                </div>
+                <h3 className="text-lg font-extrabold text-white mt-1">
+                  Creator Competitions to Get Monetized
+                </h3>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Compete in official BoostHub creator challenges to fast-track your Followers, Views, and XP toward full Creator Monetization.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowGuideModal(true)}
+              className="px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-2 shrink-0 self-start sm:self-auto"
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>Picture Guide: How to Earn</span>
+            </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {data.missions.map((m: any) => {
+          {/* 3 Live Creator Competitions */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {[
+              {
+                id: 'comp_capshot_sprint',
+                title: 'Capshot Viral Views Sprint',
+                desc: 'Publish high-retention vertical Capshots and climb toward 10,000 monetizable video views.',
+                image:
+                  'https://images.unsplash.com/photo-1611162616475-46b635cb6868?auto=format&fit=crop&w=600&q=80',
+                current: stats.views || 0,
+                target: 10000,
+                unit: 'Views',
+                prize: '+500 XP · +250 BP',
+              },
+              {
+                id: 'comp_follower_1k',
+                title: '1,000 Followers Creator Cup',
+                desc: 'Grow your public Follower audience in Professional Mode to unlock Creator Revenue Share.',
+                image:
+                  'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=600&q=80',
+                current: stats.followers || profile.followersCount || 0,
+                target: 1000,
+                unit: 'Followers',
+                prize: '+750 XP · +400 BP',
+              },
+              {
+                id: 'comp_xp_mastery',
+                title: '5,000 XP Monetization Challenge',
+                desc: 'Complete daily missions, receive B-Shop gifts, and engage with the community to hit 5,000 XP.',
+                image:
+                  'https://images.unsplash.com/photo-1579621970563-ebec7560ff3e?auto=format&fit=crop&w=600&q=80',
+                current: stats.xp || profile.xp || 0,
+                target: 5000,
+                unit: 'Creator XP',
+                prize: 'Monetized Badge + 500 BP',
+              },
+            ].map((comp) => {
+              const joinedList: string[] = Array.isArray(data?.joinedCompetitions)
+                ? data.joinedCompetitions
+                : [];
+              const isJoined = joinedList.includes(comp.id);
               const pct = Math.min(
                 100,
-                Math.round((m.progress / m.targetCount) * 100)
+                Math.round((comp.current / Math.max(1, comp.target)) * 100)
               );
               return (
                 <div
-                  key={m.id}
-                  className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 space-y-2"
+                  key={comp.id}
+                  className="rounded-2xl bg-[#070B17]/90 border border-white/10 overflow-hidden flex flex-col justify-between"
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-white">
-                      {m.title} ({m.missionType})
-                    </span>
-                    {m.completed ? (
-                      <span className="text-emerald-400 inline-flex items-center gap-1 font-medium">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Completed
-                      </span>
+                  <div>
+                    <div className="h-28 w-full relative bg-zinc-900">
+                      <img
+                        src={comp.image}
+                        alt={comp.title}
+                        className="w-full h-full object-cover opacity-80"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#070B17] via-[#070B17]/40 to-transparent flex items-end p-3">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500 text-zinc-950">
+                          Prize: {comp.prize}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-2.5">
+                      <h4 className="text-sm font-bold text-white">
+                        {comp.title}
+                      </h4>
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        {comp.desc}
+                      </p>
+                      <div className="space-y-1 pt-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-400">
+                            Progress ({comp.unit})
+                          </span>
+                          <span className="font-mono font-bold text-amber-300 tabular-nums">
+                            {comp.current.toLocaleString()} /{' '}
+                            {comp.target.toLocaleString()} ({pct}%)
+                          </span>
+                        </div>
+                        <div className="h-2 w-full bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-purple-500 transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 pt-0">
+                    {isJoined ? (
+                      <div className="w-full py-2.5 px-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Competing · Active in Leaderboard</span>
+                      </div>
                     ) : (
-                      <span className="font-mono text-slate-400 tabular-nums">
-                        {m.progress}/{m.targetCount}
-                      </span>
+                      <button
+                        type="button"
+                        disabled={joiningCompId === comp.id}
+                        onClick={() =>
+                          handleJoinCompetition(comp.id, comp.title)
+                        }
+                        className="w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-zinc-950 text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/10 disabled:opacity-50"
+                      >
+                        <Trophy className="w-3.5 h-3.5" />
+                        <span>
+                          {joiningCompId === comp.id
+                            ? 'Entering Competition...'
+                            : 'Enter Competition (+150 XP Boost)'}
+                        </span>
+                      </button>
                     )}
-                  </div>
-                  <p className="text-xs text-slate-400">{m.description}</p>
-                  <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-blue-500 to-purple-500"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="font-mono text-[11px] text-blue-400 tabular-nums">
-                    Reward: +{m.xpReward} XP · +{m.boostPointsReward} Boost
-                    Points
                   </div>
                 </div>
               );
             })}
           </div>
         </section>
+      )}
+
+      {showGuideModal && (
+        <ProfessionalModeGuideModal
+          isOpen={showGuideModal}
+          onClose={() => setShowGuideModal(false)}
+          isProfessionalMode={hasCreatorStatus}
+          activating={activating}
+          onConfirmActivate={() => handleSetCreatorStatus(true)}
+        />
       )}
 
       {/* Achievement Badges & Monetization Foundation */}

@@ -1086,6 +1086,7 @@ async function startServer() {
           'src/navigation/Navigation.tsx',
           'src/screens/HomeScreen.tsx',
           'src/screens/CapshotsScreen.tsx',
+          'src/screens/FriendsScreen.tsx',
           'src/screens/MenuScreen.tsx',
           'src/screens/BEditStudioScreen.tsx',
           'src/screens/ProfileScreen.tsx',
@@ -1095,6 +1096,7 @@ async function startServer() {
           'src/components/bEditStudioTypes.ts',
           'src/components/bEditVoiceEngine.ts',
           'src/components/BEditStudioStageAndTimeline.tsx',
+          'supabase_schema.sql',
         ];
 
         const treeItems: Array<{

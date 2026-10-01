@@ -33,6 +33,7 @@ import { supabase, ADMIN_ABBA_UUID } from '../lib/supabase';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { PostCard } from '../components/PostCard';
+import { MissionsPanel } from '../components/MissionsPanel';
 import {
   StoryViewerModal,
   CreateStoryModal,
@@ -915,57 +916,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
         )}
       </div>
 
-      {/* Right Desktop Rail: Active Missions & Personalization Signals */}
+      {/* Right Desktop Rail: Active MissionsPanel with Progress Bars & Confetti + Personalization Signals */}
       <aside className="hidden xl:block w-80 shrink-0 space-y-5">
-        <div className="bg-[#131A2A] border border-white/[0.08] rounded-3xl p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <Target className="w-4 h-4 text-[#2B8CFF]" />
-              <span>Active Missions</span>
-            </h3>
-            <button
-              onClick={() => onChangeTab('me')}
-              className="text-xs text-[#2B8CFF] hover:underline"
-            >
-              View All
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {missions.map((m) => {
-              const pct = Math.min(
-                100,
-                Math.round((m.progress / m.targetCount) * 100)
-              );
-              return (
-                <div
-                  key={m.id}
-                  className="p-3 rounded-2xl bg-[#0B1220] border border-white/5 space-y-2"
-                >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-white">{m.title}</span>
-                    {m.completed ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    ) : (
-                      <span className="text-slate-400 tabular-nums">
-                        {m.progress}/{m.targetCount}
-                      </span>
-                    )}
-                  </div>
-                  <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[#2B8CFF] transition-all"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <div className="text-[11px] text-slate-400 tabular-nums">
-                    Reward: +{m.xpReward} XP · +{m.boostPointsReward} BP
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <MissionsPanel
+          userId={userProfile?.id}
+          initialMissions={missions.length > 0 ? missions : undefined}
+          compact={true}
+          onMissionClaimed={fetchMissions}
+        />
 
         {userProfile?.interests && userProfile.interests.length > 0 && (
           <div className="bg-[#131A2A] border border-white/[0.08] rounded-3xl p-5 space-y-3">

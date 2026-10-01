@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Camera,
   Check,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
@@ -115,39 +116,24 @@ export const AuthScreen: React.FC = () => {
     }
   };
 
-  const handleGoogleSignIn = async () => {
+  const handleOpenGoogleChooser = () => {
     setError('');
-    setSubmitting(true);
-    try {
-      await loginWithGoogle(
-        selectedAvatar || undefined,
-        email.trim() || undefined,
-        displayName.trim() || undefined
-      );
-    } catch (err: any) {
-      if (err?.code === 'NEEDS_GOOGLE_EMAIL' || err?.message === 'NEEDS_GOOGLE_EMAIL') {
-        setGoogleEmailInput(email.trim());
-        setGoogleNameInput(displayName.trim());
-        setGooglePromptOpen(true);
-      } else {
-        setError(
-          err.message || 'Google sign-in could not be completed. Please try again.'
-        );
-      }
-    } finally {
-      setSubmitting(false);
-    }
+    // Always open the Gmail chooser modal so the user explicitly chooses which Gmail account to sign in with
+    setGoogleEmailInput(email.trim());
+    setGoogleNameInput(displayName.trim());
+    setGooglePromptOpen(true);
   };
 
   const handleConfirmGoogleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!googleEmailInput.trim()) return;
+    const cleanEmail = googleEmailInput.trim().toLowerCase();
+    if (!cleanEmail) return;
     setError('');
     setSubmitting(true);
     try {
       await loginWithGoogle(
         selectedAvatar || undefined,
-        googleEmailInput.trim(),
+        cleanEmail,
         googleNameInput.trim() || undefined
       );
       setGooglePromptOpen(false);
@@ -173,35 +159,37 @@ export const AuthScreen: React.FC = () => {
             Create, Connect, and Amplify Your World.
           </h1>
           <p className="text-base text-slate-300 leading-relaxed">
-            Experience personalized feeds, full-screen Capshots short videos,
-            24-hour stories, real-time messaging, vibrant creator communities,
-            and transparent creator rewards.
+            Every user gets their own personal BoostHub account. Sign in or
+            create a new account to choose your favorite categories, connect
+            with friends, and turn on Professional Mode whenever you are ready
+            to grow followers and compete for monetization.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
               <p className="text-sm font-semibold text-white">
-                Capshots Vertical Video
+                Friends First, Creator When Ready
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                High-velocity short videos tailored to your watch signals and
-                passions.
+                New accounts start in Friends Mode. Turn on Professional Mode in
+                Settings to unlock Followers & Creator Competitions.
               </p>
             </div>
             <div className="p-4 rounded-2xl bg-white/[0.03] border border-white/[0.08]">
               <p className="text-sm font-semibold text-white">
-                Creator Missions & XP
+                Daily Missions & Real-Time Comments
               </p>
               <p className="text-xs text-slate-400 mt-1">
-                Complete daily & weekly missions, unlock badges, and track real
-                analytics.
+                Complete daily challenges with confetti rewards, and comment or
+                reply across every account in real time.
               </p>
             </div>
           </div>
         </div>
 
-        <div className="text-xs text-slate-500">
-          BoostHub Social Platform · Secure Real-Time Cloud Architecture
+        <div className="text-xs text-slate-500 flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4 text-blue-400" />
+          <span>BoostHub Social Platform · Isolated Per-User Cloud Accounts</span>
         </div>
       </div>
 
@@ -211,16 +199,16 @@ export const AuthScreen: React.FC = () => {
           <div>
             <h2 className="font-display text-2xl font-bold text-white">
               {mode === 'login'
-                ? 'Welcome back'
+                ? 'Sign in to your account'
                 : mode === 'signup'
                   ? 'Create your BoostHub account'
                   : 'Reset your password'}
             </h2>
             <p className="text-xs text-slate-400 mt-1.5">
               {mode === 'login'
-                ? 'Choose your profile picture and sign in to access your feed and messages.'
+                ? 'Enter your email or Gmail address. Each email signs into its own unique BoostHub account.'
                 : mode === 'signup'
-                  ? 'Pick a profile picture and join creators across 20 interest categories.'
+                  ? 'Create your own account, pick your favorite categories, and tell us why you joined BoostHub.'
                   : 'Enter your account email and choose a new password.'}
             </p>
           </div>
@@ -254,7 +242,7 @@ export const AuthScreen: React.FC = () => {
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Create Account
+                Create New Account
               </button>
             </div>
           )}
@@ -274,7 +262,7 @@ export const AuthScreen: React.FC = () => {
                       Choose Profile Picture
                     </p>
                     <p className="text-[11px] text-slate-400">
-                      Displayed on your account & in messages
+                      Displayed on your account & comments
                     </p>
                   </div>
                 </div>
@@ -356,7 +344,7 @@ export const AuthScreen: React.FC = () => {
                       required
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="e.g. Prince Abba"
+                      placeholder="e.g. Alex Johnson"
                       className="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                   </div>
@@ -387,7 +375,7 @@ export const AuthScreen: React.FC = () => {
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                Email Address
+                Email / Gmail Address
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -396,7 +384,7 @@ export const AuthScreen: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
+                  placeholder="yourname@gmail.com"
                   className="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -426,7 +414,7 @@ export const AuthScreen: React.FC = () => {
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={4}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
@@ -444,10 +432,10 @@ export const AuthScreen: React.FC = () => {
                   <input
                     type="password"
                     required
-                    minLength={6}
+                    minLength={4}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Enter new password (min 6 chars)"
+                    placeholder="Enter new password"
                     className="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                   />
                 </div>
@@ -465,7 +453,7 @@ export const AuthScreen: React.FC = () => {
                   : mode === 'login'
                     ? 'Sign In to BoostHub'
                     : mode === 'signup'
-                      ? 'Create Account'
+                      ? 'Create Account & Choose Categories'
                       : 'Reset Password'}
               </span>
               <ArrowRight className="w-4 h-4" />
@@ -490,7 +478,7 @@ export const AuthScreen: React.FC = () => {
 
               <button
                 type="button"
-                onClick={handleGoogleSignIn}
+                onClick={handleOpenGoogleChooser}
                 disabled={submitting}
                 className="w-full min-h-[48px] py-3 px-4 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-medium text-white flex items-center justify-center gap-3 transition-colors"
               >
@@ -512,18 +500,23 @@ export const AuthScreen: React.FC = () => {
                     d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96z"
                   />
                 </svg>
-                <span>Continue with Google</span>
+                <span>Continue with Google (Choose Gmail Account)</span>
               </button>
 
               {googlePromptOpen && (
                 <form
                   onSubmit={handleConfirmGoogleEmail}
-                  className="p-4 rounded-2xl bg-white/[0.04] border border-blue-500/30 space-y-3"
+                  className="p-4 rounded-2xl bg-[#131A2A] border border-blue-500/40 space-y-3 shadow-xl"
                 >
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold text-white">
-                      Enter your Google email to continue
-                    </p>
+                    <div>
+                      <p className="text-xs font-bold text-white">
+                        Sign in with your Gmail Account
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        Each Gmail has its own separate BoostHub account.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setGooglePromptOpen(false)}
@@ -537,22 +530,24 @@ export const AuthScreen: React.FC = () => {
                     required
                     value={googleEmailInput}
                     onChange={(e) => setGoogleEmailInput(e.target.value)}
-                    placeholder="yourname@gmail.com"
-                    className="w-full h-10 px-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="Enter your Gmail (e.g. myaccount@gmail.com)"
+                    className="w-full h-10 px-3 rounded-xl bg-black/40 border border-white/15 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                   />
                   <input
                     type="text"
                     value={googleNameInput}
                     onChange={(e) => setGoogleNameInput(e.target.value)}
-                    placeholder="Your Display Name (optional)"
-                    className="w-full h-10 px-3 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                    placeholder="Your Display Name (for new account)"
+                    className="w-full h-10 px-3 rounded-xl bg-black/40 border border-white/15 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                   />
                   <button
                     type="submit"
-                    disabled={submitting}
-                    className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold transition-colors"
+                    disabled={submitting || !googleEmailInput.trim()}
+                    className="w-full py-2.5 rounded-xl bg-[#2B8CFF] hover:bg-blue-500 text-white text-xs font-bold transition-colors"
                   >
-                    Continue as {googleEmailInput || 'Google User'}
+                    {submitting
+                      ? 'Signing in...'
+                      : `Continue as ${googleEmailInput.trim() || 'Gmail User'}`}
                   </button>
                 </form>
               )}

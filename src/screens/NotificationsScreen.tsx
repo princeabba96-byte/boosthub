@@ -19,10 +19,11 @@ import { NotificationItem } from '../types';
 import { apiFetch } from '../services/api';
 import {
   getBrowserPushPermissionState,
-  enableBackgroundPushNotifications,
   disableBackgroundPushNotifications,
   triggerTestPushNotification,
+  ensureServiceWorkerRegistration,
 } from '../services/pushNotifications';
+import { supabase, ADMIN_ABBA_UUID } from '../lib/supabase';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { formatRelativeTime } from '../utils/format';
@@ -32,23 +33,30 @@ interface NotificationsScreenProps {
   onOpenNotification?: (notif: NotificationItem) => void;
 }
 
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   onSelectUser,
   onOpenNotification,
 }) => {
-  const { refreshBadgesCount, realtimeEvents, showToast } = useAuth();
+  const { userProfile, refreshBadgesCount, realtimeEvents, showToast } =
+    useAuth();
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [loading, setLoading] = useState(true);
 
   // Background Web Push state
-  const [pushSupported, setPushSupported] = useState(true);
-  const [pushSubscribed, setPushSubscribed] = useState(false);
-  const [pushPermission, setPushPermission] = useState<
-    NotificationPermission | 'unsupported'
-  >('default');
-  const [deviceCount, setDeviceCount] = useState(0);
-  const [pushBusy, setPushBusy] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [isActivating, setIsActivating] = useState(false);
   const [testingPush, setTestingPush] = useState(false);
 
   const loadNotifications = async () => {
@@ -64,11 +72,14 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   };
 
   const refreshPushState = async () => {
-    const state = await getBrowserPushPermissionState();
-    setPushSupported(state.supported);
-    setPushPermission(state.permission);
-    setPushSubscribed(state.subscribed);
-    setDeviceCount(state.deviceCount);
+    try {
+      const state = await getBrowserPushPermissionState();
+      if (state.subscribed) {
+        setPushEnabled(true);
+      }
+    } catch {
+      // ignore
+    }
   };
 
   useEffect(() => {
@@ -82,54 +93,122 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   }, [realtimeEvents]);
 
-  const handleEnablePush = async () => {
-    setPushBusy(true);
+  async function enablePush() {
     try {
-      await enableBackgroundPushNotifications();
-      await refreshPushState();
-      showToast(
-        'Background Push Notifications enabled! You will receive alerts even when BoostHub is closed.',
-        'success'
+      setIsActivating(true);
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        showToast('Permission denied', 'error');
+        setIsActivating(false);
+        return;
+      }
+
+      await ensureServiceWorkerRegistration();
+      const registration = await navigator.serviceWorker.ready;
+      const vapidPublicKey =
+        (import.meta as any).env?.VITE_VAPID_PUBLIC_KEY ||
+        'BCLWPiFzL_20dC_qTCyZVHb0nYp0sV2tPvCP8yhgRrxZUcfaWJhhtAxZsIcB3NaSB8ebv20905tJRcKzqFevkIk';
+
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(
+            vapidPublicKey
+          ) as unknown as BufferSource,
+        });
+      }
+
+      const subJson = subscription.toJSON();
+      const { p256dh, auth } = subJson.keys || {};
+
+      // Resolve user_id from supabase.auth or users('Abba')
+      const authUserRes = await supabase.auth.getUser();
+      const abbaUserRes = await supabase
+        .from('users')
+        .select('id')
+        .eq('username', 'Abba')
+        .maybeSingle();
+
+      const resolvedUserId =
+        authUserRes.data.user?.id ||
+        abbaUserRes.data?.id ||
+        userProfile?.id ||
+        null;
+
+      // SAVE CORRECTLY - Table has endpoint, p256dh, auth, subscription
+      const { error } = await supabase.from('push_subscriptions').upsert(
+        {
+          user_id: resolvedUserId,
+          endpoint: subscription.endpoint,
+          p256dh: p256dh || '',
+          auth: auth || '',
+          subscription: subJson,
+        },
+        { onConflict: 'user_id,endpoint' }
       );
+
+      if (error) {
+        // Fallback if resolvedUserId is in profiles table and not yet in users table
+        await supabase
+          .from('push_subscriptions')
+          .delete()
+          .eq('endpoint', subscription.endpoint);
+        const { error: fallbackError } = await supabase
+          .from('push_subscriptions')
+          .upsert(
+            {
+              user_id: null,
+              endpoint: subscription.endpoint,
+              p256dh: p256dh || '',
+              auth: auth || '',
+              subscription: {
+                ...subJson,
+                userId: userProfile?.id || ADMIN_ABBA_UUID,
+              },
+            },
+            { onConflict: 'user_id,endpoint' }
+          );
+        if (fallbackError) throw fallbackError;
+      }
+
+      try {
+        window.localStorage.setItem('boosthub_push_enabled', 'true');
+      } catch {
+        // ignore
+      }
+
+      setPushEnabled(true);
+      showToast('Push Enabled!', 'success');
     } catch (err: any) {
-      showToast(
-        err.message || 'Could not enable push notifications.',
-        'error'
-      );
-      await refreshPushState();
+      console.error(err);
+      showToast('Failed: ' + (err?.message || 'Could not enable push'), 'error');
     } finally {
-      setPushBusy(false);
+      setIsActivating(false);
     }
-  };
+  }
 
   const handleDisablePush = async () => {
-    setPushBusy(true);
+    setIsActivating(true);
     try {
       await disableBackgroundPushNotifications();
-      await refreshPushState();
-      showToast('Background Push Notifications disabled for this device.', 'info');
+      setPushEnabled(false);
+      showToast('Push notifications disabled for this device.', 'info');
     } catch {
       showToast('Failed to update push settings.', 'error');
     } finally {
-      setPushBusy(false);
+      setIsActivating(false);
     }
   };
 
   const handleSendTestPush = async () => {
     setTestingPush(true);
     try {
-      const res = await triggerTestPushNotification();
-      if (res.sent > 0) {
-        showToast(
-          'Test push notification sent! Check your device system tray.',
-          'success'
-        );
-      } else {
-        showToast(
-          'Please enable Push Alerts on this device first to receive a test notification.',
-          'info'
-        );
-      }
+      await triggerTestPushNotification();
+      showToast(
+        'Test push notification sent! Check your device system tray.',
+        'success'
+      );
     } catch (err: any) {
       showToast(
         err.message || 'Failed to send test push notification.',
@@ -207,9 +286,13 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       : notifications;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+    <div className="min-h-screen bg-[#0B1220] max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5 rounded-3xl">
+      {/* Top: BoostHub header, Notifications title, subtitle & All / Unread / Mark all read */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
+          <span className="text-[11px] font-extrabold uppercase tracking-widest text-blue-400">
+            BoostHub
+          </span>
           <h1 className="font-display text-2xl font-bold text-white">
             Notifications
           </h1>
@@ -220,10 +303,10 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center p-1 bg-[#0B1021] border border-white/10 rounded-xl">
+          <div className="flex items-center p-1 bg-[#131A2A] border border-white/10 rounded-xl">
             <button
               onClick={() => setFilter('all')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                 filter === 'all'
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -233,7 +316,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
             </button>
             <button
               onClick={() => setFilter('unread')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
                 filter === 'unread'
                   ? 'bg-blue-600 text-white'
                   : 'text-slate-400 hover:text-white'
@@ -245,7 +328,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 
           <button
             onClick={handleMarkAllRead}
-            className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap"
+            className="px-3.5 py-2 rounded-xl bg-[#131A2A] hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             <CheckCheck className="w-4 h-4 text-blue-400" />
             <span>Mark all read</span>
@@ -253,18 +336,12 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         </div>
       </div>
 
-      {/* Background Web Push Notifications Card (Works Even When App Is Closed) */}
-      <div className="bg-gradient-to-r from-[#0D152D] via-[#0F1B3D] to-[#141236] border border-blue-500/25 rounded-3xl p-5 space-y-4">
+      {/* Background Push Notifications card: dark #131A2A with blue icon */}
+      <div className="bg-[#131A2A] border border-blue-500/25 rounded-3xl p-5 space-y-4 shadow-lg">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
-            <div
-              className={`w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border ${
-                pushSubscribed
-                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                  : 'bg-blue-600/20 border-blue-500/30 text-blue-400'
-              }`}
-            >
-              {pushSubscribed ? (
+            <div className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 border bg-blue-600/20 border-blue-500/30 text-blue-400">
+              {pushEnabled ? (
                 <BellRing className="w-5 h-5" />
               ) : (
                 <Smartphone className="w-5 h-5" />
@@ -276,18 +353,16 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 <h2 className="text-sm font-bold text-white">
                   Background Push Notifications
                 </h2>
-                <span className="text-xs text-slate-400">
-                  ·{' '}
-                  {pushSubscribed
-                    ? `Active (${deviceCount} ${deviceCount === 1 ? 'device' : 'devices'})`
-                    : pushPermission === 'denied'
-                      ? 'Blocked in Browser Settings'
-                      : 'Not Enabled Yet'}
+                <span
+                  className={`text-xs font-semibold ${
+                    pushEnabled ? 'text-emerald-400' : 'text-slate-400'
+                  }`}
+                >
+                  · {pushEnabled ? 'Enabled ✓' : 'Not Enabled Yet'}
                 </span>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
-                Receive instant phone notification tray alerts (right where your
-                other mobile app notifications appear) whenever{' '}
+                Receive instant phone notification tray alerts whenever{' '}
                 <strong className="text-amber-300">BOOST BOT</strong> messages
                 you, or someone{' '}
                 <strong className="text-white">likes your videos</strong>,{' '}
@@ -299,31 +374,39 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {!pushSubscribed ? (
-              <button
-                onClick={handleEnablePush}
-                disabled={pushBusy || !pushSupported}
-                className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-lg shadow-blue-600/25 whitespace-nowrap cursor-pointer"
-              >
-                <BellRing className="w-4 h-4" />
-                <span>
-                  {pushBusy ? 'Activating...' : 'Enable Push Alerts'}
-                </span>
-              </button>
-            ) : (
+            <button
+              onClick={enablePush}
+              disabled={isActivating}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-semibold inline-flex items-center gap-2 shadow-lg whitespace-nowrap cursor-pointer transition-all ${
+                pushEnabled
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25'
+                  : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/25'
+              } disabled:opacity-50`}
+            >
+              <BellRing className="w-4 h-4" />
+              <span>
+                {isActivating
+                  ? 'Activating...'
+                  : pushEnabled
+                    ? 'Push Enabled ✓'
+                    : 'Enable Push Alerts'}
+              </span>
+            </button>
+
+            {pushEnabled && (
               <>
                 <button
                   onClick={handleSendTestPush}
                   disabled={testingPush}
-                  className="px-3.5 py-2 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                  className="px-3.5 py-2.5 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>{testingPush ? 'Sending...' : 'Send Test Push'}</span>
                 </button>
                 <button
                   onClick={handleDisablePush}
-                  disabled={pushBusy}
-                  className="px-3.5 py-2 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
+                  disabled={isActivating}
+                  className="px-3.5 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 text-xs font-medium inline-flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
                 >
                   <BellOff className="w-3.5 h-3.5 text-slate-400" />
                   <span>Disable</span>
@@ -333,7 +416,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           </div>
         </div>
 
-        {pushSubscribed && (
+        {pushEnabled && (
           <div className="pt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs text-emerald-300">
             <span className="inline-flex items-center gap-1.5">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -346,7 +429,8 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         )}
       </div>
 
-      <div className="bg-[#0B1021] border border-white/10 rounded-3xl divide-y divide-white/5 overflow-hidden">
+      {/* Notifications List / Empty State */}
+      <div className="bg-[#131A2A] border border-white/10 rounded-3xl divide-y divide-white/5 overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-xs text-slate-400">
             Loading notifications...

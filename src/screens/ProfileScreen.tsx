@@ -33,6 +33,9 @@ import {
   Lock,
   Heart,
   Sliders,
+  Trophy,
+  Users,
+  BookOpen,
 } from 'lucide-react';
 import {
   BShopUserState,
@@ -62,6 +65,7 @@ import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { PostCard } from '../components/PostCard';
 import { CreatorDashboard } from '../components/CreatorDashboard';
+import { ProfessionalModeGuideModal } from '../components/ProfessionalModeGuideModal';
 import { formatCompactNumber, formatRelativeTime } from '../utils/format';
 
 interface ProfileScreenProps {
@@ -151,6 +155,36 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [savingNotifPrefs, setSavingNotifPrefs] = useState(false);
   const [selectedVerifyUserId, setSelectedVerifyUserId] = useState<string>('');
   const [togglingProfileVerify, setTogglingProfileVerify] = useState(false);
+  const [togglingProfMode, setTogglingProfMode] = useState(false);
+  const [showProfModeGuideModal, setShowProfModeGuideModal] = useState(false);
+
+  const handleToggleProfessionalMode = async (enable: boolean) => {
+    setTogglingProfMode(true);
+    try {
+      await apiFetch('/api/creator-dashboard/activate', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: enable }),
+      });
+      await refreshProfile();
+      await loadProfileAndPosts();
+      if (enable) {
+        setShowProfModeGuideModal(true);
+      }
+      showToast(
+        enable
+          ? 'Professional Mode ON! Your profile now shows Followers & unlocks Creator Competitions to get monetized!'
+          : 'Switched back to Personal Friends Mode.',
+        'success'
+      );
+    } catch (err: any) {
+      showToast(
+        err.message || 'Failed to update Professional Mode.',
+        'error'
+      );
+    } finally {
+      setTogglingProfMode(false);
+    }
+  };
 
   // Admin Console Data
   const [adminData, setAdminData] = useState<any | null>(null);
@@ -919,55 +953,127 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
           )}
         </div>
 
-        {/* Quantitative Metrics Row (Tabular Numerals) */}
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 pt-4 border-t border-white/10 text-center">
-          <button
-            onClick={() => openFollowModal('followers')}
-            className="p-2 rounded-2xl hover:bg-white/5 transition-colors"
-          >
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.followersCount)}
-            </p>
-            <p className="text-xs text-slate-400">Followers</p>
-          </button>
+        {/* Quantitative Metrics Row: Friends Mode shows Friends first; Professional Mode shows Followers */}
+        <div className="pt-4 border-t border-white/10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] font-semibold">
+              {profile.professionalMode ? (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="text-amber-300">
+                    Professional Mode Active · Showing Public Followers & Creator Competitions
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Users className="w-3.5 h-3.5 text-blue-400" />
+                  <span className="text-blue-300">
+                    Personal Friends Mode · Showing Friends
+                  </span>
+                </>
+              )}
+            </div>
 
-          <button
-            onClick={() => openFollowModal('following')}
-            className="p-2 rounded-2xl hover:bg-white/5 transition-colors"
-          >
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.followingCount)}
-            </p>
-            <p className="text-xs text-slate-400">Following</p>
-          </button>
+            {isMe && !profile.professionalMode && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveMainMode('settings');
+                  setSettingsSubMenu('general');
+                }}
+                className="text-xs font-bold text-amber-400 hover:text-amber-300 inline-flex items-center gap-1.5"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Turn on Professional Mode in Settings to see Followers & Compete →</span>
+              </button>
+            )}
 
-          <div className="p-2">
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.friendsCount)}
-            </p>
-            <p className="text-xs text-slate-400">Friends</p>
+            {isMe && profile.professionalMode && (
+              <button
+                type="button"
+                onClick={() => setShowProfModeGuideModal(true)}
+                className="text-xs font-bold text-amber-400 hover:text-amber-300 inline-flex items-center gap-1.5"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Picture Guide: Benefits, What to Do & How to Earn</span>
+              </button>
+            )}
           </div>
 
-          <div className="p-2">
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.likesReceivedCount)}
-            </p>
-            <p className="text-xs text-slate-400">Likes</p>
-          </div>
+          {profile.professionalMode ? (
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2 text-center">
+              <button
+                onClick={() => openFollowModal('followers')}
+                className="p-2.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 hover:bg-amber-500/15 transition-colors"
+              >
+                <p className="text-lg font-extrabold text-white tabular-nums">
+                  {formatCompactNumber(profile.followersCount)}
+                </p>
+                <p className="text-xs font-semibold text-amber-300">Followers</p>
+              </button>
 
-          <div className="p-2">
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.sharesReceivedCount)}
-            </p>
-            <p className="text-xs text-slate-400">Shares</p>
-          </div>
+              <button
+                onClick={() => openFollowModal('following')}
+                className="p-2.5 rounded-2xl hover:bg-white/5 transition-colors"
+              >
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.followingCount)}
+                </p>
+                <p className="text-xs text-slate-400">Following</p>
+              </button>
 
-          <div className="p-2">
-            <p className="text-lg font-bold text-white tabular-nums">
-              {formatCompactNumber(profile.viewsReceivedCount)}
-            </p>
-            <p className="text-xs text-slate-400">Views</p>
-          </div>
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.likesReceivedCount)}
+                </p>
+                <p className="text-xs text-slate-400">Likes</p>
+              </div>
+
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.sharesReceivedCount)}
+                </p>
+                <p className="text-xs text-slate-400">Shares</p>
+              </div>
+
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.viewsReceivedCount)}
+                </p>
+                <p className="text-xs text-slate-400">Views</p>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+              <div className="p-2.5 rounded-2xl bg-blue-500/10 border border-blue-500/25">
+                <p className="text-lg font-extrabold text-white tabular-nums">
+                  {formatCompactNumber(profile.friendsCount)}
+                </p>
+                <p className="text-xs font-semibold text-blue-300">Friends</p>
+              </div>
+
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(userPosts.length)}
+                </p>
+                <p className="text-xs text-slate-400">Posts</p>
+              </div>
+
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.likesReceivedCount)}
+                </p>
+                <p className="text-xs text-slate-400">Likes</p>
+              </div>
+
+              <div className="p-2.5">
+                <p className="text-lg font-bold text-white tabular-nums">
+                  {formatCompactNumber(profile.sharesReceivedCount)}
+                </p>
+                <p className="text-xs text-slate-400">Shares</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Public Profile ✨ Gift Showcase & 🎁 Gift Collection Summary */}
@@ -1953,6 +2059,76 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <BellRing className="w-3.5 h-3.5" />
                   <span>Configure Notification Preferences →</span>
                 </button>
+              </div>
+
+              {/* PROFESSIONAL MODE & CREATOR MONETIZATION SWITCH IN SETTINGS */}
+              <div className="p-5 rounded-3xl bg-gradient-to-br from-[#131836] via-[#1A1033] to-[#0B1021] border border-amber-500/40 space-y-4 shadow-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3.5">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-lg shadow-amber-500/20">
+                      <Sparkles className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {profile.professionalMode
+                            ? 'Professional Mode: ON (Showing Followers)'
+                            : 'Current: Friends Mode (Showing Friends)'}
+                        </span>
+                      </div>
+                      <h3 className="text-base font-extrabold text-white mt-1">
+                        Professional Mode & Creator Competitions
+                      </h3>
+                      <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
+                        {profile.professionalMode
+                          ? 'Your profile displays Public Followers instead of Friends, and you have full access to Creator Competitions to get monetized.'
+                          : 'When you create an account, you start with Friends. Turn on Professional Mode here in Settings to switch your profile to Followers and enter Creator Competitions to get monetized!'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      disabled={togglingProfMode}
+                      onClick={() =>
+                        handleToggleProfessionalMode(!profile.professionalMode)
+                      }
+                      className={`px-4 py-2.5 rounded-xl text-xs font-extrabold inline-flex items-center gap-2 transition-all shadow-lg ${
+                        profile.professionalMode
+                          ? 'bg-white/10 hover:bg-white/15 text-slate-200 border border-white/15'
+                          : 'bg-gradient-to-r from-amber-500 via-orange-500 to-purple-600 text-white shadow-amber-500/25'
+                      }`}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>
+                        {togglingProfMode
+                          ? 'Updating Mode...'
+                          : profile.professionalMode
+                            ? 'Switch Back to Friends Mode'
+                            : 'Turn On Professional Mode'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowProfModeGuideModal(true)}
+                      className="px-4 py-2.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5"
+                    >
+                      <BookOpen className="w-4 h-4" />
+                      <span>Picture Guide: Benefits & How to Earn</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Inline Visual Picture Guide inside Settings */}
+                <ProfessionalModeGuideModal
+                  inline={true}
+                  isProfessionalMode={Boolean(profile.professionalMode)}
+                  activating={togglingProfMode}
+                  onConfirmActivate={() => handleToggleProfessionalMode(true)}
+                  onOpenCompetitions={() => setActiveMainMode('dashboard')}
+                />
               </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3015,6 +3191,21 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Professional Mode Picture Guide Modal */}
+      {showProfModeGuideModal && (
+        <ProfessionalModeGuideModal
+          isOpen={showProfModeGuideModal}
+          onClose={() => setShowProfModeGuideModal(false)}
+          isProfessionalMode={Boolean(profile.professionalMode)}
+          activating={togglingProfMode}
+          onConfirmActivate={() => handleToggleProfessionalMode(true)}
+          onOpenCompetitions={() => {
+            setShowProfModeGuideModal(false);
+            setActiveMainMode('dashboard');
+          }}
+        />
       )}
     </div>
   );

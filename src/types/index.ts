@@ -144,6 +144,8 @@ export interface UserProfile {
   role: 'user' | 'creator' | 'moderator' | 'admin';
   isAdmin: boolean;
   isVerified: boolean;
+  professionalMode?: boolean;
+  monetizationEligible?: boolean;
   onboardingCompleted: boolean;
   joinReason: string;
   wantToWatch: string;
@@ -216,6 +218,7 @@ export interface PostItem {
   isLiked: boolean;
   isSaved: boolean;
   isFollowingAuthor: boolean;
+  recentComments?: CommentItem[];
 }
 
 export interface CommentItem {
@@ -303,7 +306,7 @@ export interface CommunityItem {
 }
 
 export interface MissionItem {
-  id: number;
+  id: any;
   code: string;
   title: string;
   description: string;
@@ -314,5 +317,6 @@ export interface MissionItem {
   boostPointsReward: number;
   progress: number;
   completed: boolean;
+  claimed?: boolean;
   completedAt: string | null;
 }
