@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.boosthub.social",
+        "sha256_cert_fingerprints": ["4E:AD:AC:E3:A6:A4:29:15:C7:21:0C:42:65:34:1F:6D:DE:A6:49:58:9B:22:B2:D7:F7:FF:71:27:C1:32:18:B2"]
+      }
+    }]

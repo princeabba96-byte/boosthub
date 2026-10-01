@@ -1,0 +1,3021 @@
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  CheckCircle2,
+  UserPlus,
+  UserCheck,
+  MessageSquare,
+  Share2,
+  Ban,
+  Flag,
+  Settings,
+  BarChart3,
+  ShieldAlert,
+  Award,
+  Target,
+  Camera,
+  Bookmark,
+  Grid,
+  Video,
+  Image as ImageIcon,
+  Info,
+  LogOut,
+  X,
+  Check,
+  Sparkles,
+  Trash2,
+  EyeOff,
+  ArrowLeft,
+  BellRing,
+  BellOff,
+  Send,
+  Gift,
+  ShoppingBag,
+  Lock,
+  Heart,
+  Sliders,
+} from 'lucide-react';
+import {
+  BShopUserState,
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  INTEREST_CATEGORIES,
+  NotificationBatchFrequency,
+  NotificationPreferences,
+  PostItem,
+  UserProfile,
+} from '../types';
+import {
+  getBShopItemByCode,
+  getFrameRingClasses,
+  getNameStyleClasses,
+} from '../data/bshopCatalog';
+import { apiFetch } from '../services/api';
+import {
+  getBrowserPushPermissionState,
+  enableBackgroundPushNotifications,
+  disableBackgroundPushNotifications,
+  triggerTestPushNotification,
+  getUserNotificationPreferences,
+  saveUserNotificationPreferences,
+} from '../services/pushNotifications';
+import { uploadMediaWithProgress } from '../storage/mediaUpload';
+import { useAuth } from '../state/AuthContext';
+import { Avatar } from '../components/Avatar';
+import { PostCard } from '../components/PostCard';
+import { CreatorDashboard } from '../components/CreatorDashboard';
+import { formatCompactNumber, formatRelativeTime } from '../utils/format';
+
+interface ProfileScreenProps {
+  viewedUserId: string | null;
+  onBackToMyProfile: () => void;
+  onSelectUser: (userId: string) => void;
+  onOpenComments: (post: PostItem) => void;
+  onOpenShare: (post: PostItem) => void;
+  onOpenMessageWith: (partner: UserProfile) => void;
+  onOpenBShop?: (recipient?: UserProfile | null) => void;
+  initialMainMode?: 'profile' | 'dashboard' | 'gifts' | 'settings' | 'admin';
+  initialContentTab?: 'posts' | 'videos' | 'photos' | 'liked' | 'saved' | 'about';
+  initialSettingsSubMenu?: 'general' | 'notifications';
+}
+
+export const ProfileScreen: React.FC<ProfileScreenProps> = ({
+  viewedUserId,
+  onBackToMyProfile,
+  onSelectUser,
+  onOpenComments,
+  onOpenShare,
+  onOpenMessageWith,
+  onOpenBShop,
+  initialMainMode,
+  initialContentTab,
+  initialSettingsSubMenu,
+}) => {
+  const {
+    userProfile,
+    refreshProfile,
+    logout,
+    showToast,
+    realtimeEvents,
+  } = useAuth();
+  const targetUserId = viewedUserId || userProfile?.id || '';
+  const isMe = targetUserId === userProfile?.id;
+
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [userPosts, setUserPosts] = useState<PostItem[]>([]);
+  const [savedPosts, setSavedPosts] = useState<PostItem[]>([]);
+  const [likedPosts, setLikedPosts] = useState<PostItem[]>([]);
+  const [activeMainMode, setActiveMainMode] = useState<
+    'profile' | 'dashboard' | 'gifts' | 'settings' | 'admin'
+  >(initialMainMode || 'profile');
+  const [myGiftsState, setMyGiftsState] = useState<BShopUserState | null>(null);
+  const [updatingGiftSettings, setUpdatingGiftSettings] = useState(false);
+  const [contentTab, setContentTab] = useState<
+    'posts' | 'videos' | 'photos' | 'liked' | 'saved' | 'about'
+  >(initialContentTab || 'posts');
+
+  // Followers / Following Modal
+  const [followModalType, setFollowModalType] = useState<
+    'followers' | 'following' | null
+  >(null);
+  const [followLists, setFollowLists] = useState<{
+    followers: UserProfile[];
+    following: UserProfile[];
+  }>({ followers: [], following: [] });
+
+  // Creator Dashboard Data
+  const [dashboardData, setDashboardData] = useState<any | null>(null);
+
+  // Settings State
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [whoCanMessage, setWhoCanMessage] = useState<
+    'everyone' | 'friends' | 'nobody'
+  >('everyone');
+  const [commentControl, setCommentControl] = useState<
+    'everyone' | 'followers' | 'nobody'
+  >('everyone');
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [editInterests, setEditInterests] = useState<string[]>([]);
+  const [blockedUsers, setBlockedUsers] = useState<UserProfile[]>([]);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [pushSubscribed, setPushSubscribed] = useState(false);
+  const [pushDeviceCount, setPushDeviceCount] = useState(0);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [settingsSubMenu, setSettingsSubMenu] = useState<
+    'general' | 'notifications'
+  >(initialSettingsSubMenu || 'general');
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPreferences>(() =>
+    getUserNotificationPreferences(userProfile?.id)
+  );
+  const [savingNotifPrefs, setSavingNotifPrefs] = useState(false);
+  const [selectedVerifyUserId, setSelectedVerifyUserId] = useState<string>('');
+  const [togglingProfileVerify, setTogglingProfileVerify] = useState(false);
+
+  // Admin Console Data
+  const [adminData, setAdminData] = useState<any | null>(null);
+  const [botTargetMode, setBotTargetMode] = useState<'all' | 'user'>('all');
+  const [botSelectedUserId, setBotSelectedUserId] = useState<string>('');
+  const [botMessageContent, setBotMessageContent] = useState<string>('');
+  const [sendingBotMessage, setSendingBotMessage] = useState<boolean>(false);
+  const [selectedBotReplyUserId, setSelectedBotReplyUserId] =
+    useState<string>('');
+  const [botQuickReplyText, setBotQuickReplyText] = useState<string>('');
+  const [sendingBotQuickReply, setSendingBotQuickReply] =
+    useState<boolean>(false);
+  const [botInboxFilter, setBotInboxFilter] = useState<'replies' | 'all'>(
+    'replies'
+  );
+
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const loadProfileAndPosts = async () => {
+    if (!targetUserId) return;
+    try {
+      const [prof, postsList] = await Promise.all([
+        apiFetch<UserProfile>(`/api/profiles/${targetUserId}`),
+        apiFetch<PostItem[]>(
+          `/api/posts?tab=new&limit=50&offset=0&authorId=${encodeURIComponent(
+            targetUserId
+          )}`
+        ),
+      ]);
+      setProfile(prof);
+      setUserPosts(postsList);
+
+      if (isMe && prof) {
+        setEditDisplayName(prof.displayName);
+        setEditUsername(prof.username);
+        setEditBio(prof.bio || '');
+        setWhoCanMessage(prof.whoCanMessage || 'everyone');
+        setCommentControl(prof.commentControl || 'everyone');
+        setIsPrivate(Boolean(prof.isPrivate));
+        setNotificationsEnabled(prof.notificationsEnabled !== false);
+        setEditInterests(prof.interests || []);
+        const loadedPrefs = prof.notificationPreferences
+          ? saveUserNotificationPreferences(prof.notificationPreferences, prof.id)
+          : getUserNotificationPreferences(prof.id);
+        setNotifPrefs(loadedPrefs);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    if (initialMainMode && isMe) {
+      setActiveMainMode(initialMainMode);
+    } else {
+      setActiveMainMode('profile');
+    }
+    setContentTab(initialContentTab || 'posts');
+    if (initialSettingsSubMenu) {
+      setSettingsSubMenu(initialSettingsSubMenu);
+    }
+    loadProfileAndPosts();
+  }, [targetUserId, initialMainMode, initialContentTab, initialSettingsSubMenu]);
+
+  useEffect(() => {
+    if (isMe && contentTab === 'saved') {
+      apiFetch<PostItem[]>('/api/saved-posts')
+        .then(setSavedPosts)
+        .catch(() => {});
+    } else if (isMe && contentTab === 'liked') {
+      apiFetch<PostItem[]>('/api/posts?tab=new&limit=100')
+        .then((all) => {
+          setLikedPosts((all || []).filter((p) => p.isLiked));
+        })
+        .catch(() => {});
+    }
+  }, [isMe, contentTab]);
+
+  useEffect(() => {
+    if (isMe && activeMainMode === 'gifts') {
+      apiFetch<BShopUserState>('/api/bshop/state')
+        .then(setMyGiftsState)
+        .catch(() => {});
+    } else if (isMe && activeMainMode === 'settings') {
+      apiFetch<UserProfile[]>('/api/blocked-users')
+        .then(setBlockedUsers)
+        .catch(() => {});
+      getBrowserPushPermissionState()
+        .then((st) => {
+          setPushSubscribed(st.subscribed);
+          setPushDeviceCount(st.deviceCount);
+        })
+        .catch(() => {});
+    } else if (
+      isMe &&
+      activeMainMode === 'admin' &&
+      userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+    ) {
+      apiFetch('/api/admin/overview')
+        .then((data: any) => {
+          setAdminData(data);
+          if (
+            !selectedBotReplyUserId &&
+            Array.isArray(data?.boostBotThreads) &&
+            data.boostBotThreads.length > 0
+          ) {
+            const firstWithReply =
+              data.boostBotThreads.find((t: any) => t.userReplyCount > 0) ||
+              data.boostBotThreads[0];
+            if (firstWithReply?.user?.id) {
+              setSelectedBotReplyUserId(firstWithReply.user.id);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isMe, activeMainMode, userProfile?.email]);
+
+  useEffect(() => {
+    if (realtimeEvents.length === 0) return;
+    loadProfileAndPosts();
+    if (
+      isMe &&
+      activeMainMode === 'admin' &&
+      userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+    ) {
+      apiFetch('/api/admin/overview')
+        .then(setAdminData)
+        .catch(() => {});
+    }
+  }, [realtimeEvents, isMe, activeMainMode, userProfile?.email]);
+
+  const handleUpdateGiftSettings = async (payload: {
+    giftPrivacy?: 'public' | 'showcase_only' | 'private';
+    showcaseGifts?: string[];
+  }) => {
+    setUpdatingGiftSettings(true);
+    try {
+      const updated = await apiFetch<BShopUserState>('/api/bshop/settings', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      setMyGiftsState(updated);
+      await refreshProfile();
+      await loadProfileAndPosts();
+      showToast('Gift preferences saved!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Could not update gift settings.', 'error');
+    } finally {
+      setUpdatingGiftSettings(false);
+    }
+  };
+
+  const handleToggleShowcaseGift = async (giftCode: string) => {
+    if (!myGiftsState) return;
+    const isOwnerAdmin =
+      userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+    const cardItem = myGiftsState.giftCollection.find(
+      (g) => g.code === giftCode
+    );
+    const hasGift =
+      isOwnerAdmin ||
+      Boolean(
+        cardItem &&
+          (cardItem.receivedCount > 0 || cardItem.ownedInInventoryCount > 0)
+      );
+    const current = myGiftsState.showcaseGifts || [];
+    const exists = current.includes(giftCode);
+    if (!exists && !hasGift) {
+      showToast(
+        'You must earn Boost Points to buy or receive this gift before showcasing it!',
+        'error'
+      );
+      return;
+    }
+    if (exists) {
+      await handleUpdateGiftSettings({
+        showcaseGifts: current.filter((c) => c !== giftCode),
+      });
+    } else {
+      if (current.length >= 6) {
+        showToast(
+          'You can showcase up to 6 gifts. Unpin one first to add another.',
+          'info'
+        );
+        return;
+      }
+      await handleUpdateGiftSettings({
+        showcaseGifts: [...current, giftCode],
+      });
+    }
+  };
+
+  const openFollowModal = async (type: 'followers' | 'following') => {
+    setFollowModalType(type);
+    try {
+      const lists = await apiFetch<{
+        followers: UserProfile[];
+        following: UserProfile[];
+      }>(`/api/profiles/${targetUserId}/follows`);
+      setFollowLists(lists);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    try {
+      const uploaded = await uploadMediaWithProgress(file, 'avatars');
+      await apiFetch('/api/profiles/me', {
+        method: 'PUT',
+        body: JSON.stringify({ avatarUrl: uploaded.url }),
+      });
+      await refreshProfile();
+      await loadProfileAndPosts();
+      showToast('Profile picture updated!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Avatar upload failed.', 'error');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleToggleFollow = async () => {
+    if (!profile) return;
+    try {
+      const res = await apiFetch<{ following: boolean }>(
+        `/api/profiles/${profile.id}/follow`,
+        { method: 'POST' }
+      );
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              isFollowing: res.following,
+              followersCount: res.following
+                ? (prev.followersCount || 0) + 1
+                : Math.max(0, (prev.followersCount || 0) - 1),
+            }
+          : prev
+      );
+    } catch {
+      showToast('Failed to update follow status.', 'error');
+    }
+  };
+
+  const handleFriendButton = async () => {
+    if (!profile) return;
+    const status = profile.friendshipStatus || 'none';
+    const nextAction =
+      status === 'friends'
+        ? 'remove'
+        : status === 'pending_received'
+          ? 'accept'
+          : status === 'pending_sent'
+            ? 'cancel'
+            : 'request';
+
+    try {
+      await apiFetch('/api/friends/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          targetUserId: profile.id,
+          action: nextAction,
+        }),
+      });
+      await loadProfileAndPosts();
+      showToast('Friendship updated!', 'info');
+    } catch {
+      showToast('Failed to update friendship.', 'error');
+    }
+  };
+
+  const handleBlockOrReportUser = async (type: 'block' | 'report') => {
+    if (!profile) return;
+    try {
+      await apiFetch('/api/feedback', {
+        method: 'POST',
+        body: JSON.stringify({
+          targetType: 'user',
+          targetId: profile.id,
+          feedbackType: type,
+          reason: `User profile ${type}`,
+        }),
+      });
+      showToast(
+        type === 'block'
+          ? `Blocked @${profile.username}`
+          : `Reported @${profile.username} to moderation`,
+        'info'
+      );
+      if (type === 'block') {
+        onBackToMyProfile();
+      }
+    } catch {
+      showToast('Action failed.', 'error');
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    try {
+      const savedLocalPrefs = saveUserNotificationPreferences(
+        notifPrefs,
+        userProfile?.id
+      );
+      await apiFetch('/api/profiles/me', {
+        method: 'PUT',
+        body: JSON.stringify({
+          displayName: editDisplayName,
+          username: editUsername,
+          bio: editBio,
+          whoCanMessage,
+          commentControl,
+          isPrivate,
+          notificationsEnabled,
+          notificationPreferences: savedLocalPrefs,
+          categories: editInterests,
+        }),
+      });
+      await refreshProfile();
+      await loadProfileAndPosts();
+      showToast('Account & privacy settings saved!', 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Could not save settings.', 'error');
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleSaveNotificationPreferences = async (
+    updatedPrefs?: NotificationPreferences
+  ) => {
+    const prefsToSave = updatedPrefs || notifPrefs;
+    setSavingNotifPrefs(true);
+    try {
+      const merged = saveUserNotificationPreferences(
+        prefsToSave,
+        userProfile?.id
+      );
+      setNotifPrefs(merged);
+      await apiFetch('/api/profiles/me', {
+        method: 'PUT',
+        body: JSON.stringify({
+          notificationsEnabled,
+          notificationPreferences: merged,
+        }),
+      });
+      await refreshProfile();
+      showToast('Notification preferences saved!', 'success');
+    } catch (err: any) {
+      showToast(
+        err.message || 'Could not save notification preferences.',
+        'error'
+      );
+    } finally {
+      setSavingNotifPrefs(false);
+    }
+  };
+
+  const handleToggleViewedUserVerification = async () => {
+    if (!profile) return;
+    setTogglingProfileVerify(true);
+    const nextAction = profile.isVerified ? 'unverify_user' : 'verify_user';
+    try {
+      await apiFetch('/api/admin/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: nextAction,
+          payload: { userId: profile.id },
+        }),
+      });
+      await loadProfileAndPosts();
+      showToast(
+        nextAction === 'verify_user'
+          ? `Granted Verified Badge to ${profile.displayName} (@${profile.username})!`
+          : `Removed Verified Badge from ${profile.displayName} (@${profile.username}).`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(
+        err.message || 'Failed to update user verification badge.',
+        'error'
+      );
+    } finally {
+      setTogglingProfileVerify(false);
+    }
+  };
+
+  const handleAdminAction = async (action: string, payload: any) => {
+    try {
+      await apiFetch('/api/admin/action', {
+        method: 'POST',
+        body: JSON.stringify({ action, payload }),
+      });
+      const refreshed = await apiFetch('/api/admin/overview');
+      setAdminData(refreshed);
+      showToast('Moderation action applied.', 'success');
+    } catch {
+      showToast('Admin action failed.', 'error');
+    }
+  };
+
+  const handleSendBoostBotMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!botMessageContent.trim()) {
+      showToast('Please enter a message to send from BOOST BOT.', 'error');
+      return;
+    }
+    if (botTargetMode === 'user' && !botSelectedUserId) {
+      showToast('Please select a recipient user.', 'error');
+      return;
+    }
+    setSendingBotMessage(true);
+    try {
+      const res = await apiFetch<any>('/api/admin/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'send_boost_bot_message',
+          payload: {
+            targetUserId: botTargetMode === 'all' ? 'all' : botSelectedUserId,
+            content: botMessageContent.trim(),
+          },
+        }),
+      });
+      setBotMessageContent('');
+      const refreshed = await apiFetch('/api/admin/overview').catch(() => null);
+      if (refreshed) setAdminData(refreshed);
+      showToast(
+        `BOOST BOT message delivered to ${res?.sentCount || 1} ${
+          (res?.sentCount || 1) === 1 ? 'user' : 'users'
+        }!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send BOOST BOT message.', 'error');
+    } finally {
+      setSendingBotMessage(false);
+    }
+  };
+
+  const handleSendQuickBotReply = async (
+    e: React.FormEvent,
+    targetUser: UserProfile
+  ) => {
+    e.preventDefault();
+    const replyContent = botQuickReplyText.trim();
+    if (!replyContent || !targetUser?.id) return;
+    setSendingBotQuickReply(true);
+    try {
+      await apiFetch('/api/admin/action', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'send_boost_bot_message',
+          payload: {
+            targetUserId: targetUser.id,
+            content: replyContent,
+          },
+        }),
+      });
+      setBotQuickReplyText('');
+      const refreshed = await apiFetch('/api/admin/overview').catch(() => null);
+      if (refreshed) setAdminData(refreshed);
+      showToast(
+        `Replied to ${targetUser.displayName} (@${targetUser.username}) via BOOST BOT!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send BOOST BOT reply.', 'error');
+    } finally {
+      setSendingBotQuickReply(false);
+    }
+  };
+
+  if (!profile) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-12 text-center text-xs text-slate-400">
+        Loading profile...
+      </div>
+    );
+  }
+
+  const filteredPosts =
+    contentTab === 'videos'
+      ? userPosts.filter(
+          (p) => p.postType === 'video' || p.postType === 'capshot'
+        )
+      : contentTab === 'photos'
+        ? userPosts.filter((p) => p.postType === 'photo')
+        : contentTab === 'saved'
+          ? savedPosts
+          : contentTab === 'liked'
+            ? likedPosts
+            : userPosts;
+
+  return (
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      {!isMe && (
+        <button
+          onClick={onBackToMyProfile}
+          className="inline-flex items-center gap-2 text-xs font-semibold text-slate-300 hover:text-white"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to My Profile
+        </button>
+      )}
+
+      {/* Profile Header Card */}
+      <section className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 sm:p-8 space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+          <div className="flex items-center gap-5">
+            <div className="relative">
+              <div
+                className={`rounded-full ${getFrameRingClasses(profile.equippedFrame)}`}
+              >
+                <Avatar
+                  src={profile.avatarUrl}
+                  name={profile.displayName}
+                  size="xl"
+                />
+              </div>
+              {isMe && (
+                <>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleAvatarUpload}
+                    className="hidden"
+                  />
+                  <button
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={uploadingAvatar}
+                    className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center ring-2 ring-[#0B1021]"
+                    title="Change Profile Picture"
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1
+                  className={`font-display text-xl sm:text-2xl font-bold ${getNameStyleClasses(
+                    profile.equippedNameStyle
+                  )}`}
+                >
+                  {profile.displayName}
+                </h1>
+                {profile.isVerified && (
+                  <CheckCircle2 className="w-5 h-5 text-blue-400" />
+                )}
+                {profile.equippedBadge &&
+                  getBShopItemByCode(profile.equippedBadge) && (
+                    <span className="text-xs text-amber-300 font-medium">
+                      {getBShopItemByCode(profile.equippedBadge)?.icon}{' '}
+                      {getBShopItemByCode(profile.equippedBadge)?.name}
+                    </span>
+                  )}
+              </div>
+              <p className="text-xs text-slate-400">
+                @{profile.username} ·{' '}
+                {profile.email?.trim().toLowerCase() === 'princeabba96@gmail.com'
+                  ? 'admin'
+                  : profile.role === 'admin'
+                    ? 'user'
+                    : profile.role}{' '}
+                ·{' '}
+                <span className="text-blue-400 tabular-nums">
+                  {profile.xp} XP
+                </span>
+                {isMe && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    <span className="text-purple-400 font-semibold tabular-nums">
+                      {profile.email?.trim().toLowerCase() ===
+                      'princeabba96@gmail.com'
+                        ? '∞ Unlimited BP'
+                        : `${(profile.boostPoints || 0).toLocaleString()} BP`}
+                    </span>
+                  </>
+                )}
+              </p>
+              {profile.bio && (
+                <p className="text-sm text-slate-200 pt-1 max-w-md">
+                  {profile.bio}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Right Action Controls */}
+          {isMe ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setActiveMainMode('profile')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition-colors ${
+                  activeMainMode === 'profile'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                Profile
+              </button>
+              <button
+                onClick={() => setActiveMainMode('gifts')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                  activeMainMode === 'gifts'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                <Gift className="w-3.5 h-3.5 text-pink-400" /> 🎁 My Gifts
+              </button>
+              {onOpenBShop && (
+                <button
+                  onClick={() => onOpenBShop(null)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-white/5 text-slate-200 hover:text-white hover:bg-white/10 transition-colors"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5 text-purple-400" /> 🛍️
+                  B-Shop
+                </button>
+              )}
+              <button
+                onClick={() => setActiveMainMode('dashboard')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                  activeMainMode === 'dashboard'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                <BarChart3 className="w-3.5 h-3.5" /> Creator Dashboard
+              </button>
+              <button
+                onClick={() => setActiveMainMode('settings')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                  activeMainMode === 'settings'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-300 hover:text-white'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" /> Settings
+              </button>
+              {(profile.isAdmin || profile.role === 'admin') &&
+                profile.email?.trim().toLowerCase() ===
+                  'princeabba96@gmail.com' && (
+                  <button
+                    onClick={() => setActiveMainMode('admin')}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                      activeMainMode === 'admin'
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-purple-600/20 text-purple-300 border border-purple-500/30'
+                    }`}
+                  >
+                    <ShieldAlert className="w-3.5 h-3.5" /> Admin Console
+                  </button>
+                )}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {onOpenBShop && (
+                <button
+                  onClick={() => onOpenBShop(profile)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white transition-colors"
+                >
+                  <Gift className="w-4 h-4" /> Send Gift
+                </button>
+              )}
+              {userProfile?.email?.trim().toLowerCase() ===
+                'princeabba96@gmail.com' && (
+                <button
+                  type="button"
+                  disabled={togglingProfileVerify}
+                  onClick={handleToggleViewedUserVerification}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 border transition-colors ${
+                    profile.isVerified
+                      ? 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/35 text-rose-300'
+                      : 'bg-blue-500/20 hover:bg-blue-500/30 border-blue-400/40 text-blue-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>
+                    {togglingProfileVerify
+                      ? 'Updating...'
+                      : profile.isVerified
+                        ? 'Remove Verified Badge'
+                        : 'Give Verified Badge'}
+                  </span>
+                </button>
+              )}
+              <button
+                onClick={handleToggleFollow}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                  profile.isFollowing
+                    ? 'bg-white/10 text-white'
+                    : 'bg-blue-600 text-white hover:bg-blue-500'
+                }`}
+              >
+                {profile.isFollowing ? (
+                  <>
+                    <UserCheck className="w-4 h-4" /> Following
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="w-4 h-4" /> Follow
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleFriendButton}
+                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white"
+              >
+                {profile.friendshipStatus === 'friends'
+                  ? 'Friends ✓'
+                  : profile.friendshipStatus === 'pending_received'
+                    ? 'Accept Friend'
+                    : profile.friendshipStatus === 'pending_sent'
+                      ? 'Request Sent'
+                      : 'Add Friend'}
+              </button>
+
+              <button
+                onClick={() => onOpenMessageWith(profile)}
+                className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-300 text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <MessageSquare className="w-3.5 h-3.5" /> Message
+              </button>
+
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(
+                    `${window.location.origin}/?user=${profile.id}`
+                  );
+                  showToast('Profile link copied!', 'success');
+                }}
+                className="min-h-[38px] min-w-[38px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
+                title="Share Profile"
+              >
+                <Share2 className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => handleBlockOrReportUser('block')}
+                className="min-h-[38px] min-w-[38px] rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center justify-center"
+                title="Block User"
+              >
+                <Ban className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => handleBlockOrReportUser('report')}
+                className="min-h-[38px] min-w-[38px] rounded-xl bg-white/5 hover:bg-amber-500/20 text-slate-400 hover:text-amber-400 flex items-center justify-center"
+                title="Report User"
+              >
+                <Flag className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Quantitative Metrics Row (Tabular Numerals) */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 pt-4 border-t border-white/10 text-center">
+          <button
+            onClick={() => openFollowModal('followers')}
+            className="p-2 rounded-2xl hover:bg-white/5 transition-colors"
+          >
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.followersCount)}
+            </p>
+            <p className="text-xs text-slate-400">Followers</p>
+          </button>
+
+          <button
+            onClick={() => openFollowModal('following')}
+            className="p-2 rounded-2xl hover:bg-white/5 transition-colors"
+          >
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.followingCount)}
+            </p>
+            <p className="text-xs text-slate-400">Following</p>
+          </button>
+
+          <div className="p-2">
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.friendsCount)}
+            </p>
+            <p className="text-xs text-slate-400">Friends</p>
+          </div>
+
+          <div className="p-2">
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.likesReceivedCount)}
+            </p>
+            <p className="text-xs text-slate-400">Likes</p>
+          </div>
+
+          <div className="p-2">
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.sharesReceivedCount)}
+            </p>
+            <p className="text-xs text-slate-400">Shares</p>
+          </div>
+
+          <div className="p-2">
+            <p className="text-lg font-bold text-white tabular-nums">
+              {formatCompactNumber(profile.viewsReceivedCount)}
+            </p>
+            <p className="text-xs text-slate-400">Views</p>
+          </div>
+        </div>
+
+        {/* Public Profile ✨ Gift Showcase & 🎁 Gift Collection Summary */}
+        {(isMe || (profile.giftPrivacy || 'public') !== 'private') && (
+          <div className="pt-4 border-t border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            {/* ✨ Gift Showcase (3–6 favorite/rare gifts) */}
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <span className="font-semibold text-amber-300">
+                  ✨ Gift Showcase
+                </span>
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveMainMode('gifts')}
+                    className="text-blue-400 hover:underline"
+                  >
+                    Customize
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-200">
+                {(() => {
+                  const isOwnerAdmin =
+                    profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com';
+                  const rawShowcase = isOwnerAdmin
+                    ? profile.showcaseGifts || 'crown,diamond,rocket,trophy'
+                    : profile.showcaseGifts || '';
+                  const codes = rawShowcase
+                    .split(',')
+                    .map((code) => code.trim())
+                    .filter(Boolean)
+                    .slice(0, 6);
+                  if (codes.length === 0) {
+                    return (
+                      <span className="text-slate-500">
+                        No gifts showcased yet — earn Boost Points to buy or
+                        receive gifts in B-Shop
+                      </span>
+                    );
+                  }
+                  return codes.map((code, idx, arr) => {
+                    const item = getBShopItemByCode(code);
+                    if (!item) return null;
+                    return (
+                      <React.Fragment key={code}>
+                        <span className="font-medium text-white">
+                          {item.icon} {item.name}
+                        </span>
+                        {idx < arr.length - 1 && (
+                          <span aria-hidden="true" className="text-slate-600">
+                            |
+                          </span>
+                        )}
+                      </React.Fragment>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* 🎁 Gift Collection Summary (Visible when giftPrivacy is public or viewing own profile) */}
+            {(isMe || (profile.giftPrivacy || 'public') === 'public') &&
+              profile.publicGiftCollection &&
+              profile.publicGiftCollection.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs text-slate-400">
+                    <span className="font-semibold text-purple-300">
+                      🎁 Gift Collection
+                    </span>
+                    <span aria-hidden="true">·</span>
+                    <span className="tabular-nums">
+                      {profile.publicGiftCollection.reduce(
+                        (s, g) => s + g.count,
+                        0
+                      )}{' '}
+                      total received
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-white tabular-nums">
+                    {profile.publicGiftCollection.map((g) => (
+                      <span
+                        key={g.code}
+                        title={`${g.name} (${g.rarity})`}
+                        className="inline-flex items-center gap-1"
+                      >
+                        <span className="text-sm">{g.icon}</span>
+                        <span className="font-semibold">{g.count}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+          </div>
+        )}
+      </section>
+
+      {/* MODE: 🎁 MY GIFTS (Collection, Showcase, Activity & Privacy) */}
+      {isMe && activeMainMode === 'gifts' && (
+        <div className="space-y-6">
+          {/* Top Overview & B-Shop CTA */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="font-display text-xl font-bold text-white">
+                🎁 My Gifts & Showcase
+              </h2>
+              <p className="text-xs text-slate-400">
+                Manage your received Gift Collection, choose 3–6 showcase gifts
+                for your profile, review gift activity, and control gift
+                privacy.
+              </p>
+              <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-slate-300 tabular-nums">
+                <span>
+                  Boost Points:{' '}
+                  <strong className="text-purple-300">
+                    {profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com'
+                      ? '∞ Unlimited BP'
+                      : `${(
+                          myGiftsState?.boostPoints ??
+                          profile.boostPoints ??
+                          0
+                        ).toLocaleString()} BP`}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Total Gifts Received:{' '}
+                  <strong className="text-white">
+                    {profile.email?.trim().toLowerCase() ===
+                    'princeabba96@gmail.com'
+                      ? '∞ Unlimited (All Gifts)'
+                      : myGiftsState?.giftCollection.reduce(
+                          (s, g) => s + g.receivedCount,
+                          0
+                        ) || 0}
+                  </strong>
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>
+                  Gift Recognition Score:{' '}
+                  <strong className="text-blue-400">
+                    {(
+                      myGiftsState?.giftRecognitionScore ??
+                      profile.giftRecognitionScore ??
+                      0
+                    ).toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+            </div>
+
+            {onOpenBShop && (
+              <button
+                type="button"
+                onClick={() => onOpenBShop(null)}
+                className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-2 self-start sm:self-auto transition-colors"
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Visit 🛍️ B-Shop</span>
+              </button>
+            )}
+          </div>
+
+          {/* ✨ Gift Showcase & 🔒 Gift Privacy Controls */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-bold text-white">
+                  ✨ Gift Showcase (3–6 Favorite Gifts)
+                </h3>
+                <span className="text-xs text-slate-400 tabular-nums">
+                  {myGiftsState?.showcaseGifts.length || 0} / 6 selected
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Displayed prominently at the top of your profile. Tap any owned
+                or received gift card below to pin or unpin it from your
+                Showcase.
+              </p>
+              <div className="p-3.5 rounded-2xl bg-[#070B17] border border-white/10 flex flex-wrap items-center gap-2.5 text-sm text-white">
+                {!myGiftsState?.showcaseGifts ||
+                myGiftsState.showcaseGifts.length === 0 ? (
+                  <span className="text-xs text-slate-500">
+                    No gifts pinned yet. Earn Boost Points and visit B-Shop to
+                    unlock gifts first!
+                  </span>
+                ) : (
+                  myGiftsState.showcaseGifts.map((code, idx, arr) => {
+                    const item = getBShopItemByCode(code);
+                    if (!item) return null;
+                    return (
+                      <React.Fragment key={code}>
+                        <span className="font-semibold">
+                          {item.icon} {item.name}
+                        </span>
+                        {idx < arr.length - 1 && (
+                          <span aria-hidden="true" className="text-slate-600">
+                            |
+                          </span>
+                        )}
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-bold text-white flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-blue-400" />
+                  <span>Gift Privacy Setting</span>
+                </h3>
+                <span className="text-xs text-slate-400">
+                  Activity log is always private
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                Choose what visitors see on your public profile. Individual
+                sender transactions are never exposed publicly.
+              </p>
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                {(
+                  [
+                    { id: 'public', label: 'Collection & Showcase' },
+                    { id: 'showcase_only', label: 'Showcase Only' },
+                    { id: 'private', label: 'Private (Only Me)' },
+                  ] as const
+                ).map((opt) => {
+                  const active =
+                    (myGiftsState?.giftPrivacy ||
+                      profile.giftPrivacy ||
+                      'public') === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      disabled={updatingGiftSettings}
+                      onClick={() =>
+                        handleUpdateGiftSettings({ giftPrivacy: opt.id })
+                      }
+                      className={`py-2.5 px-2 rounded-xl text-xs font-semibold transition-colors ${
+                        active
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white/5 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* 🎁 Gift Collection Cards */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-lg font-bold text-white">
+                  🎁 Gift Collection
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Every virtual gift you have received or collected on BoostHub.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {(myGiftsState?.giftCollection || []).map((card) => {
+                const isOwnerAdmin =
+                  profile.email?.trim().toLowerCase() ===
+                  'princeabba96@gmail.com';
+                const isPinned = (myGiftsState?.showcaseGifts || []).includes(
+                  card.code
+                );
+                const canPin =
+                  isOwnerAdmin ||
+                  card.receivedCount > 0 ||
+                  card.ownedInInventoryCount > 0;
+                return (
+                  <div
+                    key={card.code}
+                    className="bg-[#070B17] border border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-4 transition-transform duration-150 hover:-translate-y-0.5"
+                  >
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span
+                          className={
+                            card.rarity === 'Mythic'
+                              ? 'text-amber-300 font-semibold'
+                              : card.rarity === 'Legendary'
+                                ? 'text-cyan-300 font-semibold'
+                                : card.rarity === 'Epic'
+                                  ? 'text-purple-300 font-semibold'
+                                  : card.rarity === 'Rare'
+                                    ? 'text-blue-300 font-semibold'
+                                    : 'text-slate-300'
+                          }
+                        >
+                          {card.rarity}
+                        </span>
+                        <span className="font-bold text-white tabular-nums">
+                          {isOwnerAdmin
+                            ? '×∞ Unlimited'
+                            : `×${card.receivedCount}`}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-2xl select-none">
+                          {card.icon}
+                        </div>
+                        <div>
+                          <p className="font-display text-base font-bold text-white">
+                            {card.name}{' '}
+                            {isOwnerAdmin ? '×∞' : `×${card.receivedCount}`}
+                          </p>
+                          <p className="text-[11px] text-slate-400 tabular-nums">
+                            {isOwnerAdmin
+                              ? 'Admin Vault: ∞ Unlimited'
+                              : `Total received: ${card.receivedCount}${
+                                  card.ownedInInventoryCount > 0
+                                    ? ` · In bag: ×${card.ownedInInventoryCount}`
+                                    : ''
+                                }`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-400 truncate">
+                        {card.mostRecentSender ? (
+                          <>
+                            Most recent:{' '}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onSelectUser(card.mostRecentSender!.id)
+                              }
+                              className="text-blue-400 hover:underline font-medium"
+                            >
+                              {card.mostRecentSender.displayName}
+                            </button>
+                          </>
+                        ) : (
+                          'Not received yet'
+                        )}
+                      </p>
+                    </div>
+
+                    {canPin ? (
+                      <button
+                        type="button"
+                        disabled={updatingGiftSettings}
+                        onClick={() => handleToggleShowcaseGift(card.code)}
+                        className={`w-full py-2 px-3 rounded-xl text-xs font-semibold transition-colors ${
+                          isPinned
+                            ? 'bg-amber-500/20 border border-amber-500/40 text-amber-300'
+                            : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        {isPinned ? '✨ Pinned in Showcase' : 'Pin to Showcase'}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onOpenBShop && onOpenBShop(null)}
+                        className="w-full py-2 px-3 rounded-xl text-xs font-semibold bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                      >
+                        Earn BP in B-Shop ({card.costBp.toLocaleString()} BP)
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 🔔 Gift Activity History */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+            <div>
+              <h3 className="font-display text-lg font-bold text-white">
+                🔔 Gift Activity
+              </h3>
+              <p className="text-xs text-slate-400">
+                Private chronological history of gifts you have received and
+                sent.
+              </p>
+            </div>
+
+            {!myGiftsState?.giftActivity ||
+            myGiftsState.giftActivity.length === 0 ? (
+              <p className="text-xs text-slate-400 py-6 text-center">
+                No gift activity yet. Visit B-Shop to send your first gift!
+              </p>
+            ) : (
+              <div className="divide-y divide-white/10">
+                {myGiftsState.giftActivity.map((act) => {
+                  const plural =
+                    act.quantity > 1
+                      ? act.itemName === 'Trophy'
+                        ? 'Trophies'
+                        : `${act.itemName}s`
+                      : act.itemName;
+                  return (
+                    <div
+                      key={act.id}
+                      className="py-3.5 flex items-center justify-between gap-4"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-10 h-10 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center text-xl shrink-0">
+                          {act.itemIcon}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm text-white truncate">
+                            {act.direction === 'received' ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSelectUser(act.counterparty.id)
+                                  }
+                                  className="font-bold hover:text-blue-400"
+                                >
+                                  {act.counterparty.displayName}
+                                </button>{' '}
+                                sent you{' '}
+                                <span className="font-semibold text-purple-300">
+                                  {act.quantity > 1
+                                    ? `${act.quantity} ${plural}`
+                                    : `a ${act.itemName}`}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                You sent{' '}
+                                <span className="font-semibold text-purple-300">
+                                  {act.quantity > 1
+                                    ? `${act.quantity} ${plural}`
+                                    : `a ${act.itemName}`}
+                                </span>{' '}
+                                to{' '}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    onSelectUser(act.counterparty.id)
+                                  }
+                                  className="font-bold hover:text-blue-400"
+                                >
+                                  {act.counterparty.displayName}
+                                </button>
+                              </>
+                            )}
+                          </p>
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                            <span>{formatRelativeTime(act.createdAt)}</span>
+                            {act.message && (
+                              <>
+                                <span aria-hidden="true">·</span>
+                                <span className="text-slate-300 truncate">
+                                  “{act.message}”
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0 text-xs tabular-nums">
+                        {act.direction === 'received' ? (
+                          <span className="text-emerald-400 font-semibold">
+                            +{act.recognitionEarned} Gift Score
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">
+                            {act.bpSpent.toLocaleString()} BP
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODE 1: PROFILE CONTENT TABS + EMBEDDED CREATOR DASHBOARD */}
+      {activeMainMode === 'profile' && (
+        <div className="space-y-6">
+          <CreatorDashboard
+            profile={profile}
+            isOwnProfile={isMe}
+            onProfileUpdated={loadProfileAndPosts}
+          />
+          <div className="flex items-center gap-2 p-1 bg-[#0B1021] border border-white/10 rounded-2xl overflow-x-auto no-scrollbar">
+            <button
+              onClick={() => setContentTab('posts')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                contentTab === 'posts'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Grid className="w-3.5 h-3.5" /> Posts ({userPosts.length})
+            </button>
+            <button
+              onClick={() => setContentTab('videos')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                contentTab === 'videos'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Video className="w-3.5 h-3.5" /> Videos
+            </button>
+            <button
+              onClick={() => setContentTab('photos')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                contentTab === 'photos'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <ImageIcon className="w-3.5 h-3.5" /> Photos
+            </button>
+            {isMe && (
+              <>
+                <button
+                  onClick={() => setContentTab('liked')}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                    contentTab === 'liked'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Heart className="w-3.5 h-3.5" /> Liked Videos & Posts
+                </button>
+                <button
+                  onClick={() => setContentTab('saved')}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                    contentTab === 'saved'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Bookmark className="w-3.5 h-3.5" /> Saved (Private)
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => setContentTab('about')}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+                contentTab === 'about'
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Info className="w-3.5 h-3.5" /> About
+            </button>
+          </div>
+
+          {contentTab === 'about' ? (
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-5">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Bio</h3>
+                <p className="text-xs text-slate-300 mt-1">
+                  {profile.bio || 'No bio added yet.'}
+                </p>
+              </div>
+
+              {profile.interests && profile.interests.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-white">
+                    Selected Interests
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1">
+                    {profile.interests.join(' · ')}
+                  </p>
+                </div>
+              )}
+
+              {profile.badges && profile.badges.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-white mb-2">
+                    Unlocked Badges
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {profile.badges.map((b) => (
+                      <div
+                        key={b.id}
+                        className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center gap-3"
+                      >
+                        <Award className="w-5 h-5 text-purple-400 shrink-0" />
+                        <div>
+                          <p className="text-xs font-semibold text-white">
+                            {b.name}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {b.description}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : filteredPosts.length === 0 ? (
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-10 text-center text-xs text-slate-400">
+              No content in this section yet.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredPosts.map((post) => (
+                <PostCard
+                  key={post.id}
+                  post={post}
+                  onOpenComments={onOpenComments}
+                  onOpenShare={onOpenShare}
+                  onSelectUser={onSelectUser}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* MODE 2: CREATOR DASHBOARD, MISSIONS, BADGES & MONETIZATION */}
+      {activeMainMode === 'dashboard' && (
+        <CreatorDashboard
+          profile={profile}
+          isOwnProfile={isMe}
+          onProfileUpdated={loadProfileAndPosts}
+        />
+      )}
+
+      {/* MODE 3: SETTINGS, PRIVACY, NOTIFICATION PREFERENCES, BLOCKED USERS & LOGOUT */}
+      {isMe && activeMainMode === 'settings' && (
+        <div className="space-y-6">
+          {/* Settings Sub-Menu Navigation */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#0B1021] border border-white/10 rounded-3xl p-3 sm:p-4">
+            <div className="flex items-center gap-2 p-1 bg-[#070B17] border border-white/10 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => setSettingsSubMenu('general')}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors ${
+                  settingsSubMenu === 'general'
+                    ? 'bg-[#4A90E2] text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>Account & Privacy</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsSubMenu('notifications')}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 transition-colors ${
+                  settingsSubMenu === 'notifications'
+                    ? 'bg-[#4A90E2] text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <BellRing className="w-3.5 h-3.5" />
+                <span>Notification Preferences</span>
+              </button>
+            </div>
+
+            <span className="text-xs text-slate-400 px-2">
+              {settingsSubMenu === 'notifications'
+                ? 'Customize push alerts & anti-flood batching'
+                : 'Manage profile details, privacy & connected devices'}
+            </span>
+          </div>
+
+          {settingsSubMenu === 'notifications' ? (
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
+                <div>
+                  <h2 className="font-display text-lg font-bold text-white flex items-center gap-2">
+                    <BellRing className="w-5 h-5 text-[#4A90E2]" />
+                    <span>Notification Preferences</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Choose which notification types you receive on BoostHub and
+                    adjust how rapid updates are batched into summary push
+                    alerts.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allEnabled: NotificationPreferences = {
+                        ...notifPrefs,
+                        likes: true,
+                        comments: true,
+                        mentions: true,
+                        follows: true,
+                        messages: true,
+                        friendRequests: true,
+                        gifts: true,
+                        boostBot: true,
+                      };
+                      setNotifPrefs(allEnabled);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-200 transition-colors"
+                  >
+                    Enable All Types
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNotifPrefs({ ...DEFAULT_NOTIFICATION_PREFERENCES })
+                    }
+                    className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                  >
+                    Reset Defaults
+                  </button>
+                </div>
+              </div>
+
+              {/* Master Push Toggle */}
+              <div className="p-4 rounded-2xl bg-[#070B17] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-white">
+                    Master Push & Realtime Alerts
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Receive real Web Push notifications on your phone lock
+                    screen and desktop even when BoostHub is closed.
+                  </p>
+                </div>
+                <label className="inline-flex items-center gap-2.5 text-xs font-semibold text-white cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={notificationsEnabled}
+                    onChange={(e) => setNotificationsEnabled(e.target.checked)}
+                    className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[#4A90E2]"
+                  />
+                  <span>
+                    {notificationsEnabled ? 'Enabled' : 'Paused (All Muted)'}
+                  </span>
+                </label>
+              </div>
+
+              {/* Notification Types Grid */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-[#4A90E2]" />
+                  <span>Notification Types</span>
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(
+                    [
+                      {
+                        key: 'likes',
+                        title: 'Likes & Reactions',
+                        desc: 'When someone likes or shares your posts or Capshots',
+                      },
+                      {
+                        key: 'comments',
+                        title: 'Comments & Replies',
+                        desc: 'When someone comments on your videos or replies to you',
+                      },
+                      {
+                        key: 'mentions',
+                        title: 'Mentions (@username)',
+                        desc: 'When someone tags or @mentions you in a caption or comment',
+                      },
+                      {
+                        key: 'follows',
+                        title: 'New Followers',
+                        desc: 'When someone starts following your creator profile',
+                      },
+                      {
+                        key: 'messages',
+                        title: 'Direct Messages',
+                        desc: 'When a friend or creator sends you a direct message',
+                      },
+                      {
+                        key: 'friendRequests',
+                        title: 'Friend Requests',
+                        desc: 'When someone sends or accepts your friend request',
+                      },
+                      {
+                        key: 'gifts',
+                        title: 'Virtual Gifts & B-Shop',
+                        desc: 'When you receive virtual gifts, Boost Points, or badges',
+                      },
+                      {
+                        key: 'boostBot',
+                        title: 'BOOST BOT Broadcasts',
+                        desc: 'Official platform announcements and creator updates',
+                      },
+                    ] as Array<{
+                      key: keyof Pick<
+                        NotificationPreferences,
+                        | 'likes'
+                        | 'comments'
+                        | 'mentions'
+                        | 'follows'
+                        | 'messages'
+                        | 'friendRequests'
+                        | 'gifts'
+                        | 'boostBot'
+                      >;
+                      title: string;
+                      desc: string;
+                    }>
+                  ).map((item) => {
+                    const checked = Boolean(notifPrefs[item.key]);
+                    return (
+                      <label
+                        key={item.key}
+                        className={`p-4 rounded-2xl border flex items-start justify-between gap-3 cursor-pointer transition-colors ${
+                          checked
+                            ? 'bg-[#111830]/80 border-[#4A90E2]/40'
+                            : 'bg-[#070B17] border-white/10 opacity-75'
+                        }`}
+                      >
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-white">
+                            {item.title}
+                          </p>
+                          <p className="text-[11px] text-slate-400">
+                            {item.desc}
+                          </p>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) =>
+                            setNotifPrefs((prev) => ({
+                              ...prev,
+                              [item.key]: e.target.checked,
+                            }))
+                          }
+                          className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/5 accent-[#4A90E2] shrink-0"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Batching Frequency Preferences */}
+              <div className="space-y-4 pt-2 border-t border-white/10">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-white">
+                      Smart Notification Batching & Frequency
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Prevent notification flooding by combining multiple updates
+                      received within a short window into a single summary push
+                      message.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-white cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={notifPrefs.batchingEnabled}
+                      onChange={(e) =>
+                        setNotifPrefs((prev) => ({
+                          ...prev,
+                          batchingEnabled: e.target.checked,
+                          batchFrequency:
+                            e.target.checked && prev.batchFrequency === 'instant'
+                              ? 'short_1m'
+                              : prev.batchFrequency,
+                        }))
+                      }
+                      className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[#4A90E2]"
+                    />
+                    <span>Enable Smart Batching</span>
+                  </label>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {(
+                    [
+                      {
+                        id: 'instant',
+                        label: 'Instant (No Batching)',
+                        sub: 'Send every single alert immediately as it happens',
+                      },
+                      {
+                        id: 'short_1m',
+                        label: '1-Minute Smart Batch',
+                        sub: 'Combine bursts within 60s into 1 summary push',
+                      },
+                      {
+                        id: 'standard_5m',
+                        label: '5-Minute Summary',
+                        sub: 'Group activity every 5 minutes to reduce distractions',
+                      },
+                      {
+                        id: 'digest_15m',
+                        label: '15-Minute Digest',
+                        sub: 'Calm creator mode — 1 summary push every 15 mins',
+                      },
+                    ] as Array<{
+                      id: NotificationBatchFrequency;
+                      label: string;
+                      sub: string;
+                    }>
+                  ).map((freq) => {
+                    const effectiveFreq = notifPrefs.batchingEnabled
+                      ? notifPrefs.batchFrequency
+                      : 'instant';
+                    const isSelected = effectiveFreq === freq.id;
+                    return (
+                      <button
+                        key={freq.id}
+                        type="button"
+                        onClick={() =>
+                          setNotifPrefs((prev) => ({
+                            ...prev,
+                            batchingEnabled: freq.id !== 'instant',
+                            batchFrequency: freq.id,
+                          }))
+                        }
+                        className={`p-3.5 rounded-2xl border text-left transition-all flex flex-col justify-between gap-2 ${
+                          isSelected
+                            ? 'bg-[#4A90E2]/20 border-[#4A90E2] text-white'
+                            : 'bg-[#070B17] border-white/10 text-slate-300 hover:border-white/25'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-bold text-white">
+                            {freq.label}
+                          </span>
+                          {isSelected && (
+                            <Check className="w-4 h-4 text-[#4A90E2] shrink-0" />
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400">{freq.sub}</p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={savingNotifPrefs}
+                  onClick={() => handleSaveNotificationPreferences(notifPrefs)}
+                  className="px-6 py-3 rounded-2xl bg-[#4A90E2] hover:bg-[#3A80D2] text-white text-xs font-bold transition-colors"
+                >
+                  {savingNotifPrefs
+                    ? 'Saving Preferences...'
+                    : 'Save Notification Preferences'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSettingsSubMenu('general')}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  ← Back to Account & Privacy Settings
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form
+              onSubmit={handleSaveSettings}
+              className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-5"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-display text-lg font-bold text-white">
+                  Account, Profile & Privacy Settings
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setSettingsSubMenu('notifications')}
+                  className="px-3.5 py-2 rounded-xl bg-[#4A90E2]/15 hover:bg-[#4A90E2]/25 border border-[#4A90E2]/35 text-[#4A90E2] text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <BellRing className="w-3.5 h-3.5" />
+                  <span>Configure Notification Preferences →</span>
+                </button>
+              </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">
+                  Display Name
+                </label>
+                <input
+                  type="text"
+                  value={editDisplayName}
+                  onChange={(e) => setEditDisplayName(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">
+                  Username
+                </label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={(e) =>
+                    setEditUsername(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '')
+                    )
+                  }
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-300 mb-1">Bio</label>
+              <textarea
+                rows={3}
+                value={editBio}
+                onChange={(e) => setEditBio(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-xs text-white"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">
+                  Who Can Message Me
+                </label>
+                <select
+                  value={whoCanMessage}
+                  onChange={(e) => setWhoCanMessage(e.target.value as any)}
+                  className="w-full bg-[#111830] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                >
+                  <option value="everyone">Everyone</option>
+                  <option value="friends">Friends Only</option>
+                  <option value="nobody">No One</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs text-slate-300 mb-1">
+                  Who Can Comment on My Posts
+                </label>
+                <select
+                  value={commentControl}
+                  onChange={(e) => setCommentControl(e.target.value as any)}
+                  className="w-full bg-[#111830] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white"
+                >
+                  <option value="everyone">Everyone</option>
+                  <option value="followers">Followers Only</option>
+                  <option value="nobody">No One</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-6 pt-2">
+              <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isPrivate}
+                  onChange={(e) => setIsPrivate(e.target.checked)}
+                  className="rounded border-white/20 bg-white/5"
+                />
+                <span>Private Account</span>
+              </label>
+
+              <label className="inline-flex items-center gap-2 text-xs text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={notificationsEnabled}
+                  onChange={(e) => setNotificationsEnabled(e.target.checked)}
+                  className="rounded border-white/20 bg-white/5"
+                />
+                <span>Enable Push & Realtime Notifications</span>
+              </label>
+            </div>
+
+            {/* Install BoostHub as Standalone PWA Card (Inside Settings, off the Home Page) */}
+            <div className="p-4 rounded-2xl bg-[#0A0A0A] border border-[#0A84FF]/35 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <img
+                  src="./icons/icon-192x192.png"
+                  alt="BoostHub PWA"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).src = './icon.svg';
+                  }}
+                  className="w-11 h-11 rounded-2xl border border-[#00E5FF]/40 shadow-[0_0_16px_rgba(10,132,255,0.4)] shrink-0 object-cover"
+                />
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-white">
+                    BoostHub Progressive Web App (PWA) ·{' '}
+                    <span className="text-[#00E5FF]">
+                      {typeof window !== 'undefined' &&
+                      (window.matchMedia('(display-mode: standalone)').matches ||
+                        (window.navigator as any).standalone === true)
+                        ? 'Installed (Standalone Mode)'
+                        : 'Ready to Install'}
+                    </span>
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Install BoostHub directly onto your phone or desktop home screen as a standalone full-screen app (no ARCore required).
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const deferred = (window as any).__deferredPwaPrompt;
+                    if (deferred) {
+                      try {
+                        await deferred.prompt();
+                        const choice = await deferred.userChoice;
+                        if (choice?.outcome === 'accepted') {
+                          (window as any).__deferredPwaPrompt = null;
+                          showToast('BoostHub PWA installed on your device!', 'success');
+                        }
+                      } catch {
+                        showToast(
+                          'Tap your browser menu (⋮ or Share) → "Add to Home Screen" / "Install App".',
+                          'info'
+                        );
+                      }
+                    } else {
+                      showToast(
+                        'Open https://da.gd/boosthub in Chrome/Safari and tap "Install App" or "Add to Home Screen"!',
+                        'info'
+                      );
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_0_16px_rgba(10,132,255,0.35)]"
+                >
+                  <span>Install PWA App</span>
+                </button>
+                <a
+                  href="https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk"
+                  download="BoostHub.apk"
+                  className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>⬇ Download APK (v1.0.1)</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard?.writeText(
+                      'https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk'
+                    );
+                    showToast('GitHub Release APK download link copied!', 'success');
+                  }}
+                  className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
+                >
+                  Copy Release Link
+                </button>
+              </div>
+            </div>
+
+            {/* Background Web Push Device Subscription Card */}
+            <div className="p-4 rounded-2xl bg-[#111830] border border-blue-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-white">
+                  Background Push Notifications (Even When BoostHub Is Closed) ·{' '}
+                  <span className="text-blue-400">
+                    {pushSubscribed
+                      ? `Subscribed (${pushDeviceCount} device${pushDeviceCount === 1 ? '' : 's'})`
+                      : 'Not Subscribed on This Device'}
+                  </span>
+                </p>
+                <p className="text-xs text-slate-400">
+                  Get instant alerts on your phone or desktop when someone likes your videos, comments, or follows you.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  disabled={pushBusy}
+                  onClick={async () => {
+                    setPushBusy(true);
+                    try {
+                      await enableBackgroundPushNotifications(true).catch(() => {});
+                      await triggerTestPushNotification();
+                      const st = await getBrowserPushPermissionState();
+                      setPushSubscribed(st.subscribed);
+                      setPushDeviceCount(st.deviceCount);
+                      setNotificationsEnabled(true);
+                      showToast(
+                        'Test push sent! Check your phone/browser notifications tray.',
+                        'success'
+                      );
+                    } catch {
+                      showToast('Failed to send test push.', 'error');
+                    } finally {
+                      setPushBusy(false);
+                    }
+                  }}
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#0A84FF] to-[#00E5FF] text-[#0A0A0A] text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-[0_0_16px_rgba(10,132,255,0.4)]"
+                >
+                  <Send className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>Send Test Push</span>
+                </button>
+                {!pushSubscribed ? (
+                  <button
+                    type="button"
+                    disabled={pushBusy}
+                    onClick={async () => {
+                      setPushBusy(true);
+                      try {
+                        await enableBackgroundPushNotifications();
+                        const st = await getBrowserPushPermissionState();
+                        setPushSubscribed(st.subscribed);
+                        setPushDeviceCount(st.deviceCount);
+                        setNotificationsEnabled(true);
+                        showToast('Background Push Notifications enabled!', 'success');
+                      } catch (err: any) {
+                        showToast(err.message || 'Could not enable push alerts.', 'error');
+                      } finally {
+                        setPushBusy(false);
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BellRing className="w-3.5 h-3.5" />
+                    <span>{pushBusy ? 'Enabling...' : 'Enable on This Device'}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={pushBusy}
+                    onClick={async () => {
+                      setPushBusy(true);
+                      try {
+                        await disableBackgroundPushNotifications();
+                        const st = await getBrowserPushPermissionState();
+                        setPushSubscribed(st.subscribed);
+                        setPushDeviceCount(st.deviceCount);
+                        showToast('Push disabled for this device.', 'info');
+                      } finally {
+                        setPushBusy(false);
+                      }
+                    }}
+                    className="px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-300 text-xs inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <BellOff className="w-3.5 h-3.5" />
+                    <span>Disable</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-300 mb-2">
+                Content Preferences & Interests
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {INTEREST_CATEGORIES.map((cat) => {
+                  const active = editInterests.includes(cat);
+                  return (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() =>
+                        setEditInterests((prev) =>
+                          prev.includes(cat)
+                            ? prev.filter((c) => c !== cat)
+                            : [...prev, cat]
+                        )
+                      }
+                      className={`px-3 py-1.5 rounded-xl text-xs font-medium ${
+                        active
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white/5 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={savingSettings}
+              className="px-6 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
+            >
+              {savingSettings ? 'Saving...' : 'Save Settings'}
+            </button>
+          </form>
+          )}
+
+          {/* Blocked Users Section */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+            <h3 className="text-sm font-semibold text-white">
+              Blocked Users ({blockedUsers.length})
+            </h3>
+            {blockedUsers.length === 0 ? (
+              <p className="text-xs text-slate-500">
+                You haven't blocked any accounts.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {blockedUsers.map((bu) => (
+                  <div
+                    key={bu.id}
+                    className="p-3 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <Avatar
+                        src={bu.avatarUrl}
+                        name={bu.displayName}
+                        size="sm"
+                      />
+                      <span className="text-xs font-semibold text-white">
+                        {bu.displayName} (@{bu.username})
+                      </span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        await apiFetch('/api/blocked-users/unblock', {
+                          method: 'POST',
+                          body: JSON.stringify({ targetUserId: bu.id }),
+                        });
+                        setBlockedUsers((prev) =>
+                          prev.filter((u) => u.id !== bu.id)
+                        );
+                        showToast(`Unblocked @${bu.username}`, 'info');
+                      }}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 text-xs text-white"
+                    >
+                      Unblock
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Help, Terms, Privacy Policy & Logout */}
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1 text-xs text-slate-400">
+              <p className="text-white font-semibold">
+                BoostHub Data, Terms & Privacy Policy
+              </p>
+              <p>
+                Your saved content is private to your account. Media is stored in
+                permanent cloud storage.
+              </p>
+            </div>
+            <button
+              onClick={logout}
+              className="px-5 py-2.5 rounded-2xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-semibold inline-flex items-center gap-2 self-start sm:self-auto"
+            >
+              <LogOut className="w-4 h-4" /> Sign Out
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODE 4: ADMIN MODERATION CONSOLE (Primary Admin: Prince Abba) */}
+      {isMe &&
+        (profile.isAdmin || profile.role === 'admin') &&
+        profile.email?.trim().toLowerCase() === 'princeabba96@gmail.com' &&
+        activeMainMode === 'admin' &&
+        adminData && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-purple-950/60 to-blue-950/60 border border-purple-500/30 rounded-3xl p-6 space-y-2">
+              <h2 className="font-display text-lg font-bold text-white flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-purple-400" />
+                <span>BoostHub Administrator Console</span>
+              </h2>
+              <p className="text-xs text-slate-300">
+                Primary Administrator: Prince Abba · Protected by database-level
+                role authorization.
+              </p>
+            </div>
+
+            {/* BOOST BOT Broadcast & Direct User Messaging */}
+            <div className="bg-[#0B1021] border border-purple-500/30 rounded-3xl p-6 space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Send className="w-4 h-4 text-purple-400" />
+                    <span>BOOST BOT Official Messenger</span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Send official messages and phone push notifications to all
+                    users or a selected user. Sender appears as{' '}
+                    <strong className="text-white">BOOST BOT</strong> on top with
+                    your message down below.
+                  </p>
+                </div>
+
+                <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl self-start">
+                  <button
+                    type="button"
+                    onClick={() => setBotTargetMode('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      botTargetMode === 'all'
+                        ? 'bg-purple-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    All Users ({adminData.users?.length || 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBotTargetMode('user')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      botTargetMode === 'user'
+                        ? 'bg-purple-600 text-white'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Select a User
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleSendBoostBotMessage} className="space-y-4">
+                {botTargetMode === 'user' && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                      Select Recipient User
+                    </label>
+                    <select
+                      value={botSelectedUserId}
+                      onChange={(e) => setBotSelectedUserId(e.target.value)}
+                      className="w-full bg-[#070B17] border border-white/15 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-purple-500"
+                    >
+                      <option value="">-- Choose a user --</option>
+                      {adminData.users
+                        ?.filter((u: UserProfile) => u.id !== 'boost_bot_official')
+                        .map((u: UserProfile) => (
+                          <option key={u.id} value={u.id}>
+                            {u.displayName} (@{u.username}) · {u.email}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                    Message Content
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={botMessageContent}
+                    onChange={(e) => setBotMessageContent(e.target.value)}
+                    placeholder="Write the message to send from BOOST BOT..."
+                    className="w-full bg-white/5 border border-white/10 rounded-2xl p-3.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                  />
+                </div>
+
+                {/* Live Preview of how users see the message */}
+                <div className="p-4 rounded-2xl bg-[#070B17] border border-white/10 space-y-1.5">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400">
+                    Recipient Preview (Messages & Phone Notification)
+                  </span>
+                  <div className="pt-1">
+                    <p className="text-xs font-extrabold tracking-wide text-amber-300">
+                      BOOST BOT
+                    </p>
+                    <p className="text-sm text-white whitespace-pre-wrap break-words mt-1">
+                      {botMessageContent.trim() ||
+                        'Your message will appear right here below BOOST BOT...'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={sendingBotMessage || !botMessageContent.trim()}
+                  className="px-5 py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-2 shadow-lg shadow-purple-600/25"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>
+                    {sendingBotMessage
+                      ? 'Sending as BOOST BOT...'
+                      : botTargetMode === 'all'
+                        ? 'Send as BOOST BOT to All Users'
+                        : 'Send as BOOST BOT to Selected User'}
+                  </span>
+                </button>
+              </form>
+
+              {/* 📥 BOOST BOT User Replies & Two-Way Inbox */}
+              <div className="pt-6 mt-6 border-t border-white/10 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <span>📥 User Replies to BOOST BOT (Two-Way Inbox)</span>
+                    </h4>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Every message a user replies to BOOST BOT is forwarded to your inbox and shown here so you can reply right back to them.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center p-1 bg-white/5 border border-white/10 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setBotInboxFilter('replies')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        botInboxFilter === 'replies'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      User Replies (
+                      {(adminData.boostBotThreads || []).filter(
+                        (t: any) => t.userReplyCount > 0
+                      ).length}
+                      )
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBotInboxFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        botInboxFilter === 'all'
+                          ? 'bg-purple-600 text-white'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      All Bot Threads (
+                      {(adminData.boostBotThreads || []).length})
+                    </button>
+                  </div>
+                </div>
+
+                {(() => {
+                  const allThreads = Array.isArray(adminData.boostBotThreads)
+                    ? adminData.boostBotThreads
+                    : [];
+                  const visibleThreads =
+                    botInboxFilter === 'replies'
+                      ? allThreads.filter((t: any) => t.userReplyCount > 0)
+                      : allThreads;
+                  const activeThread =
+                    visibleThreads.find(
+                      (t: any) => t.user?.id === selectedBotReplyUserId
+                    ) ||
+                    visibleThreads[0] ||
+                    null;
+
+                  if (visibleThreads.length === 0) {
+                    return (
+                      <div className="p-5 rounded-2xl bg-[#070B17] border border-white/10 text-center space-y-2">
+                        <p className="text-xs font-semibold text-slate-300">
+                          {botInboxFilter === 'replies'
+                            ? 'No user replies to BOOST BOT yet.'
+                            : 'No BOOST BOT conversations yet.'}
+                        </p>
+                        <p className="text-[11px] text-slate-500">
+                          When any user replies to BOOST BOT in Messages, their message is automatically sent to your Direct Messages and appears here for instant 2-way reply.
+                        </p>
+                        {botInboxFilter === 'replies' && allThreads.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setBotInboxFilter('all')}
+                            className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-purple-300 font-semibold"
+                          >
+                            View All {allThreads.length} BOOST BOT Threads
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4 bg-[#070B17] border border-white/10 rounded-2xl overflow-hidden">
+                      {/* Left Column: Users who replied / conversed */}
+                      <div className="md:col-span-5 border-b md:border-b-0 md:border-r border-white/10 max-h-96 overflow-y-auto divide-y divide-white/5">
+                        {visibleThreads.map((thread: any) => {
+                          const u: UserProfile = thread.user;
+                          const isSelected = activeThread?.user?.id === u.id;
+                          const lastMsg =
+                            thread.messages?.[thread.messages.length - 1];
+                          return (
+                            <button
+                              key={u.id}
+                              type="button"
+                              onClick={() => setSelectedBotReplyUserId(u.id)}
+                              className={`w-full p-3.5 text-left flex items-start gap-3 transition-colors ${
+                                isSelected
+                                  ? 'bg-purple-600/20'
+                                  : 'hover:bg-white/[0.04]'
+                              }`}
+                            >
+                              <Avatar
+                                src={u.avatarUrl}
+                                name={u.displayName}
+                                size="sm"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-xs font-bold text-white truncate">
+                                    {u.displayName}
+                                  </p>
+                                  {thread.userReplyCount > 0 && (
+                                    <span className="text-[10px] font-semibold text-emerald-300 shrink-0">
+                                      {thread.userReplyCount}{' '}
+                                      {thread.userReplyCount === 1
+                                        ? 'reply'
+                                        : 'replies'}
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-slate-400 truncate">
+                                  @{u.username}
+                                </p>
+                                {lastMsg && (
+                                  <p className="text-xs text-slate-300 truncate mt-1">
+                                    {lastMsg.isFromUser ? '💬 ' : '🤖 '}
+                                    {lastMsg.content}
+                                  </p>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Right Column: Active Thread & Reply Composer */}
+                      <div className="md:col-span-7 flex flex-col max-h-96">
+                        {activeThread ? (
+                          <>
+                            <div className="p-3.5 border-b border-white/10 flex items-center justify-between gap-2 bg-white/[0.02]">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Avatar
+                                  src={activeThread.user.avatarUrl}
+                                  name={activeThread.user.displayName}
+                                  size="sm"
+                                />
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-white truncate">
+                                    {activeThread.user.displayName} (@
+                                    {activeThread.user.username})
+                                  </p>
+                                  <p className="text-[11px] text-slate-400 truncate">
+                                    {activeThread.user.email}
+                                  </p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => onOpenMessageWith(activeThread.user)}
+                                className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-[11px] font-semibold shrink-0"
+                              >
+                                Open Personal DM
+                              </button>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5">
+                              {activeThread.messages.map((m: any) => (
+                                <div
+                                  key={m.id}
+                                  className={`flex flex-col ${
+                                    m.isFromUser ? 'items-start' : 'items-end'
+                                  }`}
+                                >
+                                  <div
+                                    className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs ${
+                                      m.isFromUser
+                                        ? 'bg-emerald-500/15 border border-emerald-500/30 text-white'
+                                        : 'bg-purple-600/25 border border-purple-500/30 text-slate-100'
+                                    }`}
+                                  >
+                                    <p
+                                      className={`text-[10px] font-bold mb-0.5 ${
+                                        m.isFromUser
+                                          ? 'text-emerald-300'
+                                          : 'text-amber-300'
+                                      }`}
+                                    >
+                                      {m.isFromUser
+                                        ? `${activeThread.user.displayName} (@${activeThread.user.username})`
+                                        : '🤖 BOOST BOT (You)'}
+                                    </p>
+                                    <p className="whitespace-pre-wrap break-words">
+                                      {m.content}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400 mt-1 text-right">
+                                      {formatRelativeTime(m.createdAt)}
+                                    </p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            <form
+                              onSubmit={(e) =>
+                                handleSendQuickBotReply(e, activeThread.user)
+                              }
+                              className="p-3 border-t border-white/10 bg-white/[0.02] flex items-center gap-2"
+                            >
+                              <input
+                                type="text"
+                                value={botQuickReplyText}
+                                onChange={(e) =>
+                                  setBotQuickReplyText(e.target.value)
+                                }
+                                placeholder={`Reply back to @${activeThread.user.username} as BOOST BOT...`}
+                                className="flex-1 bg-[#0B1021] border border-white/15 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
+                              />
+                              <button
+                                type="submit"
+                                disabled={
+                                  sendingBotQuickReply ||
+                                  !botQuickReplyText.trim()
+                                }
+                                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center gap-1.5 shrink-0"
+                              >
+                                <Send className="w-3.5 h-3.5" />
+                                <span>
+                                  {sendingBotQuickReply ? 'Sending...' : 'Reply'}
+                                </span>
+                              </button>
+                            </form>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Reports Queue */}
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+              <h3 className="text-sm font-semibold text-white">
+                Safety & Content Reports ({adminData.reports?.length || 0})
+              </h3>
+              {adminData.reports?.length === 0 ? (
+                <p className="text-xs text-slate-500">No open reports.</p>
+              ) : (
+                <div className="space-y-2.5">
+                  {adminData.reports.map((rep: any) => (
+                    <div
+                      key={rep.id}
+                      className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between text-xs"
+                    >
+                      <div>
+                        <p className="font-semibold text-white">
+                          Target: {rep.targetType} #{rep.targetId} · Status:{' '}
+                          {rep.status}
+                        </p>
+                        <p className="text-slate-400 mt-0.5">
+                          Reason: {rep.reason || 'Reported by user'} ·{' '}
+                          {formatRelativeTime(rep.createdAt)}
+                        </p>
+                      </div>
+                      {rep.status !== 'resolved' && (
+                        <button
+                          onClick={() =>
+                            handleAdminAction('resolve_report', {
+                              reportId: rep.id,
+                            })
+                          }
+                          className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-semibold inline-flex items-center gap-1"
+                        >
+                          <Check className="w-3.5 h-3.5" /> Resolve
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Exclusive Admin Verification Manager: Select a User to Grant or Remove Verified Badge */}
+            <div className="bg-[#0B1021] border border-blue-500/30 rounded-3xl p-6 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <CheckCircle2 className="w-5 h-5 text-blue-400" />
+                    <span>
+                      Official Verification Authority (Only Prince Abba)
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Only you hold the Verified Badge by default. Select any user
+                    below to grant them the Verified Badge or remove it at any
+                    time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <select
+                  value={selectedVerifyUserId}
+                  onChange={(e) => setSelectedVerifyUserId(e.target.value)}
+                  className="flex-1 bg-[#070B17] border border-white/15 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">
+                    -- Select a user to grant or remove Verified Badge --
+                  </option>
+                  {adminData.users
+                    ?.filter(
+                      (u: UserProfile) =>
+                        u.id !== 'boost_bot_official' &&
+                        u.email?.trim().toLowerCase() !==
+                          'princeabba96@gmail.com'
+                    )
+                    .map((u: UserProfile) => (
+                      <option key={u.id} value={u.id}>
+                        {u.displayName} (@{u.username}) ·{' '}
+                        {u.isVerified ? '✓ VERIFIED' : 'Not Verified'}
+                      </option>
+                    ))}
+                </select>
+
+                <button
+                  type="button"
+                  disabled={!selectedVerifyUserId}
+                  onClick={() => {
+                    if (!selectedVerifyUserId) return;
+                    handleAdminAction('verify_user', {
+                      userId: selectedVerifyUserId,
+                    });
+                  }}
+                  className="px-4 py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Give Verified Badge</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={!selectedVerifyUserId}
+                  onClick={() => {
+                    if (!selectedVerifyUserId) return;
+                    handleAdminAction('unverify_user', {
+                      userId: selectedVerifyUserId,
+                    });
+                  }}
+                  className="px-4 py-3 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/35 disabled:opacity-40 text-rose-300 text-xs font-semibold inline-flex items-center justify-center gap-1.5 shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                  <span>Remove Verified Badge</span>
+                </button>
+              </div>
+            </div>
+
+            {/* User Management */}
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+              <h3 className="text-sm font-semibold text-white">
+                User & Creator Management ({adminData.users?.length || 0})
+              </h3>
+              <div className="space-y-2.5 max-h-80 overflow-y-auto">
+                {adminData.users?.map((u: UserProfile) => {
+                  const isOwnerRow =
+                    u.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
+                  return (
+                    <div
+                      key={u.id}
+                      className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <Avatar
+                          src={u.avatarUrl}
+                          name={u.displayName}
+                          size="sm"
+                        />
+                        <div>
+                          <p className="font-semibold text-white inline-flex items-center gap-1.5">
+                            <span>
+                              {u.displayName} (@{u.username})
+                            </span>
+                            {u.isVerified && (
+                              <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                            )}
+                          </p>
+                          <p className="text-slate-400">
+                            {u.email} · Role: {u.role}
+                            {u.isSuspended ? ' · SUSPENDED' : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {u.id !== 'boost_bot_official' && (
+                          <button
+                            onClick={() => {
+                              setBotTargetMode('user');
+                              setBotSelectedUserId(u.id);
+                              window.scrollTo({ top: 240, behavior: 'smooth' });
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-purple-600/20 text-purple-300 font-semibold"
+                          >
+                            Message User
+                          </button>
+                        )}
+                        {!isOwnerRow && (
+                          <button
+                            onClick={() =>
+                              handleAdminAction(
+                                u.isVerified ? 'unverify_user' : 'verify_user',
+                                {
+                                  userId: u.id,
+                                }
+                              )
+                            }
+                            className={`px-2.5 py-1.5 rounded-xl font-semibold ${
+                              u.isVerified
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-blue-600/20 text-blue-300'
+                            }`}
+                          >
+                            {u.isVerified
+                              ? 'Remove Verified'
+                              : 'Give Verified'}
+                          </button>
+                        )}
+                        <button
+                          onClick={() =>
+                            handleAdminAction('set_user_role', {
+                              userId: u.id,
+                              role: u.role === 'creator' ? 'user' : 'creator',
+                            })
+                          }
+                          className="px-2.5 py-1.5 rounded-xl bg-white/5 text-slate-200"
+                        >
+                          {u.role === 'creator' ? 'Set User' : 'Make Creator'}
+                        </button>
+                        {u.id !== profile.id && !isOwnerRow && (
+                          <button
+                            onClick={() =>
+                              handleAdminAction('toggle_suspend_user', {
+                                userId: u.id,
+                              })
+                            }
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 text-rose-300"
+                          >
+                            {u.isSuspended ? 'Unsuspend' : 'Suspend'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Post Moderation */}
+            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-6 space-y-4">
+              <h3 className="text-sm font-semibold text-white">
+                Post & Video Moderation ({adminData.posts?.length || 0})
+              </h3>
+              <div className="space-y-2.5 max-h-80 overflow-y-auto">
+                {adminData.posts?.map((p: any) => (
+                  <div
+                    key={p.id}
+                    className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-white truncate">
+                        #{p.id} [{p.postType}] {p.caption || 'No caption'}
+                      </p>
+                      <p className="text-slate-400">
+                        Views: {p.viewsCount} · Hidden: {p.isHidden ? 'Yes' : 'No'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() =>
+                          handleAdminAction('toggle_hide_post', {
+                            postId: p.id,
+                          })
+                        }
+                        className="px-2.5 py-1.5 rounded-xl bg-white/5 text-slate-200 inline-flex items-center gap-1"
+                      >
+                        <EyeOff className="w-3.5 h-3.5" />
+                        {p.isHidden ? 'Unhide' : 'Hide'}
+                      </button>
+                      <button
+                        onClick={() =>
+                          handleAdminAction('delete_post', { postId: p.id })
+                        }
+                        className="px-2.5 py-1.5 rounded-xl bg-rose-500/20 text-rose-300 inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Followers / Following Modal */}
+      {followModalType && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4 max-h-[75vh] flex flex-col">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-semibold text-white capitalize">
+                {followModalType}
+              </h3>
+              <button
+                onClick={() => setFollowModalType(null)}
+                className="min-h-[40px] min-w-[40px] flex items-center justify-center text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2.5">
+              {(followModalType === 'followers'
+                ? followLists.followers
+                : followLists.following
+              ).map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => {
+                    setFollowModalType(null);
+                    onSelectUser(u.id);
+                  }}
+                  className="w-full p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.06] flex items-center gap-3 text-left"
+                >
+                  <Avatar
+                    src={u.avatarUrl}
+                    name={u.displayName}
+                    size="sm"
+                  />
+                  <div>
+                    <p className="text-sm font-semibold text-white">
+                      {u.displayName}
+                    </p>
+                    <p className="text-xs text-slate-400">@{u.username}</p>
+                  </div>
+                </button>
+              ))}
+              {(followModalType === 'followers'
+                ? followLists.followers
+                : followLists.following
+              ).length === 0 && (
+                <p className="text-xs text-slate-500 text-center py-8">
+                  No users in this list yet.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
