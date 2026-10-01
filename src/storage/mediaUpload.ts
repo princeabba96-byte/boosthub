@@ -42,50 +42,86 @@ export async function compressImageFile(
 
 export async function generateVideoThumbnail(file: File): Promise<string> {
   return new Promise((resolve) => {
+    let settled = false;
     const video = document.createElement('video');
-    video.preload = 'metadata';
+    video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
     const objectUrl = URL.createObjectURL(file);
-    video.src = objectUrl;
 
-    const cleanup = () => {
+    const finish = (result: string) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
       URL.revokeObjectURL(objectUrl);
+      resolve(result);
     };
 
-    video.onloadeddata = () => {
-      video.currentTime = Math.min(1, video.duration / 4 || 0);
-    };
+    const timer = window.setTimeout(() => {
+      finish('');
+    }, 2000);
 
-    video.onseeked = () => {
+    const captureFrame = () => {
       try {
+        const vw = video.videoWidth || 480;
+        const vh = video.videoHeight || 854;
         const canvas = document.createElement('canvas');
-        canvas.width = Math.min(720, video.videoWidth || 480);
-        canvas.height = Math.min(
-          1280,
-          Math.round(
-            (canvas.width * (video.videoHeight || 854)) /
-              (video.videoWidth || 480)
-          )
-        );
+        canvas.width = Math.min(720, vw);
+        canvas.height = Math.min(1280, Math.round((canvas.width * vh) / vw));
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          cleanup();
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
-          return;
+          // Verify frame is not purely black
+          const sample = ctx.getImageData(
+            Math.floor(canvas.width / 2),
+            Math.floor(canvas.height / 2),
+            1,
+            1
+          ).data;
+          const cornerSample = ctx.getImageData(
+            Math.floor(canvas.width / 4),
+            Math.floor(canvas.height / 4),
+            1,
+            1
+          ).data;
+          const hasSignal =
+            sample[0] + sample[1] + sample[2] > 6 ||
+            cornerSample[0] + cornerSample[1] + cornerSample[2] > 6;
+          if (hasSignal) {
+            finish(canvas.toDataURL('image/jpeg', 0.82));
+            return;
+          }
         }
       } catch {
         // ignore
       }
-      cleanup();
-      resolve('');
+      finish('');
+    };
+
+    video.onloadedmetadata = () => {
+      const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+      const targetTime = Math.max(0.1, Math.min(1.0, dur * 0.15));
+      try {
+        video.currentTime = targetTime;
+      } catch {
+        captureFrame();
+      }
+    };
+
+    video.onseeked = () => {
+      captureFrame();
     };
 
     video.onerror = () => {
-      cleanup();
-      resolve('');
+      finish('');
     };
+
+    video.src = objectUrl;
+    try {
+      video.load();
+    } catch {
+      // ignore
+    }
   });
 }
 
@@ -121,48 +157,36 @@ async function uploadBlobToSupabaseStorage(
     .toString(36)
     .slice(2, 8)}-${safeName}`;
 
-  const targetBucketMap: Record<string, string> = {
-    avatars: 'avatars',
-    posts: 'posts-media',
-    videos: 'posts-media',
-    stories: 'stories-media',
-    thumbnails: 'posts-media',
-    communities: 'posts-media',
-    messages: 'posts-media',
-  };
-  const preferredBucket = targetBucketMap[logicalBucket] || 'posts-media';
-
-  // 1. Try preferred bucket (avatars / posts-media / stories-media)
-  const firstTry = await supabase.storage
-    .from(preferredBucket)
-    .upload(uniquePath, blob, {
-      contentType,
-      upsert: true,
-    });
-
-  if (!firstTry.error) {
-    const { data } = supabase.storage
-      .from(preferredBucket)
-      .getPublicUrl(uniquePath);
-    if (data?.publicUrl) return data.publicUrl;
+  // Upload directly to the guaranteed public `posts` bucket (or `avatars` for profile avatars)
+  // so files are uploaded in a single fast request without failing on non-existent buckets first.
+  if (logicalBucket === 'avatars') {
+    const avatarTry = await supabase.storage
+      .from('avatars')
+      .upload(uniquePath, blob, {
+        contentType,
+        upsert: true,
+      });
+    if (!avatarTry.error) {
+      const { data } = supabase.storage.from('avatars').getPublicUrl(uniquePath);
+      if (data?.publicUrl) return data.publicUrl;
+    }
   }
 
-  // 2. Fallback to guaranteed public `posts` bucket on user's Supabase
-  const fallbackPath = `${logicalBucket}/${uniquePath}`;
-  const secondTry = await supabase.storage
+  const storagePath = `${logicalBucket}/${uniquePath}`;
+  const uploadRes = await supabase.storage
     .from('posts')
-    .upload(fallbackPath, blob, {
+    .upload(storagePath, blob, {
       contentType,
       upsert: true,
     });
 
-  if (secondTry.error) {
+  if (uploadRes.error) {
     throw new Error(
-      `Supabase storage upload failed: ${secondTry.error.message}`
+      `Supabase storage upload failed: ${uploadRes.error.message}`
     );
   }
 
-  const { data } = supabase.storage.from('posts').getPublicUrl(fallbackPath);
+  const { data } = supabase.storage.from('posts').getPublicUrl(storagePath);
   return data.publicUrl;
 }
 
@@ -190,12 +214,31 @@ export async function uploadMediaWithProgress(
 
   const isImage = file.type.startsWith('image/');
   const isVideo = file.type.startsWith('video/');
-  if (!isImage && !isVideo) {
-    throw new Error('Only image and video files are supported.');
+  const isAudio =
+    file.type.startsWith('audio/') ||
+    /\.(wav|mp3|ogg|m4a|aac|webm)$/i.test(file.name);
+  if (!isImage && !isVideo && !isAudio) {
+    throw new Error('Only image, video, and audio files are supported.');
   }
 
   onProgress?.(15);
   let thumbnailUrl = '';
+
+  if (isAudio) {
+    onProgress?.(45);
+    const audioUrl = await uploadBlobToSupabaseStorage(
+      bucket,
+      file.name,
+      file,
+      file.type || 'audio/wav'
+    );
+    onProgress?.(100);
+    return {
+      url: audioUrl,
+      thumbnailUrl: '',
+      mimeType: file.type || 'audio/wav',
+    };
+  }
 
   if (isImage) {
     const compressedDataUrl = await compressImageFile(

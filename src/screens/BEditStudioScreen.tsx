@@ -62,13 +62,20 @@ import {
   BEDIT_VOICE_CATEGORIES,
   BEDIT_VOICE_PRESETS,
   BEditVoiceCategory,
+  IGBO_REGIONAL_DIALECTS,
+  IgboDiagnosticSuiteReport,
+  IgboRegionalDialect,
+  analyzeIgboPhoneticsAndFluency,
+  applyIgboRegionalDialectVariant,
   cleanEnglishRemovePidginClient,
   decodeMediaToAudioBuffer,
   extractAudioFromVideoSource,
+  getIgboDialectProfile,
   getLanguageCodeForDialect,
   getVoicePresetById,
   renderVoiceChangedAudio,
   renderRealisticAiVoiceChangedAudio,
+  runIgboTranslationDiagnostics,
   translateEnglishToNigerianLanguageClient,
 } from '../components/bEditVoiceEngine';
 import { BEditStudioStageAndTimeline } from '../components/BEditStudioStageAndTimeline';
@@ -145,6 +152,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [activeDialectLabel, setActiveDialectLabel] = useState('Igbo');
   const [activeLangCode, setActiveLangCode] = useState('ig-NG');
   const [voiceStatusMessage, setVoiceStatusMessage] = useState('');
+
+  // Igbo Translation & Voice Diagnostics Debug Panel state
+  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
+  const [selectedIgboDialect, setSelectedIgboDialect] =
+    useState<IgboRegionalDialect>('anambra_izugbe');
+  const [igboDiagnosticReport, setIgboDiagnosticReport] =
+    useState<IgboDiagnosticSuiteReport | null>(null);
+  const [runningDiagnostics, setRunningDiagnostics] = useState(false);
+  const [customDiagnosticPhrase, setCustomDiagnosticPhrase] = useState('');
+  const [customDiagnosticList, setCustomDiagnosticList] = useState<string[]>([]);
+  const [livePreviewIgboText, setLivePreviewIgboText] = useState(
+    'Ana m, aga ahịa, ịzụta nri'
+  );
 
   // Project State + Undo/Redo History Stack
   const [project, setProject] = useState<BEditProjectState>(() =>
@@ -329,8 +349,11 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     totalDuration,
   ]);
 
-  // Clean up audio preview on unmount
+  // Clean up audio preview on unmount & run initial Igbo Translation Diagnostics
   useEffect(() => {
+    runIgboTranslationDiagnostics([], selectedIgboDialect).then((report) => {
+      setIgboDiagnosticReport(report);
+    });
     return () => {
       if (synthTimerRef.current) window.clearInterval(synthTimerRef.current);
       if (reverseTimerRef.current) window.clearInterval(reverseTimerRef.current);
@@ -342,6 +365,69 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       }
     };
   }, []);
+
+  // Update real-time Igbo translation & phonetic preview whenever customDiagnosticPhrase, voiceTranscriptText, or dialect changes
+  useEffect(() => {
+    const rawPhrase =
+      customDiagnosticPhrase.trim() ||
+      voiceTranscriptText.trim() ||
+      'I am going to the market to buy some foodstuff';
+    let cancelled = false;
+    translateEnglishToNigerianLanguageClient(rawPhrase, 'Igbo').then((igbo) => {
+      if (!cancelled) {
+        setLivePreviewIgboText(
+          applyIgboRegionalDialectVariant(igbo, selectedIgboDialect)
+        );
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [customDiagnosticPhrase, voiceTranscriptText, selectedIgboDialect]);
+
+  const handleSelectIgboRegionalDialect = async (
+    nextDialect: IgboRegionalDialect
+  ) => {
+    setSelectedIgboDialect(nextDialect);
+    const report = await runIgboTranslationDiagnostics(
+      customDiagnosticList,
+      nextDialect
+    );
+    setIgboDiagnosticReport(report);
+    if (translatedDialectText && activeDialectLabel.toLowerCase().includes('igbo')) {
+      setTranslatedDialectText(
+        applyIgboRegionalDialectVariant(translatedDialectText, nextDialect)
+      );
+    }
+  };
+
+  const handleRunIgboDiagnosticsSuite = async (
+    extraPhrase?: string,
+    overrideDialect?: IgboRegionalDialect
+  ) => {
+    setRunningDiagnostics(true);
+    try {
+      const targetDialect = overrideDialect || selectedIgboDialect;
+      const nextCustom = extraPhrase?.trim()
+        ? [...customDiagnosticList, extraPhrase.trim()]
+        : customDiagnosticList;
+      if (extraPhrase?.trim()) {
+        setCustomDiagnosticList(nextCustom);
+        setCustomDiagnosticPhrase('');
+      }
+      const report = await runIgboTranslationDiagnostics(
+        nextCustom,
+        targetDialect
+      );
+      setIgboDiagnosticReport(report);
+      showToast(
+        `Igbo Diagnostics (${report.dialectProfile.shortLabel}): ${report.passedTests}/${report.totalTests} passed · Fluency ${report.averageFluencyScore}%`,
+        report.allPassed ? 'success' : 'info'
+      );
+    } finally {
+      setRunningDiagnostics(false);
+    }
+  };
 
   const triggerTransitionPreview = (
     type: StudioTransitionType,
@@ -1012,9 +1098,12 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       setIsVoicePreviewing(false);
       return;
     }
+    if (el.src !== project.voiceoverAudioUrl) {
+      el.src = project.voiceoverAudioUrl;
+    }
     el.currentTime = 0;
     (el as any).preservesPitch = true;
-    el.playbackRate = activeLangCode === 'ig-NG' ? 0.85 : 1.0;
+    el.playbackRate = 1.0;
     el.volume = Math.max(0, Math.min(1, (project.voiceoverVolume ?? 100) / 100));
     setIsVoicePreviewing(true);
     el.onended = () => setIsVoicePreviewing(false);
@@ -1033,8 +1122,8 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     setApplyingVoiceBusy(true);
     setVoiceStatusMessage(
       targetLang !== 'English'
-        ? `Downloading ${targetLang} voice (${langCode})...`
-        : `Generating realistic ${preset.name} voice...`
+        ? `Translating to fluent ${targetLang} (${langCode}) & generating real voice...`
+        : `Generating ${preset.name} (${preset.badge}) voice...`
     );
 
     try {
@@ -1044,23 +1133,48 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       // If no buffer cached yet, decode from voiceoverRawUrl, customAudioUrl, or active video clip!
       if (!sourceBuf) {
         if (project.voiceoverRawUrl) {
-          sourceBuf = await decodeMediaToAudioBuffer(project.voiceoverRawUrl);
-          rawVoiceBufferRef.current = sourceBuf;
+          try {
+            sourceBuf = await decodeMediaToAudioBuffer(project.voiceoverRawUrl);
+            rawVoiceBufferRef.current = sourceBuf;
+          } catch {
+            // ignore
+          }
         } else if (project.customAudioUrl) {
-          sourceBuf = await decodeMediaToAudioBuffer(project.customAudioUrl);
-          extractedAudioBufferRef.current = sourceBuf;
+          try {
+            sourceBuf = await decodeMediaToAudioBuffer(project.customAudioUrl);
+            extractedAudioBufferRef.current = sourceBuf;
+          } catch {
+            // ignore
+          }
         } else if (activeClip?.type === 'video' && activeClip.url) {
-          const rawFile = clipFilesMapRef.current.get(activeClip.url);
-          sourceBuf = await decodeMediaToAudioBuffer(rawFile || activeClip.url);
-          rawVoiceBufferRef.current = sourceBuf;
+          try {
+            const rawFile = clipFilesMapRef.current.get(activeClip.url);
+            sourceBuf = await decodeMediaToAudioBuffer(rawFile || activeClip.url);
+            rawVoiceBufferRef.current = sourceBuf;
+          } catch {
+            // ignore
+          }
         }
       }
 
-      const rawInputText =
+      let rawInputText =
         (overrideEnglishInput !== undefined
           ? overrideEnglishInput
           : voiceTranscriptText
         ).trim() || recordedTranscriptHintRef.current;
+
+      // If user tapped any voice preset (e.g., Helium Laugh, Chipmunk, Igbo, Hausa, Yoruba, Pidgin, Robot)
+      // without recording a mic cover or typing text first, supply an expressive sample phrase so it works immediately!
+      if (!sourceBuf && !rawInputText) {
+        rawInputText =
+          preset.id === 'helium_balloon'
+            ? 'Haha! Hee-hee! Listen to my hilarious Helium Laugh voice on BoostHub!'
+            : preset.category === 'Comedy'
+              ? `Haha! Check out my funny ${preset.name} voice in B-Edit Studio!`
+              : preset.category === 'Nigerian'
+                ? 'I am going to the market to buy some foodstuff'
+                : `Hello my friends, welcome to BoostHub B-Edit Studio with ${preset.name}!`;
+      }
 
       // PRE-PROCESS: Clean the English & remove pidgin before translating
       const effectiveEnglishText = cleanEnglishRemovePidginClient(rawInputText);
@@ -1074,18 +1188,6 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         ).then((quickTrans) => {
           if (quickTrans) setTranslatedDialectText(quickTrans);
         });
-      }
-
-      if (!sourceBuf && !effectiveEnglishText) {
-        updateProjectWithHistory((prev) => ({
-          ...prev,
-          voicePresetId: preset.id,
-        }));
-        showToast(
-          `Selected "${preset.name}" (${langCode})! Record a Voice Cover in English (or type/tap a phrase below) to translate & hear it.`,
-          'info'
-        );
-        return;
       }
 
       const rendered = await renderRealisticAiVoiceChangedAudio(
@@ -1119,14 +1221,13 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
             : prev.clips,
       }));
 
-      // Automatically play the real translated Nigerian voice audio (0.8x slower rate for Igbo tones)
+      // Automatically play the real translated Nigerian / Comedy / FX voice audio fluently
       window.setTimeout(() => {
         if (voiceoverAudioRef.current) {
           voiceoverAudioRef.current.src = rendered.wavUrl;
           voiceoverAudioRef.current.currentTime = 0;
           (voiceoverAudioRef.current as any).preservesPitch = true;
-          voiceoverAudioRef.current.playbackRate =
-            (rendered.langCode || langCode) === 'ig-NG' ? 0.85 : 1.0;
+          voiceoverAudioRef.current.playbackRate = 1.0;
           voiceoverAudioRef.current.volume = Math.max(
             0,
             Math.min(1, (project.voiceoverVolume ?? 100) / 100)
@@ -1135,14 +1236,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           voiceoverAudioRef.current.onended = () => setIsVoicePreviewing(false);
           voiceoverAudioRef.current.play().catch(() => setIsVoicePreviewing(false));
         }
-      }, 60);
+      }, 40);
 
       showToast(
         targetLang !== 'English'
-          ? `Translated to real ${targetLang} (${langCode}): "${
+          ? `Fluent ${targetLang} (${langCode}): "${
               rendered.translatedText || ''
             }"`
-          : `Applied realistic "${preset.name}" voice!`,
+          : `Playing "${preset.name}" (${preset.badge})!`,
         'success'
       );
     } catch {
@@ -1151,7 +1252,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         voicePresetId: preset.id,
       }));
       showToast(
-        `Set "${preset.name}". Record a Voice Cover or enter English text to translate & hear it!`,
+        `Set "${preset.name}". Tap Replay or enter text below to hear it!`,
         'info'
       );
     } finally {
@@ -1529,22 +1630,20 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }}
         className="hidden"
       />
-      {project.customAudioUrl && (
-        <audio
-          ref={customAudioRef}
-          src={project.customAudioUrl}
-          className="hidden"
-        />
-      )}
-      {project.voiceoverAudioUrl && (
-        <audio
-          ref={voiceoverAudioRef}
-          src={project.voiceoverAudioUrl}
-          className="hidden"
-        />
-      )}
+      <audio
+        ref={customAudioRef}
+        src={project.customAudioUrl || undefined}
+        preload="auto"
+        className="hidden"
+      />
+      <audio
+        ref={voiceoverAudioRef}
+        src={project.voiceoverAudioUrl || undefined}
+        preload="auto"
+        className="hidden"
+      />
 
-      {/* TOP STUDIO HEADER BAR: Back, Title, Undo/Redo, Save/Projects, Export */}
+      {/* TOP STUDIO HEADER BAR: Back, Title, Undo/Redo, Debug Toggle, Save/Projects, Export */}
       <div className="flex items-center justify-between gap-2 bg-[#121626] border border-white/10 rounded-2xl px-3 py-2.5 shadow-lg">
         <div className="flex items-center gap-2 min-w-0">
           <button
@@ -1567,6 +1666,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setDebugPanelOpen((prev) => !prev)}
+            className={`px-2.5 h-9 rounded-xl text-[11px] font-extrabold inline-flex items-center gap-1 border transition-colors ${
+              debugPanelOpen
+                ? 'bg-emerald-600/25 border-emerald-400 text-emerald-300'
+                : 'bg-white/5 border-white/10 text-slate-300 hover:text-white'
+            }`}
+            title="Toggle Igbo Translation & Voice Diagnostics Debug Panel"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Debug</span>
+          </button>
           <button
             type="button"
             onClick={handleUndo}
@@ -1608,6 +1720,498 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           </button>
         </div>
       </div>
+
+      {/* B-EDIT STUDIO IGBO TRANSLATION & VOICE DIAGNOSTICS DEBUG PANEL */}
+      {debugPanelOpen && igboDiagnosticReport && (() => {
+        const liveAnalysis = analyzeIgboPhoneticsAndFluency(
+          livePreviewIgboText,
+          selectedIgboDialect
+        );
+        const activeDialectMeta = getIgboDialectProfile(selectedIgboDialect);
+        return (
+          <div className="bg-[#0B1222] border border-emerald-500/40 rounded-2xl p-3.5 space-y-3 shadow-xl">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-extrabold text-emerald-300 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>
+                      B-Edit Studio Debug Panel: Real-Time Igbo Fluency & Phonetic Diagnostics
+                    </span>
+                  </span>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
+                      igboDiagnosticReport.allPassed
+                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                        : 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                    }`}
+                  >
+                    {igboDiagnosticReport.passedTests}/{igboDiagnosticReport.totalTests} PASSED ·{' '}
+                    {igboDiagnosticReport.averageFluencyScore}% FLUENCY ·{' '}
+                    {igboDiagnosticReport.voiceRate}x CADENCE
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Region: <span className="text-emerald-300 font-semibold">{activeDialectMeta.name}</span> ({activeDialectMeta.region}) — {activeDialectMeta.cadenceNotes}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={runningDiagnostics}
+                  onClick={() => handleRunIgboDiagnosticsSuite()}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-extrabold"
+                >
+                  {runningDiagnostics ? 'Running...' : 'Re-Run & Log to Console'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDebugPanelOpen(false)}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white"
+                  title="Minimize Debug Panel"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Regional Igbo Dialect Selector & Real-Time Fluency Score Gauges */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Regional Dialect Selector */}
+              <div className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                    🗺️ Regional Igbo Dialect & Natural Cadence:
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {activeDialectMeta.voiceRate}x · {activeDialectMeta.pauseMs}ms pause
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {IGBO_REGIONAL_DIALECTS.map((d) => {
+                    const active = selectedIgboDialect === d.id;
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => handleSelectIgboRegionalDialect(d.id)}
+                        className={`px-2 py-1.5 rounded-lg text-left border transition-all ${
+                          active
+                            ? 'bg-emerald-600/25 border-emerald-400 text-white shadow'
+                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:border-emerald-400/40'
+                        }`}
+                      >
+                        <div className="text-[10px] font-extrabold truncate">
+                          {d.shortLabel}
+                        </div>
+                        <div className="text-[9px] text-slate-400 truncate">
+                          {d.region}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Real-Time Suite Fluency Score Breakdown */}
+              <div className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300">
+                    📊 Real-Time Igbo Fluency Scores:
+                  </span>
+                  <span className="text-[10px] font-extrabold text-emerald-300">
+                    {igboDiagnosticReport.averageFluencyScore}% Native Fluent
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div>
+                    <div className="flex justify-between text-slate-300 mb-0.5">
+                      <span>Overall Fluency</span>
+                      <span className="font-mono font-bold text-emerald-300">
+                        {igboDiagnosticReport.averageFluencyScore}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        style={{ width: `${igboDiagnosticReport.averageFluencyScore}%` }}
+                        className="h-full bg-emerald-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-slate-300 mb-0.5">
+                      <span>Subdot & Harmony</span>
+                      <span className="font-mono font-bold text-cyan-300">
+                        {igboDiagnosticReport.averageOrthographyScore}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        style={{ width: `${igboDiagnosticReport.averageOrthographyScore}%` }}
+                        className="h-full bg-cyan-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-slate-300 mb-0.5">
+                      <span>Tonal Cadence</span>
+                      <span className="font-mono font-bold text-purple-300">
+                        {igboDiagnosticReport.averageTonalCadenceScore}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        style={{ width: `${igboDiagnosticReport.averageTonalCadenceScore}%` }}
+                        className="h-full bg-purple-400"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex justify-between text-slate-300 mb-0.5">
+                      <span>Dialect Fidelity</span>
+                      <span className="font-mono font-bold text-amber-300">
+                        {igboDiagnosticReport.averageDialectFidelityScore}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
+                      <div
+                        style={{ width: `${igboDiagnosticReport.averageDialectFidelityScore}%` }}
+                        className="h-full bg-amber-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Live Real-Time Phonetic & Tonal Inspector for Active/Typed Phrase */}
+            <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#070B16] to-purple-950/30 border border-emerald-500/30 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
+                    🔬 Live Phonetic & Tonal Cadence Breakdown ({activeDialectMeta.shortLabel}):
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-extrabold">
+                    {liveAnalysis.fluencyMetrics.overallFluencyScore}% ·{' '}
+                    {liveAnalysis.fluencyMetrics.cadenceRatingLabel}
+                  </span>
+                </div>
+                <span className="text-[10px] font-mono text-slate-400">
+                  {liveAnalysis.phoneticBreakdown.syllableCount} syllables ·{' '}
+                  {liveAnalysis.phoneticBreakdown.pauseCount} breath pause(s) · ~
+                  {liveAnalysis.phoneticBreakdown.estimatedDurationSec}s
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                <div className="p-2 rounded-lg bg-black/50 border border-white/10">
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                    Syllable Cadence & Breath Pauses:
+                  </span>
+                  <span className="font-mono text-emerald-200 font-bold break-words">
+                    {liveAnalysis.phoneticBreakdown.syllableCadenceGuide}
+                  </span>
+                </div>
+                <div className="p-2 rounded-lg bg-black/50 border border-white/10">
+                  <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                    IPA Transcription & Tone Contour (H=High, L=Low):
+                  </span>
+                  <span className="font-mono text-cyan-200 font-semibold block break-words">
+                    {liveAnalysis.phoneticBreakdown.ipaTranscription}
+                  </span>
+                  <span className="font-mono text-[10px] text-purple-300">
+                    Tones: {liveAnalysis.phoneticBreakdown.toneContourSummary}
+                  </span>
+                </div>
+              </div>
+
+              {/* Word-by-Word Phonetic Chips */}
+              <div className="flex flex-wrap gap-1.5">
+                {liveAnalysis.phoneticBreakdown.wordTokens.map((tok, idx) => (
+                  <div
+                    key={`${tok.word}_${idx}`}
+                    title={tok.toneNote}
+                    className="px-2 py-1 rounded-lg bg-[#0B1325] border border-white/10 text-[10px] flex flex-col"
+                  >
+                    <div className="flex items-center gap-1">
+                      <span className="font-extrabold text-white">
+                        {tok.word}
+                        {tok.hasCommaPauseAfter ? ',' : ''}
+                      </span>
+                      <span className="px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[9px] font-bold">
+                        {tok.tonePattern}
+                      </span>
+                    </div>
+                    <span className="font-mono text-[9px] text-emerald-300">
+                      {tok.syllables} ({tok.phoneticRespelling})
+                    </span>
+                    <span className="font-mono text-[9px] text-slate-400">
+                      /{tok.ipa}/
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* One-Tap Live Voice Verification Bar (Fluent Nigerian Languages + Helium Laugh & Comedy FX) */}
+            <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-300">
+                  🔊 One-Tap Fluent Nigerian & Comedy Voice Test (Instant Audio):
+                </span>
+                {applyingVoiceBusy && (
+                  <span className="text-[10px] font-bold text-amber-300 animate-pulse">
+                    {voiceStatusMessage || 'Synthesizing voice...'}
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'I am going to the market to buy some foodstuff';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('igbo_language_male', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/40 text-emerald-200 text-[11px] font-extrabold"
+                >
+                  🇳🇬 Speak Fluent Igbo (Market)
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'I hope you buy cheap before I come back';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('igbo_language_female', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/40 text-emerald-200 text-[11px] font-extrabold"
+                >
+                  🇳🇬 Speak Fluent Igbo (Buy Cheap)
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'I am going to the market to buy some foodstuff';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('hausa_language_male', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-blue-600/25 hover:bg-blue-600/40 border border-blue-400/40 text-blue-200 text-[11px] font-extrabold"
+                >
+                  🇳🇬 Speak Fluent Hausa
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'I am going to the market to buy some foodstuff';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('yoruba_language_male', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-indigo-600/25 hover:bg-indigo-600/40 border border-indigo-400/40 text-indigo-200 text-[11px] font-extrabold"
+                >
+                  🇳🇬 Speak Fluent Yoruba
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'I wan go market go buy foodstuff';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('naija_pidgin_male', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-cyan-600/25 hover:bg-cyan-600/40 border border-cyan-400/40 text-cyan-200 text-[11px] font-extrabold"
+                >
+                  🇳🇬 Speak Fluent Pidgin
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase =
+                      'Haha! Hee-hee! Listen to my hilarious Helium Laugh voice on BoostHub!';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('helium_balloon', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-pink-600/30 hover:bg-pink-600/45 border border-pink-400/50 text-pink-200 text-[11px] font-extrabold"
+                >
+                  😂 Test Helium Laugh Voice
+                </button>
+                <button
+                  type="button"
+                  disabled={applyingVoiceBusy}
+                  onClick={() => {
+                    setActiveBottomTab('audio');
+                    setAudioSubMode('voice_changer');
+                    const phrase = 'Hello my friends, check out my Chipmunk Comedy voice!';
+                    setVoiceTranscriptText(phrase);
+                    handleApplyVoicePreset('chipmunk_turbo', phrase);
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 text-amber-200 text-[11px] font-extrabold"
+                >
+                  🐿️ Test Chipmunk Voice
+                </button>
+              </div>
+            </div>
+
+            {/* Diagnostic Test Results List with Real-Time Fluency & Phonetic Breakdown */}
+            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
+              {igboDiagnosticReport.results.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
+                          item.passed
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                        }`}
+                      >
+                        {item.passed ? 'PASS ✅' : 'CHECK ⚠️'}
+                      </span>
+                      <span className="text-xs font-extrabold text-white">
+                        {item.label}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-[10px] font-extrabold text-emerald-300">
+                        Fluency: {item.fluencyMetrics.overallFluencyScore}% ({item.fluencyMetrics.cadenceRatingLabel})
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {item.wordCount}w · {item.phoneticBreakdown.syllableCount}syl · ~{item.phoneticBreakdown.estimatedDurationSec}s · {item.toneFormatting.voiceRate}x
+                      </span>
+                      <button
+                        type="button"
+                        disabled={applyingVoiceBusy}
+                        onClick={() => {
+                          setVoiceTranscriptText(item.preProcessedEnglish);
+                          setTranslatedDialectText(item.actualIgbo);
+                          setLivePreviewIgboText(item.actualIgbo);
+                          handleApplyVoicePreset(
+                            'igbo_language_male',
+                            item.preProcessedEnglish
+                          );
+                        }}
+                        className="px-2 py-0.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[10px] font-extrabold inline-flex items-center gap-1"
+                      >
+                        <Volume2 className="w-3 h-3" />
+                        <span>Speak Igbo</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3-Step Translation Pipeline */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[11px]">
+                    <div className="p-1.5 rounded-lg bg-white/[0.03] border border-white/5">
+                      <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                        1. Raw Input (English/Pidgin):
+                      </span>
+                      <span className="text-slate-200 font-medium">
+                        "{item.inputRaw}"
+                      </span>
+                    </div>
+                    <div className="p-1.5 rounded-lg bg-blue-950/25 border border-blue-500/20">
+                      <span className="text-[9px] uppercase font-bold text-blue-300 block">
+                        2. Pre-Processed English:
+                      </span>
+                      <span className="text-blue-100 font-semibold">
+                        "{item.preProcessedEnglish}"
+                      </span>
+                    </div>
+                    <div className="p-1.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
+                      <span className="text-[9px] uppercase font-bold text-emerald-300 block">
+                        3. {item.dialectLabel} Output:
+                      </span>
+                      <span className="text-emerald-200 font-extrabold">
+                        "{item.actualIgbo}"
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Phonetic Breakdown & Tonal Cadence Strip */}
+                  <div className="p-2 rounded-lg bg-black/50 border border-white/5 space-y-1 text-[10px]">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="font-mono text-emerald-300 font-semibold">
+                        <span className="text-slate-400 uppercase font-sans font-bold mr-1">
+                          Cadence:
+                        </span>
+                        {item.phoneticBreakdown.syllableCadenceGuide}
+                      </span>
+                      <span className="font-mono text-purple-300">
+                        Tones: {item.phoneticBreakdown.toneContourSummary}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-cyan-200/90 font-mono">
+                      <span>IPA: {item.phoneticBreakdown.ipaTranscription}</span>
+                      <span className="text-slate-400">
+                        Pronounce: "{item.phoneticBreakdown.speechFriendlyPhonetic}"
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Fluency Sub-Scores + Spelling Verification Badges */}
+                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
+                      Subdots/Harmony: {item.fluencyMetrics.orthographySubdotScore}%
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                      Tonal Cadence: {item.fluencyMetrics.tonalCadenceScore}%
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                      Dialect Fidelity: {item.fluencyMetrics.dialectFidelityScore}%
+                    </span>
+                    {item.spellingChecks.details.map((det, idx) => (
+                      <span
+                        key={idx}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                      >
+                        {det}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Custom Phrase Real-Time Diagnostic Runner */}
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                value={customDiagnosticPhrase}
+                onChange={(e) => setCustomDiagnosticPhrase(e.target.value)}
+                placeholder='Type any English/Pidgin phrase for real-time Igbo phonetic & fluency analysis...'
+                className="flex-1 bg-[#070B16] border border-white/15 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-400"
+              />
+              <button
+                type="button"
+                disabled={runningDiagnostics || !customDiagnosticPhrase.trim()}
+                onClick={() => handleRunIgboDiagnosticsSuite(customDiagnosticPhrase)}
+                className="px-3 py-1.5 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] disabled:opacity-40 text-white text-xs font-extrabold shrink-0"
+              >
+                + Add & Log Test
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {uploadingClipPct !== null && (
         <div className="px-3 py-2 rounded-xl bg-blue-950/60 border border-blue-500/30 flex items-center justify-between text-xs text-blue-200">

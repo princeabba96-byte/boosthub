@@ -54,6 +54,9 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
   );
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const uploadPromiseRef = useRef<Promise<{ url: string; thumbnailUrl?: string } | null> | null>(null);
+  const uploadedRemoteUrlRef = useRef<string>('');
+  const uploadedThumbUrlRef = useRef<string>('');
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const studioVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -61,45 +64,62 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
   const startMediaUpload = async (file: File) => {
     setSelectedFile(file);
     setUploadError('');
+
+    const isVid = file.type.startsWith('video/');
+    if (isVid && postType === 'photo') {
+      setPostType('capshot');
+    } else if (!isVid && (postType === 'video' || postType === 'capshot')) {
+      setPostType('photo');
+    }
+
+    // Immediately load local blob URL into StudioMediaEditor (0ms wait time!)
+    const localPreviewUrl = URL.createObjectURL(file);
+    uploadedRemoteUrlRef.current = '';
+    uploadedThumbUrlRef.current = '';
+    setMediaUrl(localPreviewUrl);
+    setThumbnailUrl('');
+    setStudioConfig((prev) => ({
+      ...DEFAULT_STUDIO_CONFIG,
+      stickers: prev.stickers,
+      texts: prev.texts,
+    }));
+    showToast('Media ready for editing!', 'success');
+
+    // Upload to cloud storage silently in the background
     setUploading(true);
-    setUploadProgress(5);
+    setUploadProgress(10);
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    try {
-      const isVid = file.type.startsWith('video/');
-      if (isVid && postType === 'photo') {
-        setPostType('capshot');
-      } else if (!isVid && (postType === 'video' || postType === 'capshot')) {
-        setPostType('photo');
+    const bgPromise = (async () => {
+      try {
+        const uploaded = await uploadMediaWithProgress(
+          file,
+          isVid ? 'videos' : 'posts',
+          (pct) => setUploadProgress(pct),
+          controller.signal
+        );
+        uploadedRemoteUrlRef.current = uploaded.url;
+        uploadedThumbUrlRef.current = uploaded.thumbnailUrl || '';
+        setThumbnailUrl(uploaded.thumbnailUrl || '');
+        return uploaded;
+      } catch (err: any) {
+        setUploadError(err.message || 'Cloud sync failed. Tap Retry before publishing.');
+        return null;
+      } finally {
+        setUploading(false);
+        abortControllerRef.current = null;
       }
+    })();
 
-      const uploaded = await uploadMediaWithProgress(
-        file,
-        isVid ? 'videos' : 'posts',
-        (pct) => setUploadProgress(pct),
-        controller.signal
-      );
-
-      setMediaUrl(uploaded.url);
-      setThumbnailUrl(uploaded.thumbnailUrl || '');
-      setStudioConfig((prev) => ({
-        ...DEFAULT_STUDIO_CONFIG,
-        stickers: prev.stickers,
-        texts: prev.texts,
-      }));
-      showToast('Media loaded into Studio Editor!', 'success');
-    } catch (err: any) {
-      setUploadError(err.message || 'Upload failed. Please retry.');
-    } finally {
-      setUploading(false);
-      abortControllerRef.current = null;
-    }
+    uploadPromiseRef.current = bgPromise;
+    await bgPromise;
   };
 
   const handleCancelUpload = () => {
     abortControllerRef.current?.abort();
+    uploadPromiseRef.current = null;
     setUploading(false);
     setUploadProgress(0);
     setUploadError('Upload cancelled by user.');
@@ -107,7 +127,7 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
 
   const handleRetryUpload = () => {
     if (selectedFile) {
-      startMediaUpload(selectedFile);
+      void startMediaUpload(selectedFile);
     }
   };
 
@@ -146,11 +166,36 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
     setPublishing(true);
     try {
       let finalPostType = postType;
-      let finalMediaUrl = mediaUrl;
-      let finalThumbnailUrl = thumbnailUrl;
+      let resolvedBaseMediaUrl = uploadedRemoteUrlRef.current || mediaUrl;
+      let finalThumbnailUrl = uploadedThumbUrlRef.current || thumbnailUrl;
 
-      if (isVideoMode && mediaUrl) {
-        finalMediaUrl = encodeStudioUrlHash(mediaUrl, studioConfig, true);
+      // If background upload is still running or hasn't completed yet, await or finish it now
+      if (uploadPromiseRef.current) {
+        const bgResult = await uploadPromiseRef.current;
+        if (bgResult?.url) {
+          resolvedBaseMediaUrl = bgResult.url;
+          finalThumbnailUrl = bgResult.thumbnailUrl || finalThumbnailUrl;
+        }
+      }
+      if (
+        selectedFile &&
+        (!resolvedBaseMediaUrl || resolvedBaseMediaUrl.startsWith('blob:'))
+      ) {
+        const uploadedNow = await uploadMediaWithProgress(
+          selectedFile,
+          isVideoMode ? 'videos' : 'posts',
+          (pct) => setUploadProgress(pct)
+        );
+        resolvedBaseMediaUrl = uploadedNow.url;
+        finalThumbnailUrl = uploadedNow.thumbnailUrl || finalThumbnailUrl;
+        uploadedRemoteUrlRef.current = uploadedNow.url;
+        uploadedThumbUrlRef.current = uploadedNow.thumbnailUrl || '';
+      }
+
+      let finalMediaUrl = resolvedBaseMediaUrl;
+
+      if (isVideoMode && resolvedBaseMediaUrl) {
+        finalMediaUrl = encodeStudioUrlHash(resolvedBaseMediaUrl, studioConfig, true);
         if (hasVisualEdits) {
           const thumbFile = await renderStudioCompositeToFile(
             mediaUrl.split('#')[0],

@@ -10,6 +10,11 @@ import {
   Search,
   ArrowLeft,
   BadgeCheck,
+  Mic,
+  Square,
+  Play,
+  Pause,
+  Volume2,
 } from 'lucide-react';
 import {
   ConversationSummary,
@@ -18,6 +23,10 @@ import {
 } from '../types';
 import { apiFetch } from '../services/api';
 import { uploadMediaWithProgress } from '../storage/mediaUpload';
+import {
+  decodeMediaToAudioBuffer,
+  encodeAudioBufferToWavBlob,
+} from './bEditVoiceEngine';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from './Avatar';
 import { formatRelativeTime } from '../utils/format';
@@ -28,6 +37,144 @@ interface MessagesModalProps {
 }
 
 const QUICK_EMOJIS = ['❤️', '🔥', '😂', '👏', '🚀', '🎉', '🙌', '💯'];
+
+const VoiceNoteBubblePlayer: React.FC<{
+  src: string;
+  label?: string;
+  isMine: boolean;
+}> = ({ src, label, isMine }) => {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [speed, setSpeed] = useState<1 | 1.5 | 2>(1);
+
+  const formatSec = (s: number) => {
+    if (!Number.isFinite(s) || s < 0) return '0:00';
+    const mins = Math.floor(s / 60);
+    const secs = Math.floor(s % 60);
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  const togglePlay = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playing) {
+      el.pause();
+      setPlaying(false);
+    } else {
+      el.playbackRate = speed;
+      el.play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false));
+    }
+  };
+
+  const cycleSpeed = () => {
+    const next: 1 | 1.5 | 2 = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    setSpeed(next);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = next;
+    }
+  };
+
+  const progressPct =
+    duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+
+  const waveBars = [35, 65, 45, 85, 55, 95, 70, 40, 80, 60, 90, 50, 75, 45, 85, 60, 40, 70];
+
+  return (
+    <div
+      className={`my-1.5 p-2.5 rounded-2xl flex items-center gap-2.5 min-w-[210px] sm:min-w-[240px] ${
+        isMine
+          ? 'bg-blue-700/60 border border-blue-300/25'
+          : 'bg-black/35 border border-white/15'
+      }`}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setDuration(d);
+        }}
+        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onEnded={() => {
+          setPlaying(false);
+          setCurrentTime(0);
+        }}
+        onPause={() => setPlaying(false)}
+      />
+
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 shadow transition-transform active:scale-95 ${
+          isMine
+            ? 'bg-white text-blue-600'
+            : 'bg-blue-600 text-white'
+        }`}
+      >
+        {playing ? (
+          <Pause className="w-4 h-4 fill-current" />
+        ) : (
+          <Play className="w-4 h-4 fill-current ml-0.5" />
+        )}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <div
+          className="flex items-center gap-0.5 h-6 cursor-pointer"
+          onClick={(e) => {
+            if (!audioRef.current || !duration) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+            audioRef.current.currentTime = ratio * duration;
+            setCurrentTime(ratio * duration);
+          }}
+        >
+          {waveBars.map((h, i) => {
+            const barPct = ((i + 1) / waveBars.length) * 100;
+            const active = barPct <= progressPct;
+            return (
+              <span
+                key={i}
+                style={{ height: `${h}%` }}
+                className={`flex-1 rounded-full transition-colors ${
+                  active
+                    ? isMine
+                      ? 'bg-white'
+                      : 'bg-blue-400'
+                    : isMine
+                      ? 'bg-blue-200/40'
+                      : 'bg-white/25'
+                }`}
+              />
+            );
+          })}
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] mt-1 opacity-90">
+          <span className="font-mono tabular-nums">
+            {playing || currentTime > 0
+              ? `${formatSec(currentTime)} / ${formatSec(duration)}`
+              : duration > 0
+                ? formatSec(duration)
+                : label || 'Voice Note'}
+          </span>
+          <button
+            type="button"
+            onClick={cycleSpeed}
+            className="px-1.5 py-0.2 rounded bg-black/25 font-bold text-[9px]"
+          >
+            {speed}x
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const MessagesModal: React.FC<MessagesModalProps> = ({
   initialPartner = null,
@@ -52,8 +199,14 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
   const [uploadingMedia, setUploadingMedia] = useState(false);
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [replyAsBoostBot, setReplyAsBoostBot] = useState(false);
+  const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceTimerRef = useRef<number | null>(null);
+  const voiceCancelledRef = useRef<boolean>(false);
 
   const isOwnerAdmin =
     userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
@@ -241,15 +394,22 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
     setUploadingMedia(true);
     try {
       const isVid = file.type.startsWith('video/');
+      const isAud =
+        file.type.startsWith('audio/') ||
+        /\.(wav|mp3|ogg|m4a|aac)$/i.test(file.name);
       const uploaded = await uploadMediaWithProgress(file, 'messages');
       const created = await apiFetch<DirectMessageItem>(
         `/api/messages/${activePartner.id}`,
         {
           method: 'POST',
           body: JSON.stringify({
-            content: isVid ? 'Sent a video' : 'Sent a photo',
+            content: isAud
+              ? '🎤 Voice Note'
+              : isVid
+                ? 'Sent a video'
+                : 'Sent a photo',
             mediaUrl: uploaded.url,
-            mediaType: isVid ? 'video' : 'photo',
+            mediaType: isAud ? 'audio' : isVid ? 'video' : 'photo',
           }),
         }
       );
@@ -263,6 +423,180 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
     } finally {
       setUploadingMedia(false);
     }
+  };
+
+  const cleanupVoiceRecording = () => {
+    if (voiceTimerRef.current) {
+      window.clearInterval(voiceTimerRef.current);
+      voiceTimerRef.current = null;
+    }
+    if (voiceStreamRef.current) {
+      voiceStreamRef.current.getTracks().forEach((t) => t.stop());
+      voiceStreamRef.current = null;
+    }
+    setIsRecordingVoiceNote(false);
+  };
+
+  const handleStartVoiceNoteRecording = async () => {
+    if (!activePartner || isRecordingVoiceNote) return;
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
+      showToast('Microphone recording is not supported on this device.', 'error');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      voiceStreamRef.current = stream;
+      voiceCancelledRef.current = false;
+
+      const mimeCandidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg',
+      ];
+      const selectedMime =
+        mimeCandidates.find(
+          (m) =>
+            typeof MediaRecorder !== 'undefined' &&
+            MediaRecorder.isTypeSupported(m)
+        ) || '';
+
+      const chunks: BlobPart[] = [];
+      const recorder = new MediaRecorder(
+        stream,
+        selectedMime ? { mimeType: selectedMime } : undefined
+      );
+      voiceRecorderRef.current = recorder;
+
+      const startedAt = Date.now();
+      setRecordingSeconds(0);
+      setIsRecordingVoiceNote(true);
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          chunks.push(ev.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const elapsedSec = Math.max(
+          1,
+          Math.round((Date.now() - startedAt) / 1000)
+        );
+        cleanupVoiceRecording();
+
+        if (voiceCancelledRef.current) {
+          return;
+        }
+
+        const rawBlob = new Blob(chunks, {
+          type: selectedMime || 'audio/webm',
+        });
+        if (rawBlob.size === 0) {
+          showToast('Voice note was empty. Please try again.', 'error');
+          return;
+        }
+
+        setUploadingMedia(true);
+        try {
+          // Convert to universal 16-bit PCM WAV so it plays on 100% of iOS, Android & desktop browsers
+          let audioFile: File;
+          try {
+            const audioBuffer = await decodeMediaToAudioBuffer(rawBlob);
+            const wavBlob = encodeAudioBufferToWavBlob(audioBuffer);
+            audioFile = new File([wavBlob], `voice-note-${Date.now()}.wav`, {
+              type: 'audio/wav',
+            });
+          } catch {
+            audioFile = new File([rawBlob], `voice-note-${Date.now()}.webm`, {
+              type: rawBlob.type || 'audio/webm',
+            });
+          }
+
+          const uploaded = await uploadMediaWithProgress(audioFile, 'messages');
+          const mins = Math.floor(elapsedSec / 60);
+          const secs = elapsedSec % 60;
+          const durLabel = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+
+          const created = await apiFetch<DirectMessageItem>(
+            `/api/messages/${activePartner.id}`,
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                content: `🎤 Voice Note (${durLabel})`,
+                mediaUrl: uploaded.url,
+                mediaType: 'audio',
+                replyToId: replyTo?.id,
+              }),
+            }
+          );
+          setReplyTo(null);
+          setMessages((prev) =>
+            prev.some((m) => m.id === created.id) ? prev : [...prev, created]
+          );
+          loadConversations();
+          showToast('Voice note sent!', 'success');
+          setTimeout(
+            () => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }),
+            60
+          );
+        } catch (err: any) {
+          showToast(err.message || 'Could not send voice note.', 'error');
+        } finally {
+          setUploadingMedia(false);
+        }
+      };
+
+      recorder.start(100);
+      voiceTimerRef.current = window.setInterval(() => {
+        const sec = Math.floor((Date.now() - startedAt) / 1000);
+        setRecordingSeconds(sec);
+        if (sec >= 120) {
+          handleStopAndSendVoiceNote();
+        }
+      }, 250);
+    } catch {
+      showToast(
+        'Microphone permission denied. Please allow microphone access to send voice notes.',
+        'error'
+      );
+    }
+  };
+
+  const handleStopAndSendVoiceNote = () => {
+    voiceCancelledRef.current = false;
+    if (
+      voiceRecorderRef.current &&
+      voiceRecorderRef.current.state !== 'inactive'
+    ) {
+      voiceRecorderRef.current.stop();
+    } else {
+      cleanupVoiceRecording();
+    }
+  };
+
+  const handleCancelVoiceNoteRecording = () => {
+    voiceCancelledRef.current = true;
+    if (
+      voiceRecorderRef.current &&
+      voiceRecorderRef.current.state !== 'inactive'
+    ) {
+      voiceRecorderRef.current.stop();
+    } else {
+      cleanupVoiceRecording();
+    }
+    showToast('Voice note cancelled', 'info');
   };
 
   const handleModifyMessage = async (
@@ -564,30 +898,51 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                             )}
 
                             {msg.mediaUrl && (
-                              <div className="mb-2 rounded-xl overflow-hidden bg-black/30">
-                                {msg.mediaType === 'video' ? (
-                                  <video
+                              <>
+                                {msg.mediaType === 'audio' ||
+                                /\.(wav|mp3|ogg|m4a|aac)(\?|$)/i.test(
+                                  msg.mediaUrl
+                                ) ||
+                                msg.content?.startsWith('🎤 Voice Note') ? (
+                                  <VoiceNoteBubblePlayer
                                     src={msg.mediaUrl}
-                                    controls
-                                    className="max-h-52 w-full object-contain"
+                                    label={msg.content || 'Voice Note'}
+                                    isMine={isMine}
                                   />
                                 ) : (
-                                  <img
-                                    src={msg.mediaUrl}
-                                    alt="Attachment"
-                                    referrerPolicy="no-referrer"
-                                    className="max-h-52 w-full object-cover"
-                                  />
+                                  <div className="mb-2 rounded-xl overflow-hidden bg-black/30">
+                                    {msg.mediaType === 'video' ? (
+                                      <video
+                                        src={msg.mediaUrl}
+                                        controls
+                                        playsInline
+                                        preload="auto"
+                                        className="max-h-52 w-full object-contain"
+                                      />
+                                    ) : (
+                                      <img
+                                        src={msg.mediaUrl}
+                                        alt="Attachment"
+                                        referrerPolicy="no-referrer"
+                                        className="max-h-52 w-full object-cover"
+                                      />
+                                    )}
+                                  </div>
                                 )}
-                              </div>
+                              </>
                             )}
 
                             {/* Message Down Below */}
-                            {msg.content && (
-                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                                {msg.content}
-                              </p>
-                            )}
+                            {msg.content &&
+                              !(
+                                msg.mediaUrl &&
+                                (msg.mediaType === 'audio' ||
+                                  msg.content.startsWith('🎤 Voice Note'))
+                              ) && (
+                                <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                  {msg.content}
+                                </p>
+                              )}
 
                             <div className="mt-1 flex items-center justify-end gap-1.5 text-[10px] opacity-75">
                               <span>{formatRelativeTime(msg.createdAt)}</span>
@@ -716,48 +1071,86 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*,video/*"
+                  accept="image/*,video/*,audio/*"
                   onChange={handleUploadAttachment}
                   className="hidden"
                 />
 
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={uploadingMedia}
-                    className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
-                    title="Send Photo or Video"
-                  >
-                    <ImageIcon className="w-4 h-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowEmojiBar((s) => !s)}
-                    className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
-                    title="Emojis"
-                  >
-                    <Smile className="w-4 h-4" />
-                  </button>
-                  <input
-                    type="text"
-                    value={inputContent}
-                    onChange={(e) => handleTypingChange(e.target.value)}
-                    placeholder={
-                      uploadingMedia
-                        ? 'Uploading attachment...'
-                        : 'Write a message...'
-                    }
-                    className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                  />
-                  <button
-                    type="submit"
-                    disabled={!inputContent.trim()}
-                    className="min-h-[42px] min-w-[42px] rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white flex items-center justify-center"
-                  >
-                    <Send className="w-4 h-4" />
-                  </button>
-                </div>
+                {isRecordingVoiceNote ? (
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-rose-950/60 border border-rose-500/40">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+                      <span className="text-xs font-extrabold text-rose-200 font-mono tabular-nums">
+                        🎤 Recording {Math.floor(recordingSeconds / 60)}:
+                        {recordingSeconds % 60 < 10 ? '0' : ''}
+                        {recordingSeconds % 60}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCancelVoiceNoteRecording}
+                        className="px-2.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-semibold text-slate-200 inline-flex items-center gap-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-400" /> Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleStopAndSendVoiceNote}
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-xs font-extrabold text-white inline-flex items-center gap-1.5 shadow-lg"
+                      >
+                        <Send className="w-3.5 h-3.5" /> Send Voice Note
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingMedia}
+                      className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
+                      title="Send Photo or Video"
+                    >
+                      <ImageIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleStartVoiceNoteRecording}
+                      disabled={uploadingMedia}
+                      className="min-h-[42px] min-w-[42px] rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 flex items-center justify-center"
+                      title="Record Voice Note"
+                    >
+                      <Mic className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowEmojiBar((s) => !s)}
+                      className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
+                      title="Emojis"
+                    >
+                      <Smile className="w-4 h-4" />
+                    </button>
+                    <input
+                      type="text"
+                      value={inputContent}
+                      onChange={(e) => handleTypingChange(e.target.value)}
+                      placeholder={
+                        uploadingMedia
+                          ? 'Sending voice note / attachment...'
+                          : 'Write a message or tap 🎤 for voice note...'
+                      }
+                      className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-2.5 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!inputContent.trim()}
+                      className="min-h-[42px] min-w-[42px] rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white flex items-center justify-center"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </form>
             </>
           )}

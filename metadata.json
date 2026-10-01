@@ -1,6 +1,6 @@
 {
   "name": "BoostHub",
   "description": "BoostHub — Social & Creator Platform featuring personalized feeds, Capshots short videos, stories, real-time messaging, B-Shop, and creator analytics.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
