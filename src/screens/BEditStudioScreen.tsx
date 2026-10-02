@@ -165,6 +165,18 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [livePreviewIgboText, setLivePreviewIgboText] = useState(
     'Ana m, aga ahịa, ịzụta nri'
   );
+  const [fluencyScorePulse, setFluencyScorePulse] = useState(false);
+  const fluencyPulseTimerRef = useRef<number | null>(null);
+
+  const triggerFluencyScorePulse = () => {
+    setFluencyScorePulse(true);
+    if (fluencyPulseTimerRef.current) {
+      window.clearTimeout(fluencyPulseTimerRef.current);
+    }
+    fluencyPulseTimerRef.current = window.setTimeout(() => {
+      setFluencyScorePulse(false);
+    }, 650);
+  };
 
   // Project State + Undo/Redo History Stack
   const [project, setProject] = useState<BEditProjectState>(() =>
@@ -355,9 +367,10 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       setIgboDiagnosticReport(report);
     });
     return () => {
-      if (synthTimerRef.current) window.clearInterval(synthTimerRef.current);
-      if (reverseTimerRef.current) window.clearInterval(reverseTimerRef.current);
-      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
+      if ( synthTimerRef.current ) window.clearInterval( synthTimerRef.current );
+      if ( reverseTimerRef.current ) window.clearInterval( reverseTimerRef.current );
+      if ( recordTimerRef.current ) window.clearInterval( recordTimerRef.current );
+      if ( fluencyPulseTimerRef.current ) window.clearTimeout( fluencyPulseTimerRef.current );
       if (customAudioRef.current) customAudioRef.current.pause();
       if (voiceoverAudioRef.current) voiceoverAudioRef.current.pause();
       if (micStreamRef.current) {
@@ -378,6 +391,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         setLivePreviewIgboText(
           applyIgboRegionalDialectVariant(igbo, selectedIgboDialect)
         );
+        triggerFluencyScorePulse();
       }
     });
     return () => {
@@ -394,6 +408,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       nextDialect
     );
     setIgboDiagnosticReport(report);
+    triggerFluencyScorePulse();
     if (translatedDialectText && activeDialectLabel.toLowerCase().includes('igbo')) {
       setTranslatedDialectText(
         applyIgboRegionalDialectVariant(translatedDialectText, nextDialect)
@@ -420,6 +435,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         targetDialect
       );
       setIgboDiagnosticReport(report);
+      triggerFluencyScorePulse();
       showToast(
         `Igbo Diagnostics (${report.dialectProfile.shortLabel}): ${report.passedTests}/${report.totalTests} passed · Fluency ${report.averageFluencyScore}%`,
         report.allPassed ? 'success' : 'info'
@@ -968,10 +984,25 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           );
           voiceoverFileRef.current = rendered.wavFile;
           if (rendered.originalTranscript) {
-            setVoiceTranscriptText(rendered.originalTranscript);
+            const newOrig = rendered.originalTranscript;
+            setVoiceTranscriptText(newOrig);
+            const nextList = [
+              newOrig,
+              ...customDiagnosticList.filter(
+                (p) => p.toLowerCase() !== newOrig.toLowerCase()
+              ),
+            ].slice(0, 4);
+            setCustomDiagnosticList(nextList);
+            runIgboTranslationDiagnostics(nextList, selectedIgboDialect).then(
+              (rep) => {
+                setIgboDiagnosticReport(rep);
+                triggerFluencyScorePulse();
+              }
+            );
           }
           if (rendered.translatedText) {
             setTranslatedDialectText(rendered.translatedText);
+            triggerFluencyScorePulse();
           }
           if (rendered.targetLanguage) {
             setActiveDialectLabel(rendered.targetLanguage);
@@ -1035,6 +1066,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
             if (fullText.trim()) {
               recordedTranscriptHintRef.current = fullText.trim();
               setVoiceTranscriptText(fullText.trim());
+              triggerFluencyScorePulse();
             }
           };
           rec.start();
@@ -1046,6 +1078,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
       setRecordingSeconds(0);
       setIsRecordingVoice(true);
+      triggerFluencyScorePulse();
       recorder.start(100);
 
       // Play video muted alongside recording so creator can dub accurately
@@ -1060,6 +1093,9 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       recordTimerRef.current = window.setInterval(() => {
         const elapsed = (Date.now() - startedAt) / 1000;
         setRecordingSeconds(Number(elapsed.toFixed(1)));
+        if (Math.round(elapsed * 10) % 8 === 0) {
+          triggerFluencyScorePulse();
+        }
         if (elapsed >= BOOSTHUB_MAX_VIDEO_SECONDS) {
           handleStopVoiceCoverRecording();
         }
@@ -1668,6 +1704,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         <div className="flex items-center gap-1.5 shrink-0">
           <button
             type="button"
+            onClick={() => setActiveBottomTab('more')}
+            className={`px-2.5 h-9 rounded-xl text-[11px] font-extrabold inline-flex items-center gap-1 border transition-colors ${
+              activeBottomTab === 'more'
+                ? 'bg-[#4A90E2] border-blue-400 text-white shadow'
+                : 'bg-white/5 border-white/15 text-cyan-300 hover:text-white hover:bg-white/10'
+            }`}
+            title="Open More Studio Tools (PiP, Green Screen, Thumbnail)"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+            <span>More</span>
+          </button>
+          <button
+            type="button"
             onClick={() => setDebugPanelOpen((prev) => !prev)}
             className={`px-2.5 h-9 rounded-xl text-[11px] font-extrabold inline-flex items-center gap-1 border transition-colors ${
               debugPanelOpen
@@ -1740,10 +1789,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     </span>
                   </span>
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border ${
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-300 ${
                       igboDiagnosticReport.allPassed
                         ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
                         : 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                    } ${
+                      fluencyScorePulse || isRecordingVoice
+                        ? 'scale-105 ring-2 ring-emerald-400/70 shadow-[0_0_14px_rgba(16,185,129,0.45)] animate-pulse'
+                        : ''
                     }`}
                   >
                     {igboDiagnosticReport.passedTests}/{igboDiagnosticReport.totalTests} PASSED ·{' '}
@@ -1814,70 +1867,120 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 </div>
               </div>
 
-              {/* Real-Time Suite Fluency Score Breakdown */}
-              <div className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300">
-                    📊 Real-Time Igbo Fluency Scores:
+              {/* Real-Time Suite Fluency Score Breakdown with Pulse & Smooth Transition */}
+              <div
+                className={`p-2.5 rounded-xl border space-y-1.5 transition-all duration-500 ease-out ${
+                  fluencyScorePulse || isRecordingVoice
+                    ? 'bg-emerald-950/30 border-emerald-400/70 ring-2 ring-emerald-400/40 shadow-[0_0_22px_rgba(16,185,129,0.28)] scale-[1.01]'
+                    : 'bg-[#070B16] border-white/10'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                    <span>📊 Real-Time Igbo Fluency Scores:</span>
+                    {(isRecordingVoice || fluencyScorePulse) && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/50 text-[9px] font-extrabold text-emerald-200 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                        {isRecordingVoice ? 'LIVE MIC' : 'UPDATED'}
+                      </span>
+                    )}
                   </span>
-                  <span className="text-[10px] font-extrabold text-emerald-300">
-                    {igboDiagnosticReport.averageFluencyScore}% Native Fluent
+                  <span
+                    className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-all duration-300 ${
+                      fluencyScorePulse || isRecordingVoice
+                        ? 'bg-emerald-500/30 text-emerald-100 ring-1 ring-emerald-300 scale-105 shadow-sm shadow-emerald-400/40'
+                        : 'text-emerald-300'
+                    }`}
+                  >
+                    {liveAnalysis.fluencyMetrics.overallFluencyScore}% Native Fluent
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div>
                     <div className="flex justify-between text-slate-300 mb-0.5">
                       <span>Overall Fluency</span>
-                      <span className="font-mono font-bold text-emerald-300">
-                        {igboDiagnosticReport.averageFluencyScore}%
+                      <span
+                        className={`font-mono font-bold transition-all duration-300 ${
+                          fluencyScorePulse || isRecordingVoice
+                            ? 'text-emerald-200 scale-110'
+                            : 'text-emerald-300'
+                        }`}
+                      >
+                        {liveAnalysis.fluencyMetrics.overallFluencyScore}%
                       </span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                       <div
-                        style={{ width: `${igboDiagnosticReport.averageFluencyScore}%` }}
-                        className="h-full bg-emerald-400"
+                        style={{ width: `${liveAnalysis.fluencyMetrics.overallFluencyScore}%` }}
+                        className={`h-full bg-emerald-400 transition-all duration-500 ease-out ${
+                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
+                        }`}
                       />
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between text-slate-300 mb-0.5">
                       <span>Subdot & Harmony</span>
-                      <span className="font-mono font-bold text-cyan-300">
-                        {igboDiagnosticReport.averageOrthographyScore}%
+                      <span
+                        className={`font-mono font-bold transition-all duration-300 ${
+                          fluencyScorePulse || isRecordingVoice
+                            ? 'text-cyan-200 scale-110'
+                            : 'text-cyan-300'
+                        }`}
+                      >
+                        {liveAnalysis.fluencyMetrics.orthographySubdotScore}%
                       </span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                       <div
-                        style={{ width: `${igboDiagnosticReport.averageOrthographyScore}%` }}
-                        className="h-full bg-cyan-400"
+                        style={{ width: `${liveAnalysis.fluencyMetrics.orthographySubdotScore}%` }}
+                        className={`h-full bg-cyan-400 transition-all duration-500 ease-out ${
+                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
+                        }`}
                       />
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between text-slate-300 mb-0.5">
                       <span>Tonal Cadence</span>
-                      <span className="font-mono font-bold text-purple-300">
-                        {igboDiagnosticReport.averageTonalCadenceScore}%
+                      <span
+                        className={`font-mono font-bold transition-all duration-300 ${
+                          fluencyScorePulse || isRecordingVoice
+                            ? 'text-purple-200 scale-110'
+                            : 'text-purple-300'
+                        }`}
+                      >
+                        {liveAnalysis.fluencyMetrics.tonalCadenceScore}%
                       </span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                       <div
-                        style={{ width: `${igboDiagnosticReport.averageTonalCadenceScore}%` }}
-                        className="h-full bg-purple-400"
+                        style={{ width: `${liveAnalysis.fluencyMetrics.tonalCadenceScore}%` }}
+                        className={`h-full bg-purple-400 transition-all duration-500 ease-out ${
+                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
+                        }`}
                       />
                     </div>
                   </div>
                   <div>
                     <div className="flex justify-between text-slate-300 mb-0.5">
                       <span>Dialect Fidelity</span>
-                      <span className="font-mono font-bold text-amber-300">
-                        {igboDiagnosticReport.averageDialectFidelityScore}%
+                      <span
+                        className={`font-mono font-bold transition-all duration-300 ${
+                          fluencyScorePulse || isRecordingVoice
+                            ? 'text-amber-200 scale-110'
+                            : 'text-amber-300'
+                        }`}
+                      >
+                        {liveAnalysis.fluencyMetrics.dialectFidelityScore}%
                       </span>
                     </div>
                     <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
                       <div
-                        style={{ width: `${igboDiagnosticReport.averageDialectFidelityScore}%` }}
-                        className="h-full bg-amber-400"
+                        style={{ width: `${liveAnalysis.fluencyMetrics.dialectFidelityScore}%` }}
+                        className={`h-full bg-amber-400 transition-all duration-500 ease-out ${
+                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
+                        }`}
                       />
                     </div>
                   </div>
@@ -1886,13 +1989,25 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
             </div>
 
             {/* Live Real-Time Phonetic & Tonal Inspector for Active/Typed Phrase */}
-            <div className="p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#070B16] to-purple-950/30 border border-emerald-500/30 space-y-2">
+            <div
+              className={`p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#070B16] to-purple-950/30 border space-y-2 transition-all duration-500 ease-out ${
+                fluencyScorePulse || isRecordingVoice
+                  ? 'border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.22)]'
+                  : 'border-emerald-500/30'
+              }`}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
                     🔬 Live Phonetic & Tonal Cadence Breakdown ({activeDialectMeta.shortLabel}):
                   </span>
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-extrabold">
+                  <span
+                    className={`px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-extrabold transition-all duration-300 ${
+                      fluencyScorePulse || isRecordingVoice
+                        ? 'scale-105 ring-2 ring-emerald-400/60 bg-emerald-500/35 animate-pulse'
+                        : ''
+                    }`}
+                  >
                     {liveAnalysis.fluencyMetrics.overallFluencyScore}% ·{' '}
                     {liveAnalysis.fluencyMetrics.cadenceRatingLabel}
                   </span>
@@ -2315,6 +2430,41 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
       {/* ACTIVE TOOL DRAWER PANEL */}
       <div className="bg-[#0E1322] border border-white/10 rounded-2xl p-3.5 space-y-3.5">
+        {/* INLINE TOP TOOL BAR (WITH "MORE" SHIFTED TO VISIBLE LEFT-CENTER SPOT) */}
+        <div className="grid grid-cols-7 gap-1 bg-[#080B14] border border-white/10 rounded-xl p-1">
+          {(
+            [
+              { id: 'media', label: 'Media', icon: Film },
+              { id: 'audio', label: 'Audio', icon: Music },
+              { id: 'more', label: 'More', icon: MoreHorizontal },
+              { id: 'text', label: 'Text', icon: Type },
+              { id: 'stickers', label: 'Stickers', icon: Smile },
+              { id: 'effects', label: 'Effects', icon: Sparkles },
+              { id: 'filters', label: 'Filters', icon: Sliders },
+            ] as const
+          ).map((item) => {
+            const Icon = item.icon;
+            const active = activeBottomTab === item.id;
+            return (
+              <button
+                key={`inline_${item.id}`}
+                type="button"
+                onClick={() => setActiveBottomTab(item.id)}
+                className={`py-1.5 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                  active
+                    ? 'bg-[#4A90E2] text-white shadow'
+                    : item.id === 'more'
+                      ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
+                      : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span className="text-[9px] font-extrabold">{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* 1. MEDIA TAB: Upload, Trim, Split, Crop, Rotate, Aspect Ratio, Speed, Reverse */}
         {activeBottomTab === 'media' && (
           <div className="space-y-3.5">
@@ -3932,18 +4082,18 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         )}
       </div>
 
-      {/* BOTTOM NAVIGATION FOR MEDIA, AUDIO, TEXT, STICKERS, EFFECTS, FILTERS & MORE */}
+      {/* BOTTOM NAVIGATION FOR MEDIA, AUDIO, MORE (SHIFTED LEFT-CENTER SO B FLASH NEVER BLOCKS IT), TEXT, STICKERS, EFFECTS & FILTERS */}
       <div className="fixed bottom-16 left-0 right-0 z-30 px-3 pointer-events-none">
         <div className="max-w-lg mx-auto bg-[#121626]/95 backdrop-blur-md border border-white/15 rounded-2xl p-1.5 grid grid-cols-7 gap-1 shadow-2xl pointer-events-auto">
           {(
             [
               { id: 'media', label: 'Media', icon: Film },
               { id: 'audio', label: 'Audio', icon: Music },
+              { id: 'more', label: 'More', icon: MoreHorizontal },
               { id: 'text', label: 'Text', icon: Type },
               { id: 'stickers', label: 'Stickers', icon: Smile },
               { id: 'effects', label: 'Effects', icon: Sparkles },
               { id: 'filters', label: 'Filters', icon: Sliders },
-              { id: 'more', label: 'More', icon: MoreHorizontal },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -3956,7 +4106,9 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 className={`min-h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
                   active
                     ? 'bg-[#4A90E2] text-white'
-                    : 'text-slate-400 hover:text-white'
+                    : item.id === 'more'
+                      ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
+                      : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Icon className="w-4 h-4" />

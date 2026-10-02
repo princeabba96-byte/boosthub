@@ -263,11 +263,13 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
 
   return (
     <>
-      {/* Floating B FLASH Launcher Button: Lower-Right Just Above Menu */}
+      {/* Floating B FLASH Launcher Button: Shifted above B-Edit Studio toolbar when in bedit */}
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
-        className="fixed bottom-[74px] right-3.5 lg:bottom-6 lg:right-6 z-40 group flex items-center gap-2 px-3.5 py-2.5 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-xl shadow-blue-600/35 border border-white/25 transition-all active:scale-95"
+        className={`fixed right-3.5 lg:bottom-6 lg:right-6 z-40 group flex items-center gap-2 px-3.5 py-2.5 rounded-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-xl shadow-blue-600/35 border border-white/25 transition-all active:scale-95 ${
+          activeTab === 'bedit' ? 'bottom-[136px]' : 'bottom-[74px]'
+        }`}
         title="Ask B FLASH AI Assistant"
       >
         <span className="relative flex items-center justify-center w-6 h-6 rounded-full bg-amber-400/20 border border-amber-300/60">
