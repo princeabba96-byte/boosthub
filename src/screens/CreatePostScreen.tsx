@@ -52,6 +52,102 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
   const [studioConfig, setStudioConfig] = useState<StudioEditConfig>(
     DEFAULT_STUDIO_CONFIG
   );
+  const [suggestingCaption, setSuggestingCaption] = useState(false);
+  const [captionSuggestions, setCaptionSuggestions] = useState<
+    Array<{
+      hook: string;
+      caption: string;
+      hashtags: string;
+      vibe: string;
+    }>
+  >([]);
+
+  const handleSuggestCaption = async () => {
+    setSuggestingCaption(true);
+    try {
+      // Gather transcript from studioConfig if available
+      const transcript =
+        studioConfig.subtitles?.map((s) => s.text).join(' ') ||
+        studioConfig.texts?.map((t) => t.text).join(' ') ||
+        '';
+
+      const res = await apiFetch<{
+        success: boolean;
+        suggestions: Array<{
+          hook: string;
+          caption: string;
+          hashtags: string;
+          vibe: string;
+        }>;
+      }>('/api/ai/suggest-caption', {
+        method: 'POST',
+        body: JSON.stringify({
+          category,
+          hashtags,
+          transcript,
+          videoTitle: selectedFile?.name?.replace(/\.[^/.]+$/, '') || caption || category,
+          vibe: 'viral',
+        }),
+      });
+
+      if (res?.suggestions && res.suggestions.length > 0) {
+        setCaptionSuggestions(res.suggestions);
+        // Pre-fill the top suggestion if caption is currently empty
+        if (!caption.trim()) {
+          const top = res.suggestions[0];
+          setCaption(`${top.hook}\n\n${top.caption}`);
+          if (!hashtags.trim() && top.hashtags) {
+            setHashtags(top.hashtags);
+          }
+        }
+        showToast('Generated 3 viral caption options!', 'success');
+      } else {
+        // Fallback options
+        const fallbacks = [
+          {
+            hook: 'You won\'t believe this moment! 👀',
+            caption: `Creating some pure magic on BoostHub today in #${category}. What do you think of this? Drop a reaction below! ✨`,
+            hashtags: `#BoostHub #${category} #ViralReels #CreatorMode`,
+            vibe: 'High Energy',
+          },
+          {
+            hook: 'POV: When everything just clicks ⚡',
+            caption: `Sharing the behind the scenes of our latest creation. Hit follow for more daily vibes! 🚀`,
+            hashtags: `#BoostHub #POV #DailyInspo #${category}`,
+            vibe: 'Relatable Story',
+          },
+          {
+            hook: 'Tell me I\'m not the only one who does this... 😅',
+            caption: `Tag a friend who needs to see this right now! Let\'s boost this to the moon. 💫`,
+            hashtags: `#BoostHub #Trending #${category} #ForYou`,
+            vibe: 'Community & Chat',
+          },
+        ];
+        setCaptionSuggestions(fallbacks);
+        if (!caption.trim()) {
+          setCaption(`${fallbacks[0].hook}\n\n${fallbacks[0].caption}`);
+          if (!hashtags.trim()) setHashtags(fallbacks[0].hashtags);
+        }
+        showToast('Generated creative caption options!', 'info');
+      }
+    } catch (e) {
+      console.warn('Caption suggestion fallback:', e);
+      const fallbacks = [
+        {
+          hook: 'Don\'t scroll past this! 🔥',
+          caption: `Fresh video upload on BoostHub! Double tap if you love #${category} content. 🌟`,
+          hashtags: `#BoostHub #${category} #Viral #Explore`,
+          vibe: 'Viral Trend',
+        },
+      ];
+      setCaptionSuggestions(fallbacks);
+      if (!caption.trim()) {
+        setCaption(`${fallbacks[0].hook}\n\n${fallbacks[0].caption}`);
+      }
+    } finally {
+      setSuggestingCaption(false);
+    }
+  };
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const uploadPromiseRef = useRef<Promise<{ url: string; thumbnailUrl?: string } | null> | null>(null);
@@ -472,16 +568,76 @@ export const CreatePostScreen: React.FC<CreatePostScreenProps> = ({
 
         <form onSubmit={handlePublish} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">
-              Caption
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-medium text-slate-300">
+                Caption
+              </label>
+              <button
+                type="button"
+                disabled={suggestingCaption}
+                onClick={handleSuggestCaption}
+                className="px-3 py-1 rounded-xl bg-gradient-to-r from-blue-600/30 to-purple-600/30 border border-blue-400/40 hover:border-blue-400 text-xs font-semibold text-blue-300 hover:text-white inline-flex items-center gap-1.5 transition-all shadow-sm"
+              >
+                <Sparkles className={`w-3.5 h-3.5 text-amber-300 ${suggestingCaption ? 'animate-spin' : ''}`} />
+                <span>{suggestingCaption ? 'Suggesting with AI...' : 'Suggest Caption ✨'}</span>
+              </button>
+            </div>
             <textarea
               rows={4}
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="Write an engaging caption..."
+              placeholder="Write an engaging caption, or click 'Suggest Caption ✨' to generate viral captions..."
               className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
+
+            {/* AI Generated Caption Options */}
+            {captionSuggestions.length > 0 && (
+              <div className="mt-2.5 p-3 rounded-2xl bg-gradient-to-br from-blue-950/40 via-purple-950/30 to-slate-900/50 border border-blue-500/25 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-blue-300 flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-300" />
+                    <span>Suggested Captions (Tap to Use):</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setCaptionSuggestions([])}
+                    className="text-[10px] text-slate-400 hover:text-slate-200"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {captionSuggestions.map((item, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        setCaption(`${item.hook}\n\n${item.caption}`);
+                        if (item.hashtags) setHashtags(item.hashtags);
+                        showToast(`Applied "${item.vibe}" caption!`, 'success');
+                      }}
+                      className="p-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/10 hover:border-blue-400/50 cursor-pointer transition-all space-y-1 group"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-bold text-amber-300 group-hover:text-amber-200">
+                          {item.hook}
+                        </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">
+                          {item.vibe}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-300 line-clamp-2">
+                        {item.caption}
+                      </p>
+                      {item.hashtags && (
+                        <p className="text-[10px] text-blue-400 truncate">
+                          {item.hashtags}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

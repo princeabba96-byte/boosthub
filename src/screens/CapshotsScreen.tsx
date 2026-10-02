@@ -26,6 +26,11 @@ import {
   buildCssFilterString,
   StudioFloatingOverlays,
 } from '../components/StudioMediaEditor';
+import {
+  getGlobalVideoMuted,
+  setGlobalVideoMuted,
+  subscribeToGlobalAudio,
+} from '../utils/globalAudio';
 
 interface CapshotsScreenProps {
   onOpenComments: (post: PostItem) => void;
@@ -44,7 +49,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   const [capshots, setCapshots] = useState<PostItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(() => getGlobalVideoMuted());
   const [paused, setPaused] = useState(false);
   const [capshotTime, setCapshotTime] = useState(0);
 
@@ -53,6 +58,19 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   const watchStartRef = useRef<number>(Date.now());
   const touchStartYRef = useRef<number | null>(null);
   const likeBusyRef = useRef(false);
+
+  // Sync with global volume changes
+  useEffect(() => {
+    return subscribeToGlobalAudio((isMuted) => {
+      setMuted(isMuted);
+      if (videoRef.current) {
+        videoRef.current.muted = isMuted;
+      }
+      if (voiceoverAudioRef.current) {
+        voiceoverAudioRef.current.muted = isMuted;
+      }
+    });
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -125,12 +143,23 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   useEffect(() => {
     watchStartRef.current = Date.now();
     setPaused(false);
+    const activeMuted = getGlobalVideoMuted();
+    setMuted(activeMuted);
     if (videoRef.current) {
-      videoRef.current.defaultMuted = true;
-      videoRef.current.muted = muted;
+      videoRef.current.defaultMuted = activeMuted;
+      videoRef.current.muted = activeMuted;
+      videoRef.current.volume = 1.0;
       videoRef.current.playsInline = true;
       videoRef.current.currentTime = 0;
       videoRef.current.play().catch(() => {});
+    }
+    if (voiceoverAudioRef.current) {
+      voiceoverAudioRef.current.muted = activeMuted;
+      voiceoverAudioRef.current.volume = 1.0;
+      if (!activeMuted) {
+        voiceoverAudioRef.current.currentTime = 0;
+        voiceoverAudioRef.current.play().catch(() => {});
+      }
     }
     if (!currentVideo?.id) return;
     const postId = String(currentVideo.id);
@@ -508,8 +537,17 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
             onClick={() => {
               const nextMuted = !muted;
               setMuted(nextMuted);
+              setGlobalVideoMuted(nextMuted);
+              if (videoRef.current) {
+                videoRef.current.muted = nextMuted;
+                videoRef.current.volume = 1.0;
+                if (!nextMuted) {
+                  videoRef.current.play().catch(() => {});
+                }
+              }
               if (voiceoverAudioRef.current) {
                 voiceoverAudioRef.current.muted = nextMuted;
+                voiceoverAudioRef.current.volume = 1.0;
                 if (!nextMuted) {
                   voiceoverAudioRef.current.currentTime =
                     videoRef.current?.currentTime || 0;
@@ -518,13 +556,20 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                   voiceoverAudioRef.current.pause();
                 }
               }
+              showToast(
+                nextMuted
+                  ? 'Muted'
+                  : '🔊 Audio On (automatically enabled for all reels)',
+                'info'
+              );
             }}
-            className="min-h-[44px] min-w-[44px] rounded-full bg-black/50 backdrop-blur-md text-white flex items-center justify-center"
+            className="min-h-[44px] min-w-[44px] rounded-full bg-black/60 backdrop-blur-md text-white border border-white/15 hover:bg-black/80 flex items-center justify-center transition-all shadow-lg active:scale-95"
+            title={muted ? 'Unmute (Plays all videos with sound)' : 'Mute'}
           >
             {muted ? (
-              <VolumeX className="w-5 h-5" />
+              <VolumeX className="w-5 h-5 text-rose-400" />
             ) : (
-              <Volume2 className="w-5 h-5" />
+              <Volume2 className="w-5 h-5 text-emerald-400 animate-pulse" />
             )}
           </button>
 
@@ -631,8 +676,23 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
           </button>
         </div>
 
-        {/* Bottom Scrim Overlay: Creator Info, Caption, Hashtags */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 pr-16 bg-gradient-to-t from-black/90 via-black/60 to-transparent z-10 space-y-2">
+        {/* Bottom Scrim Overlay: Creator Info, Caption, Hashtags with Smooth Transition */}
+        <div className="absolute bottom-0 left-0 right-0 p-4 pr-16 bg-gradient-to-t from-black/95 via-black/75 to-transparent z-10 space-y-2 transition-all duration-300 ease-out">
+          {/* Smooth Video Scrubbing / Progress Indicator Pill */}
+          <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden mb-1">
+            <div
+              className="h-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-150 ease-linear rounded-full"
+              style={{
+                width: `${Math.min(
+                  100,
+                  ((capshotTime || 0) /
+                    Math.max(1, videoRef.current?.duration || 15)) *
+                    100
+                )}%`,
+              }}
+            />
+          </div>
+
           <div className="flex items-center gap-2.5">
             <Avatar
               src={currentVideo.author.avatarUrl}
@@ -642,14 +702,14 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
             />
             <button
               onClick={() => onSelectUser(currentVideo.author.id)}
-              className="text-sm font-bold text-white hover:underline truncate"
+              className="text-sm font-bold text-white hover:underline truncate drop-shadow-md"
             >
               @{currentVideo.author.username}
             </button>
             {currentVideo.userId !== userProfile?.id && (
               <button
                 onClick={handleFollow}
-                className="px-2.5 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1"
+                className="px-2.5 py-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1 shadow-md transition-all active:scale-95"
               >
                 {currentVideo.isFollowingAuthor ? (
                   <>
@@ -665,19 +725,19 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
           </div>
 
           {currentVideo.caption && (
-            <p className="text-xs sm:text-sm text-slate-100 line-clamp-3">
+            <p className="text-xs sm:text-sm text-slate-100 line-clamp-3 leading-relaxed drop-shadow transition-opacity duration-200">
               {currentVideo.caption}
             </p>
           )}
 
-          <div className="flex items-center gap-2 text-[11px] text-slate-300">
+          <div className="flex items-center gap-2 text-[11px] text-slate-300 drop-shadow-sm">
             {currentVideo.hashtags && (
-              <span className="text-blue-400 truncate">
+              <span className="text-blue-400 font-medium truncate">
                 {currentVideo.hashtags}
               </span>
             )}
             <span>·</span>
-            <span className="tabular-nums">
+            <span className="tabular-nums font-medium">
               {formatCompactNumber(currentVideo.viewsCount)} views
             </span>
           </div>

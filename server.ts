@@ -1299,6 +1299,115 @@ async function startServer() {
     return Buffer.concat([header, pcmBuf]).toString('base64');
   };
 
+  app.post('/api/ai/suggest-caption', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const {
+        category = 'Lifestyle',
+        hashtags = '',
+        transcript = '',
+        videoTitle = '',
+        vibe = 'viral',
+      } = req.body || {};
+
+      const ai = getGeminiClient();
+      let suggestions: Array<{
+        caption: string;
+        hook: string;
+        hashtags: string;
+        vibe: string;
+      }> = [];
+
+      if (ai) {
+        try {
+          const prompt = `You are an expert social media viral strategist for BoostHub (a video & reels sharing community).
+Generate 3 distinct, high-engagement viral caption options for a video post with these details:
+- Category: ${category}
+- Existing Hashtags: ${hashtags || 'none'}
+- Spoken Audio Transcript: ${transcript ? `"${transcript}"` : 'Visual video clip'}
+- Video Topic / Title: ${videoTitle || 'BoostHub Creator Video'}
+
+Provide 3 options in JSON array format:
+[
+  {
+    "hook": "Punchy 3-7 word scroll-stopping first line",
+    "caption": "Engaging 1-3 sentence body with natural emojis",
+    "hashtags": "#BoostHub #Trending #RelevantHashtags",
+    "vibe": "Viral Trend"
+  },
+  {
+    "hook": "Relatable question or POV",
+    "caption": "Storytelling or witty engaging caption with emojis",
+    "hashtags": "#Creator #ViralReels #ForYou",
+    "vibe": "Relatable & Witty"
+  },
+  {
+    "hook": "Short bold statement",
+    "caption": "Inspiring or hype community caption with call-to-action",
+    "hashtags": "#BoostHub #Community #LevelUp",
+    "vibe": "High Energy"
+  }
+]
+Output ONLY raw JSON.`;
+
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              temperature: 0.75,
+            },
+          });
+
+          const jsonText = response.text?.trim() || '';
+          if (jsonText) {
+            const parsed = JSON.parse(jsonText);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              suggestions = parsed.map((item: any) => ({
+                hook: String(item.hook || '').trim(),
+                caption: String(item.caption || '').trim(),
+                hashtags: String(item.hashtags || '#BoostHub #Viral').trim(),
+                vibe: String(item.vibe || 'Viral').trim(),
+              }));
+            }
+          }
+        } catch {
+          // fallback to curated intelligent captions
+        }
+      }
+
+      if (suggestions.length === 0) {
+        const transSnippet = transcript ? transcript.slice(0, 60) : '';
+        suggestions = [
+          {
+            hook: transcript ? `Wait till you hear this... 👀` : `Drop everything and watch this ✨`,
+            caption: transcript
+              ? `"${transSnippet}..." Put everything on the line and never look back. Tell me in the comments if you agree! 🔥`
+              : `Had to capture this moment in 4K. What's your honest reaction? 💬👇`,
+            hashtags: `#BoostHub #${category.replace(/\s+/g, '')} #ViralReels #ForYou`,
+            vibe: 'Viral Trend',
+          },
+          {
+            hook: `POV: You just discovered something game-changing 🚀`,
+            caption: `The energy on this is unmatched today. Save this before the algorithm hides it! ⚡`,
+            hashtags: `#BoostHub #Creator #ExplorePage #${category.replace(/\s+/g, '')}`,
+            vibe: 'Relatable & Witty',
+          },
+          {
+            hook: `Stop scrolling. You needed to see this today 💯`,
+            caption: `Consistency is the secret sauce. Tap like if this hits different! ❤️`,
+            hashtags: `#BoostHub #Motivation #LevelUp #DailyInspo`,
+            vibe: 'High Energy',
+          },
+        ];
+      }
+
+      return res.json({ ok: true, suggestions });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
   app.post('/api/ai/bflash', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     try {

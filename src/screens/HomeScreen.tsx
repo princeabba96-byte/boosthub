@@ -34,6 +34,7 @@ import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { PostCard } from '../components/PostCard';
 import { MissionsPanel } from '../components/MissionsPanel';
+import { DailyMissionTracker } from '../components/DailyMissionTracker';
 import {
   StoryViewerModal,
   CreateStoryModal,
@@ -795,6 +796,12 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
           </div>
         </section>
 
+        {/* Daily Mission Tracker: Gamified missions with Boost Points rewards & creator follow suggestions */}
+        <DailyMissionTracker
+          onSelectUser={onSelectUser}
+          onNavigateTab={onChangeTab}
+        />
+
         {/* Interactive Feed Filter Bar: For You / Following / Friends / Trending */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 p-1 bg-[#131A2A] border border-white/[0.08] rounded-2xl overflow-x-auto no-scrollbar">
@@ -877,7 +884,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               renderSuggestedCreatorsCarousel('empty-feed-creators')}
           </div>
         ) : (
-          <div className="space-y-4">
+          <div id="feed-posts-container" className="space-y-4">
             {posts.map((post, idx) => {
               const showSuggestedCreatorsHere =
                 feedTab === 'recommended' &&

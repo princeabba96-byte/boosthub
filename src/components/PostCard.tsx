@@ -30,6 +30,11 @@ import {
   buildCssFilterString,
   StudioFloatingOverlays,
 } from './StudioMediaEditor';
+import {
+  getGlobalVideoMuted,
+  setGlobalVideoMuted,
+  subscribeToGlobalAudio,
+} from '../utils/globalAudio';
 
 interface PostCardProps {
   post: PostItem;
@@ -58,13 +63,25 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [isFollowing, setIsFollowing] = useState(post.isFollowingAuthor);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mediaError, setMediaError] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(() => getGlobalVideoMuted());
   const [isVideoPaused, setIsVideoPaused] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(17);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
   const likeBusyRef = useRef(false);
+
+  useEffect(() => {
+    return subscribeToGlobalAudio((muted) => {
+      setIsMuted(muted);
+      if (videoRef.current) {
+        videoRef.current.muted = muted;
+      }
+      if (voiceoverAudioRef.current) {
+        voiceoverAudioRef.current.muted = muted;
+      }
+    });
+  }, []);
 
   const formatVideoClock = (sec: number) => {
     const safe = Math.max(0, Math.floor(Number.isFinite(sec) ? sec : 0));
@@ -244,8 +261,9 @@ export const PostCard: React.FC<PostCardProps> = ({
 
   useEffect(() => {
     if (videoRef.current) {
-      videoRef.current.defaultMuted = true;
+      videoRef.current.defaultMuted = isMuted;
       videoRef.current.muted = isMuted;
+      videoRef.current.volume = 1.0;
       videoRef.current.playsInline = true;
     }
   }, [isMuted, post.id]);
@@ -542,17 +560,20 @@ export const PostCard: React.FC<PostCardProps> = ({
                     e.stopPropagation();
                     const nextMuted = !isMuted;
                     setIsMuted(nextMuted);
+                    setGlobalVideoMuted(nextMuted);
                     if (videoRef.current) {
                       videoRef.current.muted =
                         nextMuted ||
                         Boolean(attachedAudioUrl) ||
                         Boolean(studioMeta?.muteAudio);
+                      videoRef.current.volume = 1.0;
                       if (videoRef.current.paused && !nextMuted) {
                         videoRef.current.play().catch(() => {});
                       }
                     }
                     if (voiceoverAudioRef.current) {
                       voiceoverAudioRef.current.muted = nextMuted;
+                      voiceoverAudioRef.current.volume = 1.0;
                       if (!nextMuted) {
                         voiceoverAudioRef.current.currentTime =
                           videoRef.current?.currentTime || 0;
@@ -561,6 +582,12 @@ export const PostCard: React.FC<PostCardProps> = ({
                         voiceoverAudioRef.current.pause();
                       }
                     }
+                    showToast(
+                      nextMuted
+                        ? 'Muted'
+                        : '🔊 Audio On (automatically enabled for all reels & videos)',
+                      'info'
+                    );
                   }}
                   className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md border border-white/15 flex items-center justify-center text-white shadow-lg transition-all"
                   aria-label={isMuted ? 'Unmute video' : 'Mute video'}

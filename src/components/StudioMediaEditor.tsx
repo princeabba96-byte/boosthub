@@ -26,7 +26,22 @@ import {
   Layers,
   Zap,
   SplitSquareHorizontal,
+  Mic,
+  MicOff,
+  Search,
+  Image as ImageIcon,
+  Film,
+  Palette,
 } from 'lucide-react';
+import {
+  FONT_STYLES_52,
+  getFontDesignPresetById,
+  FontDesignPreset,
+} from '../data/fontStyles52';
+import {
+  GREEN_SCREEN_BACKGROUNDS,
+  GreenScreenBackground,
+} from '../data/greenScreenBackgrounds';
 
 export interface StudioStickerLayer {
   id: string;
@@ -58,13 +73,14 @@ export interface StudioTextLayer {
   id: string;
   text: string;
   fontFamily: 'display' | 'sans' | 'mono' | 'serif' | 'neon';
+  fontStyleId?: string;
   color: string;
   bgStyle: 'pill' | 'glass' | 'neon' | 'none';
   animation?: StudioTextAnimation;
   x: number; // percentage 10..90
   y: number; // percentage 10..90
-  scale: number; // 0.6..2.2
-  rotation: number; // -45..45
+  scale: number; // 0.4..3.0
+  rotation: number; // -180..180
 }
 
 export type StudioLoopMode =
@@ -241,10 +257,17 @@ export interface StudioEditConfig {
   pipX?: number;
   pipY?: number;
   pipScale?: number;
-  // Green Screen / Chroma Key
+  // Green Screen / Chroma Key & Background Replacement
   chromaKeyEnabled?: boolean;
   chromaKeyColor?: 'green' | 'blue' | 'black';
   chromaKeySensitivity?: number;
+  greenScreenBgUrl?: string;
+  greenScreenBgType?: 'image' | 'video';
+  greenScreenBgName?: string;
+  // Multi-clip: Secondary video to cut & merge
+  secondaryVideoUrl?: string;
+  secondaryVideoName?: string;
+  activeFontStyleId?: string;
   // Auto Captions / Subtitles
   subtitles?: StudioSubtitleCue[];
   // Sound cutting & audio loop tools (works for both video & photo)
@@ -919,35 +942,42 @@ export const StudioFloatingOverlays: React.FC<{
         </div>
       ))}
 
-      {texts.map((tx) => (
-        <div
-          key={tx.id}
-          style={{
-            left: `${tx.x}%`,
-            top: `${tx.y}%`,
-            transform: `translate(-50%, -50%) scale(${tx.scale}) rotate(${tx.rotation}deg)`,
-            fontFamily: getFontFamilyCss(tx.fontFamily),
-            color: tx.color,
-            textShadow:
-              tx.fontFamily === 'neon'
-                ? `0 0 12px ${tx.color}, 0 0 24px ${tx.color}`
-                : tx.bgStyle === 'none'
-                  ? '0 2px 10px rgba(0,0,0,0.9)'
-                  : undefined,
-          }}
-          className={`absolute font-extrabold text-base sm:text-lg text-center whitespace-pre-wrap leading-snug max-w-[260px] ${
-            tx.bgStyle === 'pill'
-              ? 'px-3.5 py-1.5 rounded-xl bg-[#0F172A] shadow-xl border border-white/15'
-              : tx.bgStyle === 'glass'
-                ? 'px-3.5 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15'
-                : tx.bgStyle === 'neon'
-                  ? 'px-3.5 py-1.5 rounded-xl bg-purple-950/80 border-2 shadow-lg'
-                  : ''
-          }`}
-        >
-          {tx.text}
-        </div>
-      ))}
+      {texts.map((tx) => {
+        const preset = tx.fontStyleId ? getFontDesignPresetById(tx.fontStyleId) : null;
+        return (
+          <div
+            key={tx.id}
+            style={{
+              left: `${tx.x}%`,
+              top: `${tx.y}%`,
+              transform: `translate(-50%, -50%) scale(${tx.scale}) rotate(${tx.rotation}deg)`,
+              fontFamily: preset?.style?.fontFamily || getFontFamilyCss(tx.fontFamily),
+              color: preset?.textColor || tx.color,
+              ...(preset?.style || {}),
+              textShadow:
+                preset?.style?.textShadow ||
+                (tx.fontFamily === 'neon'
+                  ? `0 0 12px ${tx.color}, 0 0 24px ${tx.color}`
+                  : tx.bgStyle === 'none'
+                    ? '0 2px 10px rgba(0,0,0,0.9)'
+                    : undefined),
+            }}
+            className={`absolute font-extrabold text-base sm:text-lg text-center whitespace-pre-wrap leading-snug max-w-[280px] ${
+              preset?.className || (
+                tx.bgStyle === 'pill'
+                  ? 'px-3.5 py-1.5 rounded-xl bg-[#0F172A] shadow-xl border border-white/15'
+                  : tx.bgStyle === 'glass'
+                    ? 'px-3.5 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15'
+                    : tx.bgStyle === 'neon'
+                      ? 'px-3.5 py-1.5 rounded-xl bg-purple-950/80 border-2 shadow-lg'
+                      : ''
+              )
+            }`}
+          >
+            {tx.text}
+          </div>
+        );
+      })}
 
       {activeSubtitle && (
         <div className="absolute bottom-14 inset-x-4 flex justify-center">
@@ -978,7 +1008,13 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   videoRefExternal,
 }) => {
   const [activeToolTab, setActiveToolTab] = useState<
-    'cut_crop' | 'transitions' | 'sound' | 'filters' | 'stickers' | 'text'
+    | 'cut_crop'
+    | 'transitions'
+    | 'sound'
+    | 'filters'
+    | 'greenscreen'
+    | 'stickers'
+    | 'text'
   >('cut_crop');
 
   const internalVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -986,6 +1022,9 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const customAudioInputRef = useRef<HTMLInputElement | null>(null);
   const customAudioElRef = useRef<HTMLAudioElement | null>(null);
+  const customBgInputRef = useRef<HTMLInputElement | null>(null);
+  const secondaryVideoInputRef = useRef<HTMLInputElement | null>(null);
+  const speechRecognitionRef = useRef<any>(null);
   const synthIntervalRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const transitionAnimRef = useRef<number | null>(null);
@@ -997,6 +1036,19 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const [soundPlayhead, setSoundPlayhead] = useState(0);
   const [stutterCounter, setStutterCounter] = useState(0);
   const [loopAnimationPhase, setLoopAnimationPhase] = useState(0);
+
+  // Green screen & background library state
+  const [bgSearchQuery, setBgSearchQuery] = useState('');
+  const [selectedBgCategory, setSelectedBgCategory] = useState<string>('All');
+
+  // Speech to text & 52 fonts state
+  const [isRecordingSpeech, setIsRecordingSpeech] = useState(false);
+  const [speechTranscript, setSpeechTranscript] = useState('');
+  const [selectedFontCategory, setSelectedFontCategory] =
+    useState<string>('All');
+  const [selectedFontPresetId, setSelectedFontPresetId] = useState<string>(
+    config.activeFontStyleId || 'tiktok_viral_bold'
+  );
 
   // Transition library & multi-clip state
   const [transitionCategory, setTransitionCategory] = useState<
@@ -1027,6 +1079,185 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const [newTextBg, setNewTextBg] =
     useState<StudioTextLayer['bgStyle']>('glass');
   const [bakingImage, setBakingImage] = useState(false);
+
+  // Speech-to-Text Handler: converts spoken voice into real-time synced captions
+  const handleToggleSpeechToText = () => {
+    if (isRecordingSpeech) {
+      if (speechRecognitionRef.current) {
+        try {
+          speechRecognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        speechRecognitionRef.current = null;
+      }
+      setIsRecordingSpeech(false);
+      return;
+    }
+
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      const input = prompt(
+        'Speech-to-Text: Enter what you spoke in the video to generate synced captions:'
+      );
+      if (input && input.trim()) {
+        const text = input.trim();
+        const start = Number((currentTime || 0).toFixed(1));
+        const preset = getFontDesignPresetById(selectedFontPresetId);
+        onChangeConfig((prev) => ({
+          ...prev,
+          activeFontStyleId: selectedFontPresetId,
+          texts: [
+            ...prev.texts,
+            {
+              id: `text_stt_${Date.now()}`,
+              text,
+              fontFamily: 'display',
+              fontStyleId: selectedFontPresetId,
+              color: preset.textColor || '#FFFFFF',
+              bgStyle: 'glass',
+              x: 50,
+              y: 80,
+              scale: 1.1,
+              rotation: 0,
+            },
+          ],
+          subtitles: [
+            ...(prev.subtitles || []),
+            {
+              id: `sub_${Date.now()}`,
+              startTime: start,
+              endTime: start + Math.max(3, text.split(' ').length * 0.4),
+              text,
+            },
+          ],
+        }));
+      }
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRecognitionClass();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = () => {
+        setIsRecordingSpeech(true);
+      };
+
+      recognition.onresult = (event: any) => {
+        let full = '';
+        for (let i = 0; i < event.results.length; i++) {
+          full += event.results[i][0].transcript + ' ';
+        }
+        const clean = full.trim();
+        setSpeechTranscript(clean);
+        if (clean) {
+          const start = Number((currentTime || 0).toFixed(1));
+          const preset = getFontDesignPresetById(selectedFontPresetId);
+          onChangeConfig((prev) => {
+            const exists = prev.texts.find((t) => t.id === 'live_stt_layer');
+            const newLayer: StudioTextLayer = {
+              id: 'live_stt_layer',
+              text: clean,
+              fontFamily: 'display',
+              fontStyleId: selectedFontPresetId,
+              color: preset.textColor || '#FFFFFF',
+              bgStyle: 'glass',
+              x: 50,
+              y: 82,
+              scale: 1.1,
+              rotation: 0,
+            };
+            return {
+              ...prev,
+              activeFontStyleId: selectedFontPresetId,
+              texts: exists
+                ? prev.texts.map((t) => (t.id === 'live_stt_layer' ? newLayer : t))
+                : [...prev.texts, newLayer],
+              subtitles: [
+                ...(prev.subtitles || []).filter((s) => s.id !== 'live_stt_sub'),
+                {
+                  id: 'live_stt_sub',
+                  startTime: start,
+                  endTime: start + 5,
+                  text: clean,
+                },
+              ],
+            };
+          });
+        }
+      };
+
+      recognition.onerror = () => {
+        setIsRecordingSpeech(false);
+      };
+
+      recognition.onend = () => {
+        setIsRecordingSpeech(false);
+      };
+
+      speechRecognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setIsRecordingSpeech(false);
+    }
+  };
+
+  // Secondary Video File Upload to cut and add another video clip
+  const handleSecondaryVideoUpload = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    onChangeConfig((prev) => {
+      const dur = prev.duration || 15;
+      const c1End = Number((dur / 2).toFixed(1));
+      return {
+        ...prev,
+        secondaryVideoUrl: url,
+        secondaryVideoName: file.name,
+        clipSegments: [
+          {
+            id: 'clip_primary',
+            label: 'Clip 1 (Original)',
+            startTime: 0,
+            endTime: c1End,
+            transitionAfter: 'cross_dissolve',
+            transitionDuration: 0.6,
+          },
+          {
+            id: 'clip_secondary',
+            label: `Clip 2 (${file.name.slice(0, 14)})`,
+            startTime: c1End,
+            endTime: dur,
+            transitionAfter: 'cross_dissolve',
+            transitionDuration: 0.6,
+          },
+        ],
+      };
+    });
+  };
+
+  // Custom Background Upload for Green Screen replacement
+  const handleCustomBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const isVid = file.type.startsWith('video/');
+    onChangeConfig((prev) => ({
+      ...prev,
+      chromaKeyEnabled: true,
+      greenScreenBgUrl: url,
+      greenScreenBgType: isVid ? 'video' : 'image',
+      greenScreenBgName: file.name,
+    }));
+  };
 
   // Sync video playback speed & volume/mute
   useEffect(() => {
@@ -1939,6 +2170,34 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
           onPointerLeave={() => setDraggingLayer(null)}
           className={`relative w-full ${aspectClass} overflow-hidden rounded-xl flex items-center justify-center select-none touch-none ${bgCanvasStyle.css}`}
         >
+          {/* Green Screen / Replaced Virtual Background Layer */}
+          {config.greenScreenBgUrl && (
+            <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+              {config.greenScreenBgType === 'video' ? (
+                <video
+                  src={config.greenScreenBgUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <img
+                  src={config.greenScreenBgUrl}
+                  alt={config.greenScreenBgName || 'Virtual background'}
+                  className="w-full h-full object-cover"
+                />
+              )}
+              {config.chromaKeyEnabled && (
+                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-400/50 text-[10px] font-bold text-emerald-300 flex items-center gap-1 shadow">
+                  <Film className="w-3 h-3 text-emerald-400" />
+                  <span>BG: {config.greenScreenBgName || 'Virtual'}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Underlying Media (Video or Photo or Studio Background) */}
           {mediaUrl ? (
             isVideo ? (
@@ -1956,6 +2215,9 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   transform: `rotate(${combinedRotation}deg) scale(${
                     combinedZoom * (config.flipH ? -1 : 1)
                   }, ${combinedZoom * (config.flipV ? -1 : 1)})`,
+                  mixBlendMode: config.chromaKeyEnabled ? 'screen' : undefined,
+                  position: 'relative',
+                  zIndex: 5,
                   ...transitionMediaStyle,
                 }}
                 className="w-full h-full object-contain cursor-pointer transition-transform duration-75"
@@ -1970,6 +2232,9 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   transform: `rotate(${combinedRotation}deg) scale(${
                     combinedZoom * (config.flipH ? -1 : 1)
                   }, ${combinedZoom * (config.flipV ? -1 : 1)})`,
+                  mixBlendMode: config.chromaKeyEnabled ? 'screen' : undefined,
+                  position: 'relative',
+                  zIndex: 5,
                   ...transitionMediaStyle,
                 }}
                 className="w-full h-full object-contain transition-transform duration-75 cursor-pointer"
@@ -2106,6 +2371,62 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                     {st.content}
                   </span>
                 )}
+                {/* On-Canvas Quick Overlay Action Badge: Resize & Remove */}
+                {isSel && (
+                  <div
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="absolute -top-8 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/90 backdrop-blur-md px-2 py-0.5 rounded-full border border-blue-400 shadow-xl z-30"
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          stickers: prev.stickers.map((s) =>
+                            s.id === st.id ? { ...s, scale: Math.max(0.4, Number((s.scale - 0.15).toFixed(2))) } : s
+                          ),
+                        }));
+                      }}
+                      className="text-xs text-white hover:text-blue-300 font-bold px-1"
+                      title="Smaller"
+                    >
+                      –
+                    </button>
+                    <span className="text-[10px] text-slate-300">{st.scale.toFixed(1)}x</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          stickers: prev.stickers.map((s) =>
+                            s.id === st.id ? { ...s, scale: Math.min(2.8, Number((s.scale + 0.15).toFixed(2))) } : s
+                          ),
+                        }));
+                      }}
+                      className="text-xs text-white hover:text-blue-300 font-bold px-1"
+                      title="Bigger"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          stickers: prev.stickers.filter((s) => s.id !== st.id),
+                        }));
+                        setSelectedLayer(null);
+                      }}
+                      className="text-rose-400 hover:text-rose-300 pl-1 border-l border-white/20"
+                      title="Remove Overlay"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2114,6 +2435,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
           {config.texts.map((tx) => {
             const isSel =
               selectedLayer?.type === 'text' && selectedLayer.id === tx.id;
+            const preset = tx.fontStyleId ? getFontDesignPresetById(tx.fontStyleId) : null;
             return (
               <div
                 key={tx.id}
@@ -2126,26 +2448,87 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   left: `${tx.x}%`,
                   top: `${tx.y}%`,
                   transform: `translate(-50%, -50%) scale(${tx.scale}) rotate(${tx.rotation}deg)`,
-                  fontFamily: getFontFamilyCss(tx.fontFamily),
-                  color: tx.color,
+                  fontFamily: preset?.style?.fontFamily || getFontFamilyCss(tx.fontFamily),
+                  color: preset?.textColor || tx.color,
+                  ...(preset?.style || {}),
                   textShadow:
-                    tx.fontFamily === 'neon'
+                    preset?.style?.textShadow ||
+                    (tx.fontFamily === 'neon'
                       ? `0 0 12px ${tx.color}, 0 0 24px ${tx.color}`
                       : tx.bgStyle === 'none'
                         ? '0 2px 10px rgba(0,0,0,0.9)'
-                        : undefined,
+                        : undefined),
                 }}
-                className={`absolute cursor-grab active:cursor-grabbing z-20 font-extrabold text-base sm:text-lg text-center whitespace-pre-wrap leading-snug max-w-[260px] ${
-                  tx.bgStyle === 'pill'
-                    ? 'px-3.5 py-1.5 rounded-xl bg-[#0F172A] shadow-xl border border-white/15'
-                    : tx.bgStyle === 'glass'
-                      ? 'px-3.5 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15'
-                      : tx.bgStyle === 'neon'
-                        ? 'px-3.5 py-1.5 rounded-xl bg-purple-950/80 border-2 shadow-lg'
-                        : ''
+                className={`absolute cursor-grab active:cursor-grabbing z-20 font-extrabold text-base sm:text-lg text-center whitespace-pre-wrap leading-snug max-w-[280px] ${
+                  preset?.className || (
+                    tx.bgStyle === 'pill'
+                      ? 'px-3.5 py-1.5 rounded-xl bg-[#0F172A] shadow-xl border border-white/15'
+                      : tx.bgStyle === 'glass'
+                        ? 'px-3.5 py-1.5 rounded-xl bg-black/70 backdrop-blur-md border border-white/15'
+                        : tx.bgStyle === 'neon'
+                          ? 'px-3.5 py-1.5 rounded-xl bg-purple-950/80 border-2 shadow-lg'
+                          : ''
+                  )
                 } ${isSel ? 'ring-2 ring-blue-400' : ''}`}
               >
                 {tx.text}
+
+                {/* On-Canvas Quick Overlay Action Badge: Resize & Remove */}
+                {isSel && (
+                  <div
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="absolute -top-8 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/90 backdrop-blur-md px-2 py-0.5 rounded-full border border-blue-400 shadow-xl z-30"
+                  >
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === tx.id ? { ...t, scale: Math.max(0.4, Number((t.scale - 0.15).toFixed(2))) } : t
+                          ),
+                        }));
+                      }}
+                      className="text-xs text-white hover:text-blue-300 font-bold px-1"
+                      title="Smaller"
+                    >
+                      –
+                    </button>
+                    <span className="text-[10px] text-slate-300">{tx.scale.toFixed(1)}x</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === tx.id ? { ...t, scale: Math.min(2.8, Number((t.scale + 0.15).toFixed(2))) } : t
+                          ),
+                        }));
+                      }}
+                      className="text-xs text-white hover:text-blue-300 font-bold px-1"
+                      title="Bigger"
+                    >
+                      +
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.filter((t) => t.id !== tx.id),
+                        }));
+                        setSelectedLayer(null);
+                      }}
+                      className="text-rose-400 hover:text-rose-300 pl-1 border-l border-white/20"
+                      title="Remove Overlay"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2199,8 +2582,8 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         )}
       </div>
 
-      {/* 6 Pro Studio Tool Tabs (All Available for Both Video & Photo!) */}
-      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1 bg-white/[0.04] rounded-2xl border border-white/10">
+      {/* 7 Pro Studio Tool Tabs (All Available for Both Video & Photo!) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-1.5 p-1 bg-white/[0.04] rounded-2xl border border-white/10">
         <button
           type="button"
           onClick={() => setActiveToolTab('cut_crop')}
@@ -2211,7 +2594,33 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
           }`}
         >
           <Scissors className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">Cut & Loop</span>
+          <span className="truncate">Cut & Speed</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveToolTab('greenscreen')}
+          className={`py-2.5 px-1.5 rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+            activeToolTab === 'greenscreen'
+              ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Film className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+          <span className="truncate">Green Screen</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveToolTab('text')}
+          className={`py-2.5 px-1.5 rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
+            activeToolTab === 'text'
+              ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Type className="w-3.5 h-3.5 shrink-0" />
+          <span className="truncate">52 Fonts & STT</span>
         </button>
 
         <button
@@ -2264,19 +2673,6 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         >
           <Smile className="w-3.5 h-3.5 shrink-0" />
           <span className="truncate">Stickers ({config.stickers.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveToolTab('text')}
-          className={`py-2.5 px-1.5 rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
-            activeToolTab === 'text'
-              ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow'
-              : 'text-slate-400 hover:text-white'
-          }`}
-        >
-          <Type className="w-3.5 h-3.5 shrink-0" />
-          <span className="truncate">Text ({config.texts.length})</span>
         </button>
       </div>
 
@@ -2473,29 +2869,127 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                 ))}
               </div>
 
-              <div className="flex items-center gap-1 flex-wrap">
-                <span className="text-[11px] text-slate-400 mr-1 flex items-center gap-1">
-                  <Gauge className="w-3 h-3 text-pink-400" /> Speed:
-                </span>
-                {[0.25, 0.5, 1, 1.5, 2, 3].map((sp) => (
-                  <button
-                    key={sp}
-                    type="button"
-                    onClick={() =>
-                      onChangeConfig((prev) => ({
-                        ...prev,
-                        playbackSpeed: sp,
-                      }))
-                    }
-                    className={`px-2 py-1 rounded-lg text-[11px] font-semibold ${
-                      config.playbackSpeed === sp
-                        ? 'bg-purple-600 text-white'
-                        : 'bg-white/5 text-slate-300 hover:bg-white/10'
-                    }`}
-                  >
-                    {sp}x
-                  </button>
-                ))}
+              {/* Pro Speed Control & Playback Rate */}
+              <div className="w-full pt-2.5 border-t border-white/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Gauge className="w-3.5 h-3.5 text-pink-400" />
+                    <span>Speed Control: {config.playbackSpeed}x</span>
+                  </span>
+                  <span className="text-[11px] text-pink-300 font-semibold">
+                    {config.playbackSpeed < 1
+                      ? 'Slow Motion 🐌'
+                      : config.playbackSpeed > 1
+                        ? 'Fast Forward ⚡'
+                        : 'Normal Speed 🎬'}
+                  </span>
+                </div>
+
+                {/* Speed Slider: 0.25x to 4.0x */}
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] text-slate-400">0.25x</span>
+                  <input
+                    type="range"
+                    min={0.25}
+                    max={4.0}
+                    step={0.05}
+                    value={config.playbackSpeed}
+                    onChange={(e) => {
+                      const sp = Number(Number(e.target.value).toFixed(2));
+                      onChangeConfig((prev) => ({ ...prev, playbackSpeed: sp }));
+                      if (videoElRef.current) {
+                        videoElRef.current.playbackRate = sp;
+                      }
+                    }}
+                    className="flex-1 accent-pink-500"
+                  />
+                  <span className="text-[10px] text-slate-400">4.0x</span>
+                </div>
+
+                {/* Speed Preset Buttons */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4].map((sp) => (
+                    <button
+                      key={sp}
+                      type="button"
+                      onClick={() => {
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          playbackSpeed: sp,
+                        }));
+                        if (videoElRef.current) {
+                          videoElRef.current.playbackRate = sp;
+                        }
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all ${
+                        config.playbackSpeed === sp
+                          ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow'
+                          : 'bg-white/5 text-slate-300 hover:bg-white/10'
+                      }`}
+                    >
+                      {sp}x
+                    </button>
+                  ))}
+                </div>
+
+                {/* Cut & Add Another Video Section */}
+                <div className="pt-2 border-t border-white/10 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Film className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Cut & Add Another Video Clip</span>
+                    </span>
+                    {config.secondaryVideoUrl && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onChangeConfig((prev) => ({
+                            ...prev,
+                            secondaryVideoUrl: undefined,
+                            secondaryVideoName: undefined,
+                          }))
+                        }
+                        className="text-[10px] text-rose-400 hover:underline"
+                      >
+                        Remove 2nd Clip
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    ref={secondaryVideoInputRef}
+                    type="file"
+                    accept="video/*,image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const url = URL.createObjectURL(file);
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          secondaryVideoUrl: url,
+                          secondaryVideoName: file.name,
+                        }));
+                      }
+                    }}
+                    className="hidden"
+                  />
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => secondaryVideoInputRef.current?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-400/40 text-cyan-300 text-xs font-semibold inline-flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{config.secondaryVideoUrl ? 'Change 2nd Video Clip' : '➕ Add Another Video Clip / Merge'}</span>
+                    </button>
+                    {config.secondaryVideoName && (
+                      <span className="text-[11px] text-slate-300 bg-white/5 px-2.5 py-1 rounded-lg border border-white/10 truncate max-w-[200px]">
+                        🎬 {config.secondaryVideoName}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -2728,6 +3222,249 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: GREEN SCREEN EFFECTS & VIRTUAL BACKGROUND REPLACEMENT */}
+      {activeToolTab === 'greenscreen' && (
+        <div className="space-y-4 bg-white/[0.02] border border-white/10 rounded-2xl p-4">
+          {/* Header */}
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/10">
+            <div>
+              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Film className="w-4 h-4 text-emerald-400" />
+                <span>Green Screen & Virtual Background Replacement</span>
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Replace your background with realistic virtual broadcast studios, neon cyberpunks, luxury lofts, or travel landmarks
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {config.greenScreenBgUrl && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      greenScreenBgUrl: undefined,
+                      greenScreenBgName: undefined,
+                      chromaKeyEnabled: false,
+                    }))
+                  }
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold inline-flex items-center gap-1"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Remove Background
+                </button>
+              )}
+
+              <input
+                ref={customBgInputRef}
+                type="file"
+                accept="image/*,video/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const url = URL.createObjectURL(file);
+                    const isVid = file.type.startsWith('video/');
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      greenScreenBgUrl: url,
+                      greenScreenBgType: isVid ? 'video' : 'image',
+                      greenScreenBgName: file.name,
+                      chromaKeyEnabled: true,
+                    }));
+                  }
+                }}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => customBgInputRef.current?.click()}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <Upload className="w-3.5 h-3.5 text-blue-400" />
+                <span>Upload Custom BG</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Chroma Key Auto-Cutout Settings */}
+          <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(config.chromaKeyEnabled)}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      chromaKeyEnabled: e.target.checked,
+                    }))
+                  }
+                  className="w-4 h-4 accent-emerald-500 rounded"
+                />
+                <span className="text-xs font-bold text-emerald-300">
+                  Enable Chroma Key Background Cutout
+                </span>
+              </label>
+
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-slate-400">Key Screen Color:</span>
+                {(
+                  [
+                    { id: 'green', label: '🟢 Green', color: '#10B981' },
+                    { id: 'blue', label: '🔵 Blue', color: '#3B82F6' },
+                    { id: 'black', label: '⚫ Dark', color: '#1F2937' },
+                  ] as const
+                ).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() =>
+                      onChangeConfig((prev) => ({
+                        ...prev,
+                        chromaKeyColor: c.id,
+                        chromaKeyEnabled: true,
+                      }))
+                    }
+                    className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border ${
+                      (config.chromaKeyColor || 'green') === c.id
+                        ? 'border-emerald-400 bg-emerald-500/20 text-white'
+                        : 'border-white/10 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-slate-300 whitespace-nowrap">
+                Cutout Sensitivity: {(config.chromaKeySensitivity ?? 50)}%
+              </span>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={config.chromaKeySensitivity ?? 50}
+                onChange={(e) =>
+                  onChangeConfig((prev) => ({
+                    ...prev,
+                    chromaKeySensitivity: Number(e.target.value),
+                  }))
+                }
+                className="flex-1 accent-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Search & Category Filter Bar */}
+          <div className="space-y-2">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={bgSearchQuery}
+                onChange={(e) => setBgSearchQuery(e.target.value)}
+                placeholder="Search background presets (e.g. Broadcast Studio, Cyberpunk, Miami, Sunset, Loft)..."
+                className="w-full bg-[#0B1021] border border-white/15 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              />
+              {bgSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setBgSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Category Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {(
+                [
+                  'All',
+                  'Studio',
+                  'Cyberpunk',
+                  'Nature & Travel',
+                  'Luxury & City',
+                  'Abstract',
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedBgCategory(cat)}
+                  className={`px-3 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap transition-colors ${
+                    selectedBgCategory === cat
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Background Presets Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[380px] overflow-y-auto pr-1">
+            {GREEN_SCREEN_BACKGROUNDS.filter((bg) => {
+              const matchesCat =
+                selectedBgCategory === 'All' || bg.category === selectedBgCategory;
+              const matchesSearch =
+                !bgSearchQuery ||
+                bg.name.toLowerCase().includes(bgSearchQuery.toLowerCase()) ||
+                bg.tags.some((t) =>
+                  t.toLowerCase().includes(bgSearchQuery.toLowerCase())
+                );
+              return matchesCat && matchesSearch;
+            }).map((bg) => {
+              const isSelected = config.greenScreenBgUrl === bg.url;
+              return (
+                <div
+                  key={bg.id}
+                  onClick={() =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      greenScreenBgUrl: bg.url,
+                      greenScreenBgType: bg.type,
+                      greenScreenBgName: bg.name,
+                      chromaKeyEnabled: true,
+                    }))
+                  }
+                  className={`group relative rounded-xl overflow-hidden border cursor-pointer transition-all aspect-video bg-slate-900 ${
+                    isSelected
+                      ? 'border-emerald-400 ring-2 ring-emerald-500/50 scale-[1.02]'
+                      : 'border-white/10 hover:border-white/30'
+                  }`}
+                >
+                  <img
+                    src={bg.thumbUrl}
+                    alt={bg.name}
+                    className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-end p-2">
+                    <span className="text-[10px] font-bold text-white truncate drop-shadow">
+                      {bg.name}
+                    </span>
+                    <span className="text-[9px] text-emerald-300 drop-shadow truncate">
+                      {bg.category} • {bg.type === 'video' ? '🎬 Live Video' : '🖼️ 4K Studio'}
+                    </span>
+                  </div>
+                  {isSelected && (
+                    <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -3589,9 +4326,55 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         </div>
       )}
 
-      {/* TAB 4: WRITE TEXT & TYPOGRAPHY */}
+      {/* TAB 4: 52 FONTS, SPEECH TO TEXT & OVERLAYS */}
       {activeToolTab === 'text' && (
         <div className="space-y-4 bg-white/[0.02] border border-white/10 rounded-2xl p-4">
+          {/* 1. Speech-to-Text Transcribe Section */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-950/40 via-purple-950/30 to-slate-900 border border-blue-500/25 space-y-2.5">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Mic className="w-4 h-4 text-blue-400" />
+                  <span>Speech-to-Text: Spoken Voice → Live Synced Captions</span>
+                </span>
+                <p className="text-[11px] text-slate-400">
+                  Tap to speak: all you say in the audio is automatically transcribed and displayed on the video
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleToggleSpeechToText}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all shadow-md ${
+                  isRecordingSpeech
+                    ? 'bg-rose-600 text-white animate-pulse ring-2 ring-rose-400'
+                    : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-500 hover:to-purple-500'
+                }`}
+              >
+                {isRecordingSpeech ? (
+                  <>
+                    <MicOff className="w-3.5 h-3.5" />
+                    <span>Listening... Tap to Stop</span>
+                  </>
+                ) : (
+                  <>
+                    <Mic className="w-3.5 h-3.5" />
+                    <span>Choose Speech-to-Text</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {speechTranscript && (
+              <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 text-xs text-white flex items-center justify-between gap-2">
+                <span className="truncate">🗣️ &quot;{speechTranscript}&quot;</span>
+                <span className="text-[10px] text-emerald-400 font-bold shrink-0">
+                  ✓ Displayed on Video
+                </span>
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
@@ -3609,53 +4392,130 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] text-slate-400 mb-1.5">
-                Font Style
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {(
-                  [
-                    { id: 'display', label: 'Bold' },
-                    { id: 'neon', label: 'Neon Glow' },
-                    { id: 'sans', label: 'Clean' },
-                    { id: 'mono', label: 'Mono' },
-                    { id: 'serif', label: 'Serif' },
-                  ] as const
-                ).map((f) => {
-                  const currentFont = activeText
-                    ? activeText.fontFamily
-                    : newTextFont;
-                  return (
-                    <button
-                      key={f.id}
-                      type="button"
-                      onClick={() => {
-                        setNewTextFont(f.id);
-                        if (activeText) {
-                          onChangeConfig((prev) => ({
+          {/* 2. 52 Font Styles, Colours & Design Gallery */}
+          <div className="space-y-2 pt-2 border-t border-white/10">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Palette className="w-4 h-4 text-purple-400" />
+                <span>52 Pro Font Styles, Colors & Preset Designs</span>
+              </span>
+              <span className="text-[10px] text-purple-300 font-semibold">
+                Tap any design to apply to text overlay
+              </span>
+            </div>
+
+            {/* Category Filter for 52 Styles */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {(
+                [
+                  'All',
+                  'Viral & Subtitles',
+                  'Neon & Glow',
+                  'Luxury & Metallic',
+                  'Retro & Comic',
+                  'Urban & Modern',
+                  'Aesthetic & Nature',
+                ] as const
+              ).map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedFontCategory(cat)}
+                  className={`px-2.5 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap transition-colors ${
+                    selectedFontCategory === cat
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white/5 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            {/* 52 Font Presets Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-[340px] overflow-y-auto pr-1">
+              {FONT_STYLES_52.filter(
+                (p) =>
+                  selectedFontCategory === 'All' ||
+                  p.category === selectedFontCategory
+              ).map((preset) => {
+                const isSelected = selectedFontPresetId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedFontPresetId(preset.id);
+                      onChangeConfig((prev) => {
+                        const targetText = activeText || prev.texts[0];
+                        if (targetText) {
+                          return {
                             ...prev,
+                            activeFontStyleId: preset.id,
                             texts: prev.texts.map((t) =>
-                              t.id === activeText.id
-                                ? { ...t, fontFamily: f.id }
+                              t.id === targetText.id
+                                ? {
+                                    ...t,
+                                    fontStyleId: preset.id,
+                                    color: preset.textColor,
+                                  }
                                 : t
                             ),
-                          }));
+                          };
+                        } else {
+                          return {
+                            ...prev,
+                            activeFontStyleId: preset.id,
+                            texts: [
+                              ...prev.texts,
+                              {
+                                id: `tx_${Date.now()}`,
+                                text: newTextValue.trim() || 'BoostHub Vibes ✨',
+                                fontFamily: 'display',
+                                fontStyleId: preset.id,
+                                color: preset.textColor,
+                                bgStyle: 'glass',
+                                x: 50,
+                                y: 50,
+                                scale: 1.1,
+                                rotation: 0,
+                              },
+                            ],
+                          };
                         }
+                      });
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition-all relative overflow-hidden flex flex-col justify-between min-h-[64px] bg-[#0E1428] ${
+                      isSelected
+                        ? 'border-purple-400 ring-2 ring-purple-500/50 scale-[1.02]'
+                        : 'border-white/10 hover:border-white/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[9px] mb-1">
+                      <span className="text-slate-400 truncate">{preset.category}</span>
+                      <span className="px-1.5 py-0.2 rounded bg-white/10 font-bold text-amber-300">
+                        {preset.badge}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        ...preset.style,
+                        fontSize: '12px',
+                        lineHeight: 1.2,
+                        padding: '2px 4px',
                       }}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold ${
-                        currentFont === f.id
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white/5 text-slate-300 hover:bg-white/10'
-                      }`}
+                      className="truncate text-center my-auto"
                     >
-                      {f.label}
-                    </button>
-                  );
-                })}
-              </div>
+                      {preset.name}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-white/10">
 
             <div>
               <label className="block text-[11px] text-slate-400 mb-1.5">
@@ -3773,52 +4633,135 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                    <span>Text Size</span>
-                    <span>{activeText.scale.toFixed(1)}x</span>
+                    <span>Resize Overlay (Scale)</span>
+                    <span className="font-mono text-blue-400">
+                      {activeText.scale.toFixed(1)}x
+                    </span>
                   </div>
-                  <input
-                    type="range"
-                    min={0.6}
-                    max={2.2}
-                    step={0.1}
-                    value={activeText.scale}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      onChangeConfig((prev) => ({
-                        ...prev,
-                        texts: prev.texts.map((t) =>
-                          t.id === activeText.id ? { ...t, scale: val } : t
-                        ),
-                      }));
-                    }}
-                    className="w-full accent-blue-500"
-                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id
+                              ? { ...t, scale: Math.max(0.4, Number((t.scale - 0.1).toFixed(1))) }
+                              : t
+                          ),
+                        }))
+                      }
+                      className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-white font-bold text-xs"
+                      title="Make Smaller"
+                    >
+                      –
+                    </button>
+                    <input
+                      type="range"
+                      min={0.4}
+                      max={3.0}
+                      step={0.1}
+                      value={activeText.scale}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id ? { ...t, scale: val } : t
+                          ),
+                        }));
+                      }}
+                      className="flex-1 accent-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id
+                              ? { ...t, scale: Math.min(3.0, Number((t.scale + 0.1).toFixed(1))) }
+                              : t
+                          ),
+                        }))
+                      }
+                      className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-white font-bold text-xs"
+                      title="Make Bigger"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
 
                 <div>
                   <div className="flex justify-between text-[11px] text-slate-300 mb-1">
-                    <span>Text Angle</span>
-                    <span>{activeText.rotation}°</span>
+                    <span>Quick Align Overlay</span>
+                    <span className="text-[10px] text-slate-400">Top / Center / Bottom</span>
                   </div>
-                  <input
-                    type="range"
-                    min={-45}
-                    max={45}
-                    step={1}
-                    value={activeText.rotation}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      onChangeConfig((prev) => ({
-                        ...prev,
-                        texts: prev.texts.map((t) =>
-                          t.id === activeText.id ? { ...t, rotation: val } : t
-                        ),
-                      }));
-                    }}
-                    className="w-full accent-purple-500"
-                  />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id ? { ...t, x: 50, y: 15 } : t
+                          ),
+                        }))
+                      }
+                      className="flex-1 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-slate-200"
+                    >
+                      Top
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id ? { ...t, x: 50, y: 50 } : t
+                          ),
+                        }))
+                      }
+                      className="flex-1 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-slate-200"
+                    >
+                      Center
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          texts: prev.texts.map((t) =>
+                            t.id === activeText.id ? { ...t, x: 50, y: 82 } : t
+                          ),
+                        }))
+                      }
+                      className="flex-1 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[11px] text-slate-200"
+                    >
+                      Bottom
+                    </button>
+                  </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {config.texts.length > 0 && !activeText && (
+            <div className="pt-2 border-t border-white/10 flex items-center justify-between">
+              <span className="text-xs text-slate-400">
+                {config.texts.length} text layer(s) on stage
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  onChangeConfig((prev) => ({ ...prev, texts: [] }));
+                  setSelectedLayer(null);
+                }}
+                className="text-xs text-rose-400 hover:underline"
+              >
+                Clear All Text Overlays
+              </button>
             </div>
           )}
         </div>
