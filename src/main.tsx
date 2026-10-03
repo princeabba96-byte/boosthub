@@ -4,7 +4,11 @@ import App from './App.tsx';
 import './index.css';
 
 if (typeof window !== 'undefined') {
-  sessionStorage.removeItem('bh_vite_reloaded');
+  try {
+    sessionStorage.removeItem('bh_vite_reloaded');
+  } catch {
+    // ignore iframe storage sandbox restrictions
+  }
   window.addEventListener(
     'error',
     (event) => {

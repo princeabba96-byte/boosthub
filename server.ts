@@ -2416,10 +2416,11 @@ Rules:
   }, 800);
 
   // --- STATIC / VITE MIDDLEWARE ---
+  const isProd = process.env.NODE_ENV === 'production';
   const distPath = path.join(process.cwd(), 'dist');
   const distIndexHtml = path.join(distPath, 'index.html');
 
-  if (fs.existsSync(distIndexHtml)) {
+  if (isProd && fs.existsSync(distIndexHtml)) {
     const assetsDir = path.join(distPath, 'assets');
 
     // If a client with a cached dev index.html requests /src/main.tsx while serving dist,
