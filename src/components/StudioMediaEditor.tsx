@@ -32,6 +32,12 @@ import {
   Image as ImageIcon,
   Film,
   Palette,
+  CheckCircle2,
+  X,
+  Download,
+  RefreshCw,
+  Eye,
+  Undo2,
 } from 'lucide-react';
 import {
   FONT_STYLES_52,
@@ -257,7 +263,18 @@ export interface StudioEditConfig {
   pipX?: number;
   pipY?: number;
   pipScale?: number;
-  // Green Screen / Chroma Key & Background Replacement
+  // Green Screen / Chroma Key & AI Background Replacement (Works for both videos & photos)
+  aiBgMode?: 'ai_cutout' | 'chroma_key';
+  aiBgEnabled?: boolean;
+  aiBgSensitivity?: number; // 10..100
+  aiBgEdgeFeather?: number; // 0..20
+  bgBlur?: number; // 0..30 (px)
+  bgZoom?: number; // 0.5..3.0
+  bgPositionX?: number; // -100..100 (%)
+  bgPositionY?: number; // -100..100 (%)
+  personScale?: number; // 0.5..2.5
+  personPositionX?: number; // -100..100 (%)
+  personPositionY?: number; // -100..100 (%)
   chromaKeyEnabled?: boolean;
   chromaKeyColor?: 'green' | 'blue' | 'black';
   chromaKeySensitivity?: number;
@@ -345,6 +362,17 @@ export const DEFAULT_STUDIO_CONFIG: StudioEditConfig = {
   stickers: [],
   texts: [],
   canvasBgId: 'cyber_neon',
+  aiBgMode: 'ai_cutout',
+  aiBgEnabled: false,
+  aiBgSensitivity: 50,
+  aiBgEdgeFeather: 4,
+  bgBlur: 0,
+  bgZoom: 1,
+  bgPositionX: 0,
+  bgPositionY: 0,
+  personScale: 1,
+  personPositionX: 0,
+  personPositionY: 0,
 };
 
 export const STUDIO_BUILTIN_SOUNDS: Array<{
@@ -707,14 +735,48 @@ export async function renderStudioCompositeToFile(
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
 
-    // 2. Draw Photo or Video Frame with Filter, Zoom, Rotation, Flip
+    // 1b. Render Replacement Virtual Background (AI Background or Green Screen)
+    if (config.greenScreenBgUrl) {
+      try {
+        const bgImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const el = new Image();
+          el.crossOrigin = 'anonymous';
+          el.onload = () => resolve(el);
+          el.onerror = reject;
+          el.src = config.greenScreenBgUrl!;
+        });
+        ctx.save();
+        if ((config.bgBlur || 0) > 0) {
+          ctx.filter = `blur(${config.bgBlur}px)`;
+        }
+        const bz = config.bgZoom || 1;
+        const bpx = ((config.bgPositionX || 0) / 100) * width;
+        const bpy = ((config.bgPositionY || 0) / 100) * height;
+        ctx.translate(width / 2 + bpx, height / 2 + bpy);
+        ctx.scale(bz, bz);
+        const bw = bgImg.naturalWidth || width;
+        const bh = bgImg.naturalHeight || height;
+        const bScale = Math.max(width / bw, height / bh);
+        const bdw = bw * bScale;
+        const bdh = bh * bScale;
+        ctx.drawImage(bgImg, -bdw / 2, -bdh / 2, bdw, bdh);
+        ctx.restore();
+      } catch {
+        // Fall back gracefully
+      }
+    }
+
+    // 2. Draw Photo or Video Frame with Filter, Zoom, Rotation, Flip & Person Scale/Pan
     ctx.save();
     ctx.filter = buildCssFilterString(config);
-    ctx.translate(width / 2, height / 2);
+    const ppx = ((config.personPositionX || 0) / 100) * width;
+    const ppy = ((config.personPositionY || 0) / 100) * height;
+    ctx.translate(width / 2 + ppx, height / 2 + ppy);
     ctx.rotate((config.rotation * Math.PI) / 180);
+    const effScale = (config.personScale || 1) * config.zoom;
     ctx.scale(
-      config.zoom * (config.flipH ? -1 : 1),
-      config.zoom * (config.flipV ? -1 : 1)
+      effScale * (config.flipH ? -1 : 1),
+      effScale * (config.flipV ? -1 : 1)
     );
 
     if (isVideo && videoElement && videoElement.videoWidth > 0) {
@@ -1009,10 +1071,11 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
 }) => {
   const [activeToolTab, setActiveToolTab] = useState<
     | 'cut_crop'
+    | 'ai_background'
+    | 'greenscreen'
     | 'transitions'
     | 'sound'
     | 'filters'
-    | 'greenscreen'
     | 'stickers'
     | 'text'
   >('cut_crop');
@@ -1037,7 +1100,11 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const [stutterCounter, setStutterCounter] = useState(0);
   const [loopAnimationPhase, setLoopAnimationPhase] = useState(0);
 
-  // Green screen & background library state
+  // AI Background Replacement & Green Screen state
+  const [isGeneratingAiBg, setIsGeneratingAiBg] = useState(false);
+  const [aiBgPrompt, setAiBgPrompt] = useState('');
+  const [showAiBgPromptModal, setShowAiBgPromptModal] = useState(false);
+  const [aiBgNotice, setAiBgNotice] = useState('');
   const [bgSearchQuery, setBgSearchQuery] = useState('');
   const [selectedBgCategory, setSelectedBgCategory] = useState<string>('All');
 
@@ -1079,6 +1146,61 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const [newTextBg, setNewTextBg] =
     useState<StudioTextLayer['bgStyle']>('glass');
   const [bakingImage, setBakingImage] = useState(false);
+
+  // AI Background Generator Handler
+  const handleGenerateAiBackground = async (promptOverride?: string) => {
+    const query = (promptOverride || aiBgPrompt).trim();
+    if (!query) return;
+    setIsGeneratingAiBg(true);
+    setAiBgNotice('Generating custom AI environment...');
+    try {
+      const res = await fetch('/api/ai/generate-background', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: query, isVideo }),
+      });
+      const data = await res.json();
+      if (data?.ok && data?.background?.url) {
+        onChangeConfig((prev) => ({
+          ...prev,
+          greenScreenBgUrl: data.background.url,
+          greenScreenBgType: 'image',
+          greenScreenBgName: data.background.name || query,
+          aiBgEnabled: true,
+          chromaKeyEnabled: prev.aiBgMode === 'chroma_key',
+        }));
+        setShowAiBgPromptModal(false);
+        setAiBgNotice(`Applied AI Background: ${data.background.name || query}`);
+        setTimeout(() => setAiBgNotice(''), 4000);
+        return;
+      }
+    } catch {
+      // Fall through to preset matcher
+    } finally {
+      setIsGeneratingAiBg(false);
+    }
+
+    // Curated fallback if offline or API error
+    const lower = query.toLowerCase();
+    const match =
+      GREEN_SCREEN_BACKGROUNDS.find(
+        (b) =>
+          b.name.toLowerCase().includes(lower) ||
+          b.tags.some((t) => t.toLowerCase().includes(lower))
+      ) || GREEN_SCREEN_BACKGROUNDS[0];
+
+    onChangeConfig((prev) => ({
+      ...prev,
+      greenScreenBgUrl: match.url,
+      greenScreenBgType: match.type,
+      greenScreenBgName: match.name,
+      aiBgEnabled: true,
+      chromaKeyEnabled: prev.aiBgMode === 'chroma_key',
+    }));
+    setShowAiBgPromptModal(false);
+    setAiBgNotice(`Applied AI Background: ${match.name}`);
+    setTimeout(() => setAiBgNotice(''), 4000);
+  };
 
   // Speech-to-Text Handler: converts spoken voice into real-time synced captions
   const handleToggleSpeechToText = () => {
@@ -2170,7 +2292,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
           onPointerLeave={() => setDraggingLayer(null)}
           className={`relative w-full ${aspectClass} overflow-hidden rounded-xl flex items-center justify-center select-none touch-none ${bgCanvasStyle.css}`}
         >
-          {/* Green Screen / Replaced Virtual Background Layer */}
+          {/* Green Screen & AI Replacement Virtual Background Layer (Positioned behind person) */}
           {config.greenScreenBgUrl && (
             <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
               {config.greenScreenBgType === 'video' ? (
@@ -2180,25 +2302,37 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   loop
                   muted
                   playsInline
-                  className="w-full h-full object-cover"
+                  style={{
+                    filter: (config.bgBlur || 0) > 0 ? `blur(${config.bgBlur}px)` : undefined,
+                    transform: `translate(${config.bgPositionX || 0}%, ${config.bgPositionY || 0}%) scale(${config.bgZoom || 1})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="w-full h-full object-cover transition-transform duration-75"
                 />
               ) : (
                 <img
                   src={config.greenScreenBgUrl}
                   alt={config.greenScreenBgName || 'Virtual background'}
-                  className="w-full h-full object-cover"
+                  style={{
+                    filter: (config.bgBlur || 0) > 0 ? `blur(${config.bgBlur}px)` : undefined,
+                    transform: `translate(${config.bgPositionX || 0}%, ${config.bgPositionY || 0}%) scale(${config.bgZoom || 1})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="w-full h-full object-cover transition-transform duration-75"
                 />
               )}
-              {config.chromaKeyEnabled && (
-                <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-400/50 text-[10px] font-bold text-emerald-300 flex items-center gap-1 shadow">
-                  <Film className="w-3 h-3 text-emerald-400" />
-                  <span>BG: {config.greenScreenBgName || 'Virtual'}</span>
-                </div>
-              )}
+              <div className="absolute top-2 left-2 px-2.5 py-1 rounded-lg bg-black/80 backdrop-blur-md border border-emerald-400/40 text-[10px] font-bold text-emerald-300 flex items-center gap-1.5 shadow-lg">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate max-w-[170px]">
+                  {config.greenScreenBgName || 'Virtual BG'}
+                  {(config.bgBlur || 0) > 0 ? ` • ${config.bgBlur}px blur` : ''}
+                  {(config.bgZoom || 1) !== 1 ? ` • ${config.bgZoom}x zoom` : ''}
+                </span>
+              </div>
             </div>
           )}
 
-          {/* Underlying Media (Video or Photo or Studio Background) */}
+          {/* Underlying Foreground Media: Person / Subject (Face, body, clothes, hair, voice 100% untouched) */}
           {mediaUrl ? (
             isVideo ? (
               <video
@@ -2212,12 +2346,15 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                 onClick={toggleVideoPlay}
                 style={{
                   filter: buildCssFilterString(config),
-                  transform: `rotate(${combinedRotation}deg) scale(${
-                    combinedZoom * (config.flipH ? -1 : 1)
-                  }, ${combinedZoom * (config.flipV ? -1 : 1)})`,
-                  mixBlendMode: config.chromaKeyEnabled ? 'screen' : undefined,
+                  transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
+                    combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
+                  }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
+                  mixBlendMode:
+                    config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
+                      ? 'screen'
+                      : undefined,
                   position: 'relative',
-                  zIndex: 5,
+                  zIndex: 10,
                   ...transitionMediaStyle,
                 }}
                 className="w-full h-full object-contain cursor-pointer transition-transform duration-75"
@@ -2229,12 +2366,15 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                 onClick={toggleVideoPlay}
                 style={{
                   filter: buildCssFilterString(config),
-                  transform: `rotate(${combinedRotation}deg) scale(${
-                    combinedZoom * (config.flipH ? -1 : 1)
-                  }, ${combinedZoom * (config.flipV ? -1 : 1)})`,
-                  mixBlendMode: config.chromaKeyEnabled ? 'screen' : undefined,
+                  transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
+                    combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
+                  }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
+                  mixBlendMode:
+                    config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
+                      ? 'screen'
+                      : undefined,
                   position: 'relative',
-                  zIndex: 5,
+                  zIndex: 10,
                   ...transitionMediaStyle,
                 }}
                 className="w-full h-full object-contain transition-transform duration-75 cursor-pointer"
@@ -2599,15 +2739,15 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
 
         <button
           type="button"
-          onClick={() => setActiveToolTab('greenscreen')}
+          onClick={() => setActiveToolTab('ai_background')}
           className={`py-2.5 px-1.5 rounded-xl text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1 transition-all ${
-            activeToolTab === 'greenscreen'
-              ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+            activeToolTab === 'ai_background' || activeToolTab === 'greenscreen'
+              ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white shadow-lg ring-1 ring-emerald-400/50'
               : 'text-slate-400 hover:text-white'
           }`}
         >
-          <Film className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
-          <span className="truncate">Green Screen</span>
+          <Sparkles className="w-3.5 h-3.5 shrink-0 text-emerald-400 animate-pulse" />
+          <span className="truncate">AI Background</span>
         </button>
 
         <button
@@ -3226,38 +3366,62 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         </div>
       )}
 
-      {/* TAB: GREEN SCREEN EFFECTS & VIRTUAL BACKGROUND REPLACEMENT */}
-      {activeToolTab === 'greenscreen' && (
+      {/* TAB: AI BACKGROUND REPLACEMENT & GREEN SCREEN CHROMA KEY (WORKS FOR BOTH VIDEOS & PHOTOS) */}
+      {(activeToolTab === 'ai_background' || activeToolTab === 'greenscreen') && (
         <div className="space-y-4 bg-white/[0.02] border border-white/10 rounded-2xl p-4">
           {/* Header */}
           <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-white/10">
             <div>
-              <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                <Film className="w-4 h-4 text-emerald-400" />
-                <span>Green Screen & Virtual Background Replacement</span>
-              </h4>
-              <p className="text-[11px] text-slate-400">
-                Replace your background with realistic virtual broadcast studios, neon cyberpunks, luxury lofts, or travel landmarks
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase tracking-wider border border-emerald-500/30">
+                  AI Video & Photo Tool
+                </span>
+                <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+                  <Wand2 className="w-4 h-4 text-emerald-400" />
+                  <span>AI Background Replacement Studio</span>
+                </h4>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Automatically separate person from original background with AI, search 4K virtual scenes, or generate custom environments.
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {config.greenScreenBgUrl && (
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     onChangeConfig((prev) => ({
                       ...prev,
                       greenScreenBgUrl: undefined,
                       greenScreenBgName: undefined,
                       chromaKeyEnabled: false,
-                    }))
-                  }
-                  className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold inline-flex items-center gap-1"
+                      aiBgEnabled: false,
+                      bgBlur: 0,
+                      bgZoom: 1,
+                      bgPositionX: 0,
+                      bgPositionY: 0,
+                      personScale: 1,
+                      personPositionX: 0,
+                      personPositionY: 0,
+                    }));
+                    setAiBgNotice('Background removed. Original video/photo restored.');
+                    setTimeout(() => setAiBgNotice(''), 3000);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold inline-flex items-center gap-1 transition-colors"
                 >
-                  <Trash2 className="w-3.5 h-3.5" /> Remove Background
+                  <Undo2 className="w-3.5 h-3.5" /> Undo / Remove BG
                 </button>
               )}
+
+              <button
+                type="button"
+                onClick={() => setShowAiBgPromptModal(true)}
+                className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-md shadow-purple-500/20 transition-all"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Generate with AI</span>
+              </button>
 
               <input
                 ref={customBgInputRef}
@@ -3273,8 +3437,11 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                       greenScreenBgUrl: url,
                       greenScreenBgType: isVid ? 'video' : 'image',
                       greenScreenBgName: file.name,
-                      chromaKeyEnabled: true,
+                      aiBgEnabled: true,
+                      chromaKeyEnabled: prev.aiBgMode === 'chroma_key',
                     }));
+                    setAiBgNotice(`Loaded custom background: ${file.name}`);
+                    setTimeout(() => setAiBgNotice(''), 3000);
                   }
                 }}
                 className="hidden"
@@ -3282,87 +3449,451 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               <button
                 type="button"
                 onClick={() => customBgInputRef.current?.click()}
-                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
               >
                 <Upload className="w-3.5 h-3.5 text-blue-400" />
                 <span>Upload Custom BG</span>
               </button>
+
+              {!isVideo && onBakeStudioImage && (
+                <button
+                  type="button"
+                  disabled={bakingImage}
+                  onClick={async () => {
+                    setBakingImage(true);
+                    try {
+                      const file = await renderStudioCompositeToFile(
+                        mediaUrl,
+                        false,
+                        null,
+                        config
+                      );
+                      if (file) {
+                        await onBakeStudioImage(file);
+                        const downloadLink = document.createElement('a');
+                        downloadLink.href = URL.createObjectURL(file);
+                        downloadLink.download = `ai-background-${Date.now()}.png`;
+                        downloadLink.click();
+                        setAiBgNotice('Photo exported with AI Background!');
+                        setTimeout(() => setAiBgNotice(''), 3000);
+                      }
+                    } finally {
+                      setBakingImage(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>{bakingImage ? 'Exporting...' : 'Export Photo'}</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Chroma Key Auto-Cutout Settings */}
-          <div className="p-3 rounded-xl bg-emerald-950/20 border border-emerald-500/20 space-y-2.5">
+          {aiBgNotice && (
+            <div className="p-2.5 rounded-xl bg-emerald-950/40 border border-emerald-500/30 text-xs text-emerald-300 flex items-center justify-between">
+              <span>{aiBgNotice}</span>
+              <button
+                type="button"
+                onClick={() => setAiBgNotice('')}
+                className="text-emerald-400 hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Mode Selector: AI Segmentation (No Green Screen) VS Chroma Key */}
+          <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-950/30 via-slate-900 to-cyan-950/30 border border-emerald-500/20 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(config.chromaKeyEnabled)}
-                  onChange={(e) =>
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-emerald-400" />
+                <span>Detection & Cutout Mode:</span>
+              </span>
+
+              <div className="flex items-center gap-1.5 p-1 bg-black/40 rounded-xl border border-white/10">
+                <button
+                  type="button"
+                  onClick={() =>
                     onChangeConfig((prev) => ({
                       ...prev,
-                      chromaKeyEnabled: e.target.checked,
+                      aiBgMode: 'ai_cutout',
+                      aiBgEnabled: true,
+                      chromaKeyEnabled: false,
                     }))
                   }
-                  className="w-4 h-4 accent-emerald-500 rounded"
-                />
-                <span className="text-xs font-bold text-emerald-300">
-                  Enable Chroma Key Background Cutout
-                </span>
-              </label>
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    (config.aiBgMode || 'ai_cutout') === 'ai_cutout'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>🤖 AI Person Cutout</span>
+                </button>
 
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-slate-400">Key Screen Color:</span>
-                {(
-                  [
-                    { id: 'green', label: '🟢 Green', color: '#10B981' },
-                    { id: 'blue', label: '🔵 Blue', color: '#3B82F6' },
-                    { id: 'black', label: '⚫ Dark', color: '#1F2937' },
-                  ] as const
-                ).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() =>
-                      onChangeConfig((prev) => ({
-                        ...prev,
-                        chromaKeyColor: c.id,
-                        chromaKeyEnabled: true,
-                      }))
-                    }
-                    className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border ${
-                      (config.chromaKeyColor || 'green') === c.id
-                        ? 'border-emerald-400 bg-emerald-500/20 text-white'
-                        : 'border-white/10 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {c.label}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      aiBgMode: 'chroma_key',
+                      chromaKeyEnabled: true,
+                    }))
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                    config.aiBgMode === 'chroma_key'
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Film className="w-3.5 h-3.5 text-blue-300" />
+                  <span>🟩 Chroma Key Screen</span>
+                </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] text-slate-300 whitespace-nowrap">
-                Cutout Sensitivity: {(config.chromaKeySensitivity ?? 50)}%
+            {(config.aiBgMode || 'ai_cutout') === 'ai_cutout' ? (
+              <div className="space-y-2 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between text-[11px] text-slate-300">
+                  <span className="flex items-center gap-1 text-emerald-300 font-semibold">
+                    ✓ AI Person Segmentation Active
+                  </span>
+                  <span className="text-slate-400">
+                    Keeps face, body, clothes, hair, movements & voice 100% unchanged
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <div className="flex justify-between text-[11px] text-slate-300 mb-1">
+                      <span>Cutout Precision:</span>
+                      <span className="font-bold text-emerald-400">
+                        {config.aiBgSensitivity ?? 50}%
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={config.aiBgSensitivity ?? 50}
+                      onChange={(e) =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          aiBgSensitivity: Number(e.target.value),
+                          aiBgEnabled: true,
+                        }))
+                      }
+                      className="w-full accent-emerald-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] text-slate-300 mb-1">
+                      <span>Natural Edge Feathering:</span>
+                      <span className="font-bold text-teal-400">
+                        {config.aiBgEdgeFeather ?? 4}px
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      step={1}
+                      value={config.aiBgEdgeFeather ?? 4}
+                      onChange={(e) =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          aiBgEdgeFeather: Number(e.target.value),
+                          aiBgEnabled: true,
+                        }))
+                      }
+                      className="w-full accent-teal-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2 border-t border-white/10">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] text-slate-400">Key Screen Color:</span>
+                    {(
+                      [
+                        { id: 'green', label: '🟢 Green', color: '#10B981' },
+                        { id: 'blue', label: '🔵 Blue', color: '#3B82F6' },
+                        { id: 'black', label: '⚫ Dark', color: '#1F2937' },
+                      ] as const
+                    ).map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() =>
+                          onChangeConfig((prev) => ({
+                            ...prev,
+                            chromaKeyColor: c.id,
+                            chromaKeyEnabled: true,
+                          }))
+                        }
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border ${
+                          (config.chromaKeyColor || 'green') === c.id
+                            ? 'border-emerald-400 bg-emerald-500/20 text-white'
+                            : 'border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-1 max-w-xs">
+                    <span className="text-[11px] text-slate-300 whitespace-nowrap">
+                      Cutout Sensitivity: {(config.chromaKeySensitivity ?? 50)}%
+                    </span>
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      step={5}
+                      value={config.chromaKeySensitivity ?? 50}
+                      onChange={(e) =>
+                        onChangeConfig((prev) => ({
+                          ...prev,
+                          chromaKeySensitivity: Number(e.target.value),
+                          chromaKeyEnabled: true,
+                        }))
+                      }
+                      className="flex-1 accent-emerald-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Background Positioning, Zoom & Blur Controls (Behind Person) */}
+          <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-purple-400" />
+                <span>Reposition, Zoom & Background Blur (Behind Person)</span>
               </span>
-              <input
-                type="range"
-                min={10}
-                max={100}
-                step={5}
-                value={config.chromaKeySensitivity ?? 50}
-                onChange={(e) =>
+              <button
+                type="button"
+                onClick={() =>
                   onChangeConfig((prev) => ({
                     ...prev,
-                    chromaKeySensitivity: Number(e.target.value),
+                    bgBlur: 0,
+                    bgZoom: 1,
+                    bgPositionX: 0,
+                    bgPositionY: 0,
+                    personScale: 1,
+                    personPositionX: 0,
+                    personPositionY: 0,
                   }))
                 }
-                className="flex-1 accent-emerald-500"
-              />
+                className="text-[11px] text-slate-400 hover:text-white underline"
+              >
+                Reset Position & Zoom
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {/* Background Blur */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Background Blur:</span>
+                  <span className="text-purple-400 font-bold">
+                    {config.bgBlur || 0}px
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={30}
+                  step={1}
+                  value={config.bgBlur || 0}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      bgBlur: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-purple-500"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Bokeh depth-of-field for portrait photos & videos
+                </p>
+              </div>
+
+              {/* Background Zoom */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Background Zoom:</span>
+                  <span className="text-blue-400 font-bold">
+                    {(config.bgZoom || 1).toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={3.0}
+                  step={0.05}
+                  value={config.bgZoom || 1}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      bgZoom: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-blue-500"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Scale virtual environment behind person
+                </p>
+              </div>
+
+              {/* Person Scale / Foreground Resize */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Person Scale (Foreground):</span>
+                  <span className="text-emerald-400 font-bold">
+                    {(config.personScale || 1).toFixed(2)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.5}
+                  max={2.0}
+                  step={0.05}
+                  value={config.personScale || 1}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      personScale: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-emerald-500"
+                />
+                <p className="text-[10px] text-slate-500">
+                  Resize person in front of replacement scene
+                </p>
+              </div>
+
+              {/* Background Pan X */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Background Pan X:</span>
+                  <span className="text-cyan-400 font-bold">
+                    {config.bgPositionX || 0}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={config.bgPositionX || 0}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      bgPositionX: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+
+              {/* Background Pan Y */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Background Pan Y:</span>
+                  <span className="text-cyan-400 font-bold">
+                    {config.bgPositionY || 0}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={config.bgPositionY || 0}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      bgPositionY: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+
+              {/* Person Position Y */}
+              <div className="p-2.5 rounded-xl bg-black/30 border border-white/5 space-y-1.5">
+                <div className="flex justify-between text-[11px]">
+                  <span className="text-slate-300">Person Placement Y:</span>
+                  <span className="text-amber-400 font-bold">
+                    {config.personPositionY || 0}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-50}
+                  max={50}
+                  step={1}
+                  value={config.personPositionY || 0}
+                  onChange={(e) =>
+                    onChangeConfig((prev) => ({
+                      ...prev,
+                      personPositionY: Number(e.target.value),
+                    }))
+                  }
+                  className="w-full accent-amber-500"
+                />
+              </div>
             </div>
           </div>
 
-          {/* Search & Category Filter Bar */}
+          {/* Quick Search Chips: Exact Requested Queries */}
+          <div className="space-y-1.5">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              Popular Replacement Environments (1-Tap Search):
+            </span>
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              {(
+                [
+                  { label: '🌌 Deep Space', q: 'deep space' },
+                  { label: '🌍 Top of Earth', q: 'top of Earth' },
+                  { label: '⚽ Football Stadium', q: 'football stadium' },
+                  { label: '🏖️ Beach', q: 'beach' },
+                  { label: '🌃 New York at Night', q: 'New York at night' },
+                  { label: '🌆 Cyberpunk', q: 'cyberpunk' },
+                  { label: '🏢 Luxury Penthouse', q: 'penthouse' },
+                  { label: '🏔️ Alpine Peak', q: 'mountain' },
+                  { label: '🎙️ Podcast Studio', q: 'studio' },
+                ] as const
+              ).map((chip) => (
+                <button
+                  key={chip.q}
+                  type="button"
+                  onClick={() => {
+                    setBgSearchQuery(chip.q);
+                    setSelectedBgCategory('All');
+                  }}
+                  className={`px-3 py-1 rounded-xl text-[11px] font-semibold whitespace-nowrap transition-all border ${
+                    bgSearchQuery.toLowerCase() === chip.q.toLowerCase()
+                      ? 'bg-emerald-600 text-white border-emerald-400 shadow-sm'
+                      : 'bg-white/5 border-white/10 text-slate-300 hover:text-white hover:bg-white/10'
+                  }`}
+                >
+                  {chip.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Search Bar & Category Filter Bar */}
           <div className="space-y-2">
             <div className="relative">
               <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -3370,16 +3901,16 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                 type="text"
                 value={bgSearchQuery}
                 onChange={(e) => setBgSearchQuery(e.target.value)}
-                placeholder="Search background presets (e.g. Broadcast Studio, Cyberpunk, Miami, Sunset, Loft)..."
-                className="w-full bg-[#0B1021] border border-white/15 rounded-xl pl-10 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                placeholder="Search replacement background, e.g. deep space, top of Earth, football stadium, beach, New York at night..."
+                className="w-full bg-[#0B1021] border border-white/15 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
               {bgSearchQuery && (
                 <button
                   type="button"
                   onClick={() => setBgSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" />
                 </button>
               )}
             </div>
@@ -3389,10 +3920,10 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               {(
                 [
                   'All',
-                  'Studio',
-                  'Cyberpunk',
                   'Nature & Travel',
+                  'Studio',
                   'Luxury & City',
+                  'Cyberpunk',
                   'Abstract',
                 ] as const
               ).map((cat) => (
@@ -3429,15 +3960,18 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               return (
                 <div
                   key={bg.id}
-                  onClick={() =>
+                  onClick={() => {
                     onChangeConfig((prev) => ({
                       ...prev,
                       greenScreenBgUrl: bg.url,
                       greenScreenBgType: bg.type,
                       greenScreenBgName: bg.name,
-                      chromaKeyEnabled: true,
-                    }))
-                  }
+                      aiBgEnabled: true,
+                      chromaKeyEnabled: prev.aiBgMode === 'chroma_key',
+                    }));
+                    setAiBgNotice(`Applied background: ${bg.name}`);
+                    setTimeout(() => setAiBgNotice(''), 3000);
+                  }}
                   className={`group relative rounded-xl overflow-hidden border cursor-pointer transition-all aspect-video bg-slate-900 ${
                     isSelected
                       ? 'border-emerald-400 ring-2 ring-emerald-500/50 scale-[1.02]'
@@ -3454,7 +3988,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                       {bg.name}
                     </span>
                     <span className="text-[9px] text-emerald-300 drop-shadow truncate">
-                      {bg.category} • {bg.type === 'video' ? '🎬 Live Video' : '🖼️ 4K Studio'}
+                      {bg.category} • {bg.type === 'video' ? '🎬 Live Video' : '🖼️ 4K Scene'}
                     </span>
                   </div>
                   {isSelected && (
@@ -3466,6 +4000,102 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               );
             })}
           </div>
+
+          {/* AI Background Generator Modal */}
+          {showAiBgPromptModal && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-[#0f172a] border border-white/20 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-pink-400" />
+                    <h3 className="text-sm font-bold text-white">
+                      AI Generated Background
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAiBgPromptModal(false)}
+                    className="text-slate-400 hover:text-white"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-300">
+                  Describe any background you imagine (e.g. &quot;top of Earth overlooking continents&quot;, &quot;cyberpunk football stadium in 2050&quot;, &quot;luxury Dubai penthouse with sunset&quot;):
+                </p>
+
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    value={aiBgPrompt}
+                    onChange={(e) => setAiBgPrompt(e.target.value)}
+                    placeholder="Enter what you want behind the person..."
+                    className="w-full bg-[#0B1021] border border-white/20 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-pink-500"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleGenerateAiBackground();
+                      }
+                    }}
+                  />
+
+                  {/* Suggestion pills */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    {(
+                      [
+                        'Deep space nebula with purple stars',
+                        'Top of Earth blue atmosphere',
+                        'Packed football stadium under floodlights',
+                        'Tropical beach crystal turquoise waters',
+                        'New York at night glowing skyscrapers',
+                      ] as const
+                    ).map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        onClick={() => {
+                          setAiBgPrompt(sug);
+                          handleGenerateAiBackground(sug);
+                        }}
+                        className="px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 text-[10px] text-slate-300 hover:text-white border border-white/10"
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAiBgPromptModal(false)}
+                    className="px-3 py-1.5 rounded-xl bg-white/5 text-slate-300 text-xs font-semibold hover:bg-white/10"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isGeneratingAiBg || !aiBgPrompt.trim()}
+                    onClick={() => handleGenerateAiBackground()}
+                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-md shadow-pink-500/20 disabled:opacity-50"
+                  >
+                    {isGeneratingAiBg ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Generating Scene...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Generate & Apply</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

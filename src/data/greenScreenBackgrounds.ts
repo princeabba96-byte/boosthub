@@ -9,6 +9,53 @@ export interface GreenScreenBackground {
 }
 
 export const GREEN_SCREEN_BACKGROUNDS: GreenScreenBackground[] = [
+  // User Highlighted AI Backgrounds
+  {
+    id: 'deep_space_nebula',
+    name: 'Deep Space Nebula',
+    category: 'Nature & Travel',
+    url: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1920&q=85',
+    thumbUrl: 'https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=320&q=80',
+    type: 'image',
+    tags: ['deep space', 'space', 'nebula', 'galaxy', 'stars', 'cosmos', 'universe', 'outer space'],
+  },
+  {
+    id: 'top_of_earth_orbit',
+    name: 'Top of Earth Orbit',
+    category: 'Nature & Travel',
+    url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1920&q=85',
+    thumbUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=320&q=80',
+    type: 'image',
+    tags: ['top of earth', 'earth', 'orbit', 'globe', 'astronaut', 'atmosphere', 'planet', 'space'],
+  },
+  {
+    id: 'football_stadium_arena',
+    name: 'Football Stadium Arena',
+    category: 'Studio',
+    url: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=1920&q=85',
+    thumbUrl: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=320&q=80',
+    type: 'image',
+    tags: ['football stadium', 'football', 'stadium', 'soccer', 'arena', 'match', 'sports', 'floodlights', 'fans'],
+  },
+  {
+    id: 'tropical_paradise_beach',
+    name: 'Tropical Paradise Beach',
+    category: 'Nature & Travel',
+    url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1920&q=85',
+    thumbUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=320&q=80',
+    type: 'image',
+    tags: ['beach', 'tropical beach', 'ocean', 'summer', 'palms', 'travel', 'sea', 'caribbean', 'paradise'],
+  },
+  {
+    id: 'new_york_at_night',
+    name: 'New York at Night',
+    category: 'Luxury & City',
+    url: 'https://images.unsplash.com/photo-1518391846015-55a9cc003b25?auto=format&fit=crop&w=1920&q=85',
+    thumbUrl: 'https://images.unsplash.com/photo-1518391846015-55a9cc003b25?auto=format&fit=crop&w=320&q=80',
+    type: 'image',
+    tags: ['new york at night', 'new york', 'nyc', 'manhattan', 'night', 'skyline', 'city', 'lights'],
+  },
+
   // Studio & Creator
   {
     id: 'studio_neon_pod',
@@ -97,24 +144,6 @@ export const GREEN_SCREEN_BACKGROUNDS: GreenScreenBackground[] = [
   },
 
   // Nature & Travel
-  {
-    id: 'nature_tropical_beach',
-    name: 'Maldives Turquoise Beach',
-    category: 'Nature & Travel',
-    url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1280&q=80',
-    thumbUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=300&q=80',
-    type: 'image',
-    tags: ['beach', 'ocean', 'summer', 'palms', 'travel', 'paradise', 'tropical'],
-  },
-  {
-    id: 'nature_outer_space',
-    name: 'Deep Cosmos & Earth Orbit',
-    category: 'Nature & Travel',
-    url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1280&q=80',
-    thumbUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=300&q=80',
-    type: 'image',
-    tags: ['space', 'earth', 'stars', 'galaxy', 'astronaut', 'orbit', 'universe'],
-  },
   {
     id: 'nature_alps_snow',
     name: 'Alpine Snowy Mountain Peaks',

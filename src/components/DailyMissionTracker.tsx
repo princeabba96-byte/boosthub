@@ -267,11 +267,14 @@ export const DailyMissionTracker: React.FC<DailyMissionTrackerProps> = ({
       // Add to user profile points in DB
       if (userProfile?.id) {
         const nextBp = (userProfile.boostPoints || 0) + mission.bpReward;
-        await supabase
-          .from('profiles')
-          .update({ boost_points: nextBp })
-          .eq('id', userProfile.id)
-          .catch(() => {});
+        try {
+          await supabase
+            .from('profiles')
+            .update({ boost_points: nextBp })
+            .eq('id', userProfile.id);
+        } catch {
+          // ignore error
+        }
       }
 
       setMissions((prev) =>
@@ -311,11 +314,14 @@ export const DailyMissionTracker: React.FC<DailyMissionTrackerProps> = ({
     const bonusAmount = 150;
     if (userProfile?.id) {
       const nextBp = (userProfile.boostPoints || 0) + bonusAmount;
-      await supabase
-        .from('profiles')
-        .update({ boost_points: nextBp })
-        .eq('id', userProfile.id)
-        .catch(() => {});
+      try {
+        await supabase
+          .from('profiles')
+          .update({ boost_points: nextBp })
+          .eq('id', userProfile.id);
+      } catch {
+        // ignore error
+      }
     }
     await refreshProfile();
     showToast(

@@ -879,11 +879,10 @@ export const FONT_STYLES_52: FontDesignPreset[] = [
     name: 'Industrial Hazard Strip',
     category: 'Urban & Modern',
     badge: 'HAZARD',
-    textColor: '#000000',
+    textColor: '#FFFFFF',
     style: {
       fontFamily: '"Impact", sans-serif',
       fontWeight: 900,
-      color: '#000000',
       textTransform: 'uppercase',
       letterSpacing: '0.06em',
       background: 'repeating-linear-gradient(45deg, #FACC15, #FACC15 10px, #000 10px, #000 20px)',
