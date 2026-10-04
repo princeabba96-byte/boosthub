@@ -45,6 +45,7 @@ import {
   ExternalLink,
   Hash,
   Rewind,
+  Palette,
 } from 'lucide-react';
 import {
   BEditBottomTab,
@@ -94,6 +95,7 @@ import {
   StudioStickerLayer,
   StudioTextAnimation,
   StudioTextLayer,
+  StudioSubtitleCue,
   StudioTransitionType,
   DEFAULT_STUDIO_CONFIG,
   encodeStudioUrlHash,
@@ -1536,7 +1538,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         contrast: activeClip.contrast,
         saturation: activeClip.saturation,
         exposure: activeClip.exposure,
-        cropZoom: activeClip.cropZoom,
+        zoom: activeClip.cropZoom,
         cropX: activeClip.cropX,
         cropY: activeClip.cropY,
         rotation: activeClip.rotation,
@@ -1779,7 +1781,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
   // Analyse Uploaded Video Audio & Auto-Generate Captions
   const handleAnalyseUploadedVideoAudio = async () => {
-    if (!primaryClip || primaryClip.type !== 'video' || !primaryClip.url) {
+    if (!activeClip || activeClip.type !== 'video' || !activeClip.url) {
       showToast('Please upload or select a video clip first to analyse audio!', 'info');
       return;
     }
@@ -1795,7 +1797,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         const res = await apiFetch('/api/ai/transcribe-video', {
           method: 'POST',
           body: JSON.stringify({
-            videoUrl: primaryClip.url,
+            videoUrl: activeClip.url,
             language: sttLanguage,
           }),
         });
@@ -3740,7 +3742,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               {/* Big Record Microphone Button & Analyse Uploaded Video Audio */}
               <div className="flex flex-col items-center justify-center py-2 gap-3">
                 {/* 1. Analyse Uploaded Video Audio Button */}
-                {primaryClip?.type === 'video' && primaryClip?.url && (
+                {activeClip?.type === 'video' && activeClip?.url && (
                   <div className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-blue-900/40 via-purple-900/30 to-indigo-900/40 border border-blue-400/30 shadow-lg space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-white flex items-center gap-1.5">
