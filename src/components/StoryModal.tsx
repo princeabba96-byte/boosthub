@@ -24,6 +24,17 @@ interface StoryViewerModalProps {
   onStoriesChanged: () => void;
 }
 
+interface FloatingReactionParticle {
+  id: string;
+  emoji: string;
+  leftPercent: number;
+  size: number;
+  delayMs: number;
+  durationMs: number;
+  rotationDeg: number;
+  driftX: number;
+}
+
 export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   stories,
   initialIndex,
@@ -36,6 +47,8 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   const [progress, setProgress] = useState(0);
   const [replyText, setReplyText] = useState('');
   const [showViewers, setShowViewers] = useState(false);
+  const [floatingParticles, setFloatingParticles] = useState<FloatingReactionParticle[]>([]);
+  const [centerPopEmoji, setCenterPopEmoji] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const currentStory = stories[currentIndex];
@@ -91,14 +104,44 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
   const isOwner = currentStory.userId === userProfile?.id;
 
   const handleReact = async (emoji: string) => {
+    // 1. Center pop burst
+    setCenterPopEmoji(emoji);
+    setTimeout(() => setCenterPopEmoji(null), 850);
+
+    // 2. Stream of Instagram-like floating emoji particles
+    const particleCount = 14;
+    const newParticles: FloatingReactionParticle[] = [];
+    const now = Date.now();
+
+    for (let i = 0; i < particleCount; i++) {
+      newParticles.push({
+        id: `react_${now}_${i}_${Math.random().toString(36).slice(2, 6)}`,
+        emoji,
+        leftPercent: 12 + Math.random() * 76,
+        size: 28 + Math.floor(Math.random() * 26),
+        delayMs: Math.floor(Math.random() * 300),
+        durationMs: 1600 + Math.floor(Math.random() * 800),
+        rotationDeg: -25 + Math.random() * 50,
+        driftX: -45 + Math.random() * 90,
+      });
+    }
+
+    setFloatingParticles((prev) => [...prev, ...newParticles]);
+
+    // Clean up particles when animation completes
+    setTimeout(() => {
+      setFloatingParticles((prev) =>
+        prev.filter((p) => !newParticles.some((np) => np.id === p.id))
+      );
+    }, 2600);
+
     try {
       await apiFetch(`/api/stories/${currentStory.id}/interact`, {
         method: 'POST',
         body: JSON.stringify({ action: 'react', payload: emoji }),
       });
-      showToast(`Reacted ${emoji}`, 'success');
     } catch {
-      showToast('Failed to react to story.', 'error');
+      // non-blocking
     }
   };
 
@@ -247,8 +290,38 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
             </button>
           )}
 
+          {/* Instagram-Style Floating Reaction Particles Overlay */}
+          <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
+            {floatingParticles.map((p) => (
+              <span
+                key={p.id}
+                style={{
+                  left: `${p.leftPercent}%`,
+                  bottom: '20px',
+                  fontSize: `${p.size}px`,
+                  animationDelay: `${p.delayMs}ms`,
+                  animationDuration: `${p.durationMs}ms`,
+                  '--drift-x': `${p.driftX}px`,
+                  '--rot': `${p.rotationDeg}deg`,
+                } as React.CSSProperties}
+                className="absolute animate-instagram-story-float select-none filter drop-shadow-[0_4px_12px_rgba(0,0,0,0.6)]"
+              >
+                {p.emoji}
+              </span>
+            ))}
+
+            {/* Giant Center Pop Heart / Reaction */}
+            {centerPopEmoji && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-40">
+                <span className="text-7xl sm:text-8xl animate-instagram-center-pop select-none filter drop-shadow-[0_0_28px_rgba(255,255,255,0.5)]">
+                  {centerPopEmoji}
+                </span>
+              </div>
+            )}
+          </div>
+
           {currentStory.caption && (
-            <div className="absolute bottom-4 left-4 right-4 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 rounded-2xl">
+            <div className="absolute bottom-4 left-4 right-4 bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 rounded-2xl z-20">
               <p className="text-sm text-white text-center">{currentStory.caption}</p>
             </div>
           )}
@@ -287,12 +360,25 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-center gap-3">
-                {['🔥', '❤️', '👏', '😂', '🚀'].map((emoji) => (
+              {/* Instagram Quick Reactions Bar */}
+              <div className="flex items-center justify-around gap-2 px-1">
+                {(
+                  [
+                    { emoji: '❤️', label: 'Heart' },
+                    { emoji: '🔥', label: 'Fire' },
+                    { emoji: '😂', label: 'Laugh' },
+                    { emoji: '👏', label: 'Clap' },
+                    { emoji: '😍', label: 'Love' },
+                    { emoji: '😮', label: 'Wow' },
+                  ] as const
+                ).map(({ emoji, label }) => (
                   <button
                     key={emoji}
+                    type="button"
                     onClick={() => handleReact(emoji)}
-                    className="min-h-[40px] min-w-[40px] rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-lg transition-transform active:scale-125"
+                    aria-label={`Send ${label} reaction`}
+                    title={`Send ${label}`}
+                    className="min-h-[44px] min-w-[44px] rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-2xl transition-all hover:scale-125 active:scale-90"
                   >
                     {emoji}
                   </button>

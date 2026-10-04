@@ -2247,6 +2247,109 @@ Rules:
     };
   };
 
+  app.post('/api/ai/transcribe-video', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const {
+        videoUrl,
+        audioBase64: rawAudioBase64,
+        mimeType = 'audio/webm',
+      } = req.body || {};
+      let audioBase64 = String(rawAudioBase64 || '').trim();
+
+      if (
+        !audioBase64 &&
+        videoUrl &&
+        typeof videoUrl === 'string' &&
+        videoUrl.startsWith('http')
+      ) {
+        try {
+          const fetchRes = await fetch(videoUrl);
+          if (fetchRes.ok) {
+            const buf = await fetchRes.arrayBuffer();
+            if (buf.byteLength < 16 * 1024 * 1024) {
+              audioBase64 = Buffer.from(buf).toString('base64');
+            }
+          }
+        } catch {
+          // ignore download error
+        }
+      }
+
+      const ai = getGeminiClient();
+      if (ai && audioBase64 && audioBase64.length > 32) {
+        const prompt = `You are a professional video captioning and transcription AI. Listen to the spoken audio in this media.
+Transcribe the EXACT spoken words without repeating words or sentences. Note Nigerian city and cultural names (Aba, Lagos, Abuja, Port Harcourt, Onitsha, Owerri, Enugu).
+Break the transcription into short timed subtitle cues (3 to 6 words each) with start and end seconds in JSON format:
+{
+  "transcript": "Exact full transcribed text without repetition",
+  "cues": [
+    { "start": 0.0, "end": 2.5, "text": "exact words spoken" }
+  ]
+}
+Output ONLY valid JSON.`;
+
+        const models = [
+          'gemini-2.5-flash',
+          'gemini-3.1-flash-lite',
+          'gemini-3.5-transcribe',
+        ];
+        for (const model of models) {
+          try {
+            const resp = await ai.models.generateContent({
+              model,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: mimeType.includes('video') ? mimeType : 'audio/mp3',
+                      data: audioBase64,
+                    },
+                  },
+                  { text: prompt },
+                ],
+              },
+            });
+            const textResp =
+              resp.candidates?.[0]?.content?.parts
+                ?.map((p: any) => p.text || '')
+                .join('') || '';
+            const jsonMatch = textResp.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const parsed = JSON.parse(jsonMatch[0]);
+              if (parsed.transcript || (parsed.cues && parsed.cues.length > 0)) {
+                return res.json({
+                  ok: true,
+                  transcript: String(parsed.transcript || '').trim(),
+                  cues: Array.isArray(parsed.cues) ? parsed.cues : [],
+                });
+              }
+            } else if (textResp.trim()) {
+              return res.json({
+                ok: true,
+                transcript: textResp.trim(),
+                cues: [],
+              });
+            }
+          } catch {
+            // try next model
+          }
+        }
+      }
+
+      return res.json({
+        ok: true,
+        transcript: '',
+        cues: [],
+      });
+    } catch (err: any) {
+      return res.status(500).json({
+        ok: false,
+        error: err?.message || 'Video audio transcription failed',
+      });
+    }
+  });
+
   app.post('/api/ai/voice-transform', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     try {

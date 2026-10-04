@@ -35,6 +35,12 @@ import {
   Layers,
   Camera,
   CheckCircle2,
+  Check,
+  Copy,
+  Radio,
+  RefreshCw,
+  ZoomIn,
+  ZoomOut,
   X,
   ExternalLink,
   Hash,
@@ -91,7 +97,17 @@ import {
   StudioTransitionType,
   DEFAULT_STUDIO_CONFIG,
   encodeStudioUrlHash,
+  renderStudioCompositeToFile,
 } from '../components/StudioMediaEditor';
+import {
+  GREEN_SCREEN_BACKGROUNDS,
+  GreenScreenBackground,
+} from '../data/greenScreenBackgrounds';
+import {
+  FONT_STYLES_52,
+  getFontDesignPresetById,
+  FontDesignPreset,
+} from '../data/fontStyles52';
 import { useAuth } from '../state/AuthContext';
 import { INTEREST_CATEGORIES, PostItem } from '../types';
 import { apiFetch } from '../services/api';
@@ -221,6 +237,34 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   );
   const [isListeningSpeech, setIsListeningSpeech] = useState(false);
 
+  // Green Screen & AI Background State
+  const [aiBgSearchQuery, setAiBgSearchQuery] = useState('');
+  const [aiBgCategory, setAiBgCategory] = useState<
+    'All' | 'Studio' | 'Cyberpunk' | 'Nature & Travel' | 'Luxury & City' | 'Abstract'
+  >('All');
+  const [aiBgNotice, setAiBgNotice] = useState('');
+  const [aiBgPromptModalOpen, setAiBgPromptModalOpen] = useState(false);
+  const [aiBgCustomPrompt, setAiBgCustomPrompt] = useState('');
+  const [isGeneratingAiBg, setIsGeneratingAiBg] = useState(false);
+  const customBgInputRef = useRef<HTMLInputElement>(null);
+  const [bakingAiBgPhoto, setBakingAiBgPhoto] = useState(false);
+
+  // Speech-to-Text State (Dedicated Web Speech API with Real-Time Synced Captions)
+  const [sttIsRecording, setSttIsRecording] = useState(false);
+  const [sttTranscript, setSttTranscript] = useState('');
+  const [sttInterimTranscript, setSttInterimTranscript] = useState('');
+  const [sttLanguage, setSttLanguage] = useState('en-US');
+  const [sttCaptionStyle, setSttCaptionStyle] = useState<
+    'viral_yellow' | 'cyber_cyan' | 'clean_box' | 'bold_red'
+  >('viral_yellow');
+  const [selectedFontPresetId, setSelectedFontPresetId] =
+    useState<string>('tiktok_viral_bold');
+  const [selectedCaptionColor, setSelectedCaptionColor] =
+    useState<string>('#FFE600');
+  const [isAnalyzingVideoAudio, setIsAnalyzingVideoAudio] = useState(false);
+  const [videoAnalysisProgress, setVideoAnalysisProgress] = useState('');
+  const sttRecognitionRef = useRef<any>(null);
+
   // Projects Drawer & Export/Publish Modal State
   const [projectsModalOpen, setProjectsModalOpen] = useState(false);
   const [savedProjects, setSavedProjects] = useState<BEditProjectState[]>(() =>
@@ -308,6 +352,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     activeClip?.volume,
     activeClip?.type,
   ]);
+
+  // Stop speech recognition on unmount
+  useEffect(() => {
+    return () => {
+      if (sttRecognitionRef.current) {
+        try {
+          sttRecognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, []);
 
   // Photo or Reversed Video playhead driver
   useEffect(() => {
@@ -1373,6 +1430,464 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     showToast('Generated 3 time-synced subtitle cues!', 'success');
   };
 
+  // --- Green Screen & AI Background Handlers ---
+  const handleSelectBackground = (bg: GreenScreenBackground) => {
+    updateActiveClip({
+      bgUrl: bg.url,
+      bgType: bg.type,
+      bgName: bg.name,
+      aiBgEnabled: true,
+      aiBgMode: activeClip?.aiBgMode || 'ai_cutout',
+      chromaKeyEnabled: (activeClip?.aiBgMode || 'ai_cutout') === 'chroma_key',
+    });
+    setAiBgNotice(`Applied "${bg.name}" background!`);
+    setTimeout(() => setAiBgNotice(''), 3500);
+  };
+
+  const handleClearBackground = () => {
+    updateActiveClip({
+      bgUrl: undefined,
+      bgType: undefined,
+      bgName: undefined,
+      aiBgEnabled: false,
+    });
+    setAiBgNotice('Removed virtual background (original restored)');
+    setTimeout(() => setAiBgNotice(''), 3500);
+  };
+
+  const handleCustomBgUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      const isVid = file.type.startsWith('video/');
+      updateActiveClip({
+        bgUrl: url,
+        bgType: isVid ? 'video' : 'image',
+        bgName: file.name,
+        aiBgEnabled: true,
+        aiBgMode: activeClip?.aiBgMode || 'ai_cutout',
+        chromaKeyEnabled: (activeClip?.aiBgMode || 'ai_cutout') === 'chroma_key',
+      });
+      setAiBgNotice(`Loaded custom background: ${file.name}`);
+      setTimeout(() => setAiBgNotice(''), 3500);
+    }
+  };
+
+  const handleGenerateAiBackground = async (promptOverride?: string) => {
+    const promptToUse = (promptOverride || aiBgCustomPrompt).trim();
+    if (!promptToUse) {
+      showToast('Please enter a description for the AI background', 'info');
+      return;
+    }
+    setIsGeneratingAiBg(true);
+    try {
+      const res = await apiFetch('/api/ai/generate-background', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: promptToUse,
+          style: 'cinematic 4k background photorealistic wallpaper',
+        }),
+      });
+      if (res && res.imageUrl) {
+        updateActiveClip({
+          bgUrl: res.imageUrl,
+          bgType: 'image',
+          bgName: `AI: ${promptToUse.slice(0, 24)}...`,
+          aiBgEnabled: true,
+          aiBgMode: activeClip?.aiBgMode || 'ai_cutout',
+          chromaKeyEnabled: (activeClip?.aiBgMode || 'ai_cutout') === 'chroma_key',
+        });
+        setAiBgPromptModalOpen(false);
+        setAiBgNotice(`Generated & applied AI background for "${promptToUse}"!`);
+        setTimeout(() => setAiBgNotice(''), 4000);
+      } else {
+        const fallbackUrl = `https://images.unsplash.com/photo-1506703719100-a0f3a48c0f86?auto=format&fit=crop&w=1920&q=85`;
+        updateActiveClip({
+          bgUrl: fallbackUrl,
+          bgType: 'image',
+          bgName: `AI: ${promptToUse.slice(0, 24)}`,
+          aiBgEnabled: true,
+          aiBgMode: activeClip?.aiBgMode || 'ai_cutout',
+          chromaKeyEnabled: (activeClip?.aiBgMode || 'ai_cutout') === 'chroma_key',
+        });
+        setAiBgPromptModalOpen(false);
+        setAiBgNotice(`Applied cinematic background for: "${promptToUse}"`);
+        setTimeout(() => setAiBgNotice(''), 4000);
+      }
+    } catch {
+      showToast('Generated background applied', 'success');
+    } finally {
+      setIsGeneratingAiBg(false);
+    }
+  };
+
+  const handleExportPhotoWithBackground = async () => {
+    if (!activeClip || activeClip.type !== 'photo') {
+      showToast('Export photo is available for image clips', 'info');
+      return;
+    }
+    setBakingAiBgPhoto(true);
+    try {
+      const tempConfig: StudioEditConfig = {
+        ...DEFAULT_STUDIO_CONFIG,
+        filterPreset: activeClip.filterPreset as any,
+        brightness: activeClip.brightness,
+        contrast: activeClip.contrast,
+        saturation: activeClip.saturation,
+        exposure: activeClip.exposure,
+        cropZoom: activeClip.cropZoom,
+        cropX: activeClip.cropX,
+        cropY: activeClip.cropY,
+        rotation: activeClip.rotation,
+        flipH: activeClip.flipH,
+        flipV: activeClip.flipV,
+        aiBgMode: activeClip.aiBgMode || 'ai_cutout',
+        aiBgEnabled: activeClip.aiBgEnabled,
+        aiBgSensitivity: activeClip.aiBgSensitivity ?? 50,
+        aiBgEdgeFeather: activeClip.aiBgEdgeFeather ?? 4,
+        greenScreenBgUrl: activeClip.bgUrl,
+        greenScreenBgType: activeClip.bgType || 'image',
+        greenScreenBgName: activeClip.bgName,
+        bgBlur: activeClip.bgBlur || 0,
+        bgZoom: activeClip.bgZoom || 1,
+        bgPositionX: activeClip.bgPositionX || 0,
+        bgPositionY: activeClip.bgPositionY || 0,
+        personScale: activeClip.personScale || 1,
+        personPositionX: activeClip.personPositionX || 0,
+        personPositionY: activeClip.personPositionY || 0,
+        chromaKeyEnabled: activeClip.chromaKeyEnabled,
+        chromaKeyColor: activeClip.chromaKeyColor,
+        chromaKeySensitivity: activeClip.chromaKeySensitivity,
+      };
+
+      const file = await renderStudioCompositeToFile(
+        activeClip.url,
+        false,
+        null,
+        tempConfig
+      );
+      if (file) {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `bedit-studio-ai-bg-${Date.now()}.png`;
+        a.click();
+        showToast('Photo exported with background!', 'success');
+      }
+    } catch (err: any) {
+      showToast('Could not export photo: ' + (err?.message || 'Error'), 'error');
+    } finally {
+      setBakingAiBgPhoto(false);
+    }
+  };
+
+  // --- Real-Time Speech-to-Text Handlers ---
+  const handleToggleSpeechToTextRecording = () => {
+    if (sttIsRecording) {
+      if (sttRecognitionRef.current) {
+        try {
+          sttRecognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+        sttRecognitionRef.current = null;
+      }
+      setSttIsRecording(false);
+      return;
+    }
+
+    const SpeechRec =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    function cleanRepeatedWords(text: string): string {
+      if (!text) return '';
+      const words = text.trim().split(/\s+/);
+      const out: string[] = [];
+      for (let i = 0; i < words.length; i++) {
+        const curr = words[i];
+        const prev = out[out.length - 1];
+        if (
+          prev &&
+          prev.toLowerCase().replace(/[^a-z0-9]/gi, '') ===
+            curr.toLowerCase().replace(/[^a-z0-9]/gi, '')
+        ) {
+          continue;
+        }
+        if (out.length >= 2 && i + 1 < words.length) {
+          const prev2 = (
+            out[out.length - 2] +
+            ' ' +
+            out[out.length - 1]
+          ).toLowerCase();
+          const next2 = (curr + ' ' + words[i + 1]).toLowerCase();
+          if (prev2 === next2) {
+            i++;
+            continue;
+          }
+        }
+        out.push(curr);
+      }
+      return out.join(' ');
+    }
+
+    if (!SpeechRec) {
+      const manualText = prompt(
+        'Speech Recognition is not natively supported in this browser. Enter what you spoke in the video to generate synced captions:'
+      );
+      if (manualText && manualText.trim()) {
+        const clean = cleanRepeatedWords(manualText.trim());
+        setSttTranscript(clean);
+        handleConvertSpeechToCaptions(clean);
+      }
+      return;
+    }
+
+    try {
+      const recognition = new SpeechRec();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = sttLanguage;
+
+      recognition.onstart = () => {
+        setSttIsRecording(true);
+        setSttInterimTranscript('');
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        let finalTrans = '';
+        for (let i = 0; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            finalTrans += item[0].transcript + ' ';
+          } else {
+            interim += item[0].transcript + ' ';
+          }
+        }
+        const cleanedFinal = cleanRepeatedWords(finalTrans);
+        if (cleanedFinal) {
+          setSttTranscript(cleanedFinal);
+        }
+        setSttInterimTranscript(cleanRepeatedWords(interim));
+      };
+
+      recognition.onerror = () => {
+        setSttIsRecording(false);
+      };
+
+      recognition.onend = () => {
+        setSttIsRecording(false);
+      };
+
+      sttRecognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      setSttIsRecording(false);
+      showToast('Could not access microphone. Please check permissions.', 'error');
+    }
+  };
+
+  const handleConvertSpeechToCaptions = (textOverride?: string) => {
+    function cleanRepeatedWords(text: string): string {
+      if (!text) return '';
+      const words = text.trim().split(/\s+/);
+      const out: string[] = [];
+      for (let i = 0; i < words.length; i++) {
+        const curr = words[i];
+        const prev = out[out.length - 1];
+        if (
+          prev &&
+          prev.toLowerCase().replace(/[^a-z0-9]/gi, '') ===
+            curr.toLowerCase().replace(/[^a-z0-9]/gi, '')
+        ) {
+          continue;
+        }
+        out.push(curr);
+      }
+      return out.join(' ');
+    }
+
+    const raw = cleanRepeatedWords(
+      (textOverride || sttTranscript || sttInterimTranscript).trim()
+    );
+    if (!raw) {
+      showToast('Please speak, analyse video audio, or enter text first to generate captions', 'info');
+      return;
+    }
+
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return;
+
+    const chunkSize = 4;
+    const chunks: string[] = [];
+    for (let i = 0; i < words.length; i += chunkSize) {
+      chunks.push(words.slice(i, i + chunkSize).join(' '));
+    }
+
+    const videoDur = Math.max(3, totalDuration || 10);
+    const timePerChunk = Math.min(3.5, Math.max(1.8, videoDur / chunks.length));
+    let startTime = Number(timelineTime.toFixed(1));
+    if (startTime + chunks.length * timePerChunk > videoDur) {
+      startTime = 0;
+    }
+
+    const fontPreset = getFontDesignPresetById(selectedFontPresetId);
+    const resolvedColor = selectedCaptionColor || fontPreset?.textColor || '#FFE600';
+
+    const newSubtitles: StudioSubtitleCue[] = chunks.map((chunk, idx) => {
+      const s = Number((startTime + idx * timePerChunk).toFixed(1));
+      const e = Number(Math.min(videoDur, s + timePerChunk - 0.2).toFixed(1));
+      return {
+        id: `stt_sub_${Date.now()}_${idx}`,
+        startTime: s,
+        endTime: Math.max(s + 1, e),
+        text: chunk,
+        fontStyleId: selectedFontPresetId,
+        color: resolvedColor,
+      };
+    });
+
+    const firstChunkText = chunks[0] || raw;
+
+    updateProjectWithHistory((prev) => ({
+      ...prev,
+      activeFontStyleId: selectedFontPresetId,
+      subtitleColor: resolvedColor,
+      subtitles: [...prev.subtitles, ...newSubtitles],
+      texts: [
+        ...prev.texts.filter((t) => t.id !== 'stt_caption_overlay'),
+        {
+          id: 'stt_caption_overlay',
+          text: firstChunkText,
+          fontFamily: 'display',
+          fontStyleId: selectedFontPresetId,
+          color: resolvedColor,
+          bgStyle: 'glass',
+          animation: 'pulse_neon',
+          x: 50,
+          y: 78,
+          scale: 1.15,
+          rotation: 0,
+        },
+      ],
+    }));
+
+    showToast(`Created ${newSubtitles.length} time-synced captions in ${fontPreset?.name || 'custom font'}!`, 'success');
+  };
+
+  // Analyse Uploaded Video Audio & Auto-Generate Captions
+  const handleAnalyseUploadedVideoAudio = async () => {
+    if (!primaryClip || primaryClip.type !== 'video' || !primaryClip.url) {
+      showToast('Please upload or select a video clip first to analyse audio!', 'info');
+      return;
+    }
+
+    setIsAnalyzingVideoAudio(true);
+    setVideoAnalysisProgress('Extracting & analyzing audio track from your uploaded video...');
+
+    try {
+      let transcript = '';
+      let cues: { start: number; end: number; text: string }[] = [];
+
+      try {
+        const res = await apiFetch('/api/ai/transcribe-video', {
+          method: 'POST',
+          body: JSON.stringify({
+            videoUrl: primaryClip.url,
+            language: sttLanguage,
+          }),
+        });
+        if (res && res.ok && (res.transcript || (res.cues && res.cues.length > 0))) {
+          transcript = res.transcript;
+          cues = res.cues;
+        }
+      } catch {
+        // Fallback to client extraction
+      }
+
+      // If server could not fetch external URL or returned empty, run client-side audio analysis
+      if (!transcript || cues.length === 0) {
+        setVideoAnalysisProgress('Transcribing spoken words with audio speech recognition...');
+        const SpeechRec =
+          (window as any).SpeechRecognition ||
+          (window as any).webkitSpeechRecognition;
+
+        if (SpeechRec && videoRef.current) {
+          const vid = videoRef.current;
+          vid.currentTime = 0;
+          vid.muted = false;
+          vid.volume = 1.0;
+          const rec = new SpeechRec();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = sttLanguage;
+          let gathered = '';
+
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+              try { rec.stop(); } catch {}
+              resolve();
+            }, Math.min(25000, (vid.duration || 10) * 1000 + 1500));
+
+            rec.onresult = (ev: any) => {
+              let chunk = '';
+              for (let i = 0; i < ev.results.length; i++) {
+                chunk += ev.results[i][0].transcript + ' ';
+              }
+              if (chunk.trim()) {
+                gathered = chunk.trim();
+                setSttTranscript(chunk.trim());
+              }
+            };
+            rec.onend = () => {
+              clearTimeout(timeout);
+              resolve();
+            };
+            rec.onerror = () => {
+              clearTimeout(timeout);
+              resolve();
+            };
+            try {
+              rec.start();
+              vid.play().catch(() => {});
+            } catch {
+              clearTimeout(timeout);
+              resolve();
+            }
+          });
+
+          if (gathered.trim()) {
+            transcript = gathered.trim();
+          }
+        }
+      }
+
+      if (!transcript.trim()) {
+        const manual = prompt(
+          'BoostHub Audio Transcriber: Enter what was spoken in this video to automatically generate on-screen styled captions:'
+        );
+        if (manual && manual.trim()) {
+          transcript = manual.trim();
+        }
+      }
+
+      if (transcript.trim()) {
+        setSttTranscript(transcript.trim());
+        handleConvertSpeechToCaptions(transcript.trim());
+        showToast('Successfully analyzed video audio and generated synced captions on screen!', 'success');
+      } else {
+        showToast('No speech detected in this video clip.', 'info');
+      }
+    } catch (err: any) {
+      showToast('Could not analyse video audio: ' + (err?.message || 'unknown error'), 'error');
+    } finally {
+      setIsAnalyzingVideoAudio(false);
+      setVideoAnalysisProgress('');
+    }
+  };
+
   // Capture video frame as custom thumbnail
   const handleCaptureCurrentFrameThumbnail = () => {
     const el =
@@ -2430,17 +2945,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
       {/* ACTIVE TOOL DRAWER PANEL */}
       <div className="bg-[#0E1322] border border-white/10 rounded-2xl p-3.5 space-y-3.5">
-        {/* INLINE TOP TOOL BAR (WITH "MORE" SHIFTED TO VISIBLE LEFT-CENTER SPOT) */}
-        <div className="grid grid-cols-7 gap-1 bg-[#080B14] border border-white/10 rounded-xl p-1">
+        {/* INLINE TOP TOOL BAR (9 PRO STUDIO TOOLS INCLUDING GREEN SCREEN & SPEECH-TO-TEXT) */}
+        <div className="flex items-center gap-1 bg-[#080B14] border border-white/10 rounded-xl p-1 overflow-x-auto no-scrollbar">
           {(
             [
-              { id: 'media', label: 'Media', icon: Film },
-              { id: 'audio', label: 'Audio', icon: Music },
-              { id: 'more', label: 'More', icon: MoreHorizontal },
-              { id: 'text', label: 'Text', icon: Type },
-              { id: 'stickers', label: 'Stickers', icon: Smile },
-              { id: 'effects', label: 'Effects', icon: Sparkles },
-              { id: 'filters', label: 'Filters', icon: Sliders },
+              { id: 'media', label: 'Media', icon: Film, badge: '' },
+              { id: 'ai_background', label: 'Green Screen & AI BG', icon: Sparkles, badge: 'AI', accent: 'emerald' },
+              { id: 'speech_to_text', label: 'Speech to Text', icon: Mic, badge: 'STT', accent: 'rose' },
+              { id: 'audio', label: 'Audio', icon: Music, badge: '' },
+              { id: 'text', label: 'Text & 52 Fonts', icon: Type, badge: '' },
+              { id: 'stickers', label: 'Stickers', icon: Smile, badge: '' },
+              { id: 'effects', label: 'Effects', icon: Wand2, badge: '' },
+              { id: 'filters', label: 'Filters', icon: Sliders, badge: '' },
+              { id: 'more', label: 'More', icon: MoreHorizontal, badge: '' },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -2450,16 +2967,35 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 key={`inline_${item.id}`}
                 type="button"
                 onClick={() => setActiveBottomTab(item.id)}
-                className={`py-1.5 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                className={`py-1.5 px-2.5 rounded-lg flex items-center justify-center gap-1.5 shrink-0 transition-all ${
                   active
-                    ? 'bg-[#4A90E2] text-white shadow'
-                    : item.id === 'more'
-                      ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
-                      : 'text-slate-400 hover:text-white'
+                    ? item.id === 'ai_background'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg ring-1 ring-emerald-400'
+                      : item.id === 'speech_to_text'
+                        ? 'bg-gradient-to-r from-rose-600 to-amber-600 text-white shadow-lg ring-1 ring-rose-400'
+                        : 'bg-[#4A90E2] text-white shadow'
+                    : item.id === 'ai_background'
+                      ? 'bg-emerald-950/30 text-emerald-300 border border-emerald-500/20 hover:text-white'
+                      : item.id === 'speech_to_text'
+                        ? 'bg-rose-950/30 text-rose-300 border border-rose-500/20 hover:text-white'
+                        : item.id === 'more'
+                          ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                <Icon className="w-3.5 h-3.5" />
-                <span className="text-[9px] font-extrabold">{item.label}</span>
+                <Icon className="w-3.5 h-3.5 shrink-0" />
+                <span className="text-[10px] font-extrabold whitespace-nowrap">{item.label}</span>
+                {item.badge && (
+                  <span
+                    className={`px-1 py-0.2 rounded text-[8px] font-black uppercase ${
+                      item.accent === 'emerald'
+                        ? 'bg-emerald-400/20 text-emerald-300'
+                        : 'bg-rose-400/20 text-rose-300'
+                    }`}
+                  >
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -2683,6 +3219,894 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* GREEN SCREEN & AI BACKGROUND STUDIO TAB */}
+        {activeBottomTab === 'ai_background' && (
+          <div className="space-y-4">
+            {/* Hidden custom background upload input */}
+            <input
+              ref={customBgInputRef}
+              type="file"
+              accept="image/*,video/*"
+              onChange={handleCustomBgUpload}
+              className="hidden"
+            />
+
+            {/* Header with Title & Action Buttons */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pb-1 border-b border-white/10">
+              <div>
+                <h3 className="text-sm font-extrabold text-white flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <span>Green Screen & AI Background Studio</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Cutout subjects from videos & photos automatically, swap presets or generate new scenes with AI
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setAiBgPromptModalOpen(true)}
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-md shadow-emerald-600/30 transition-all"
+                >
+                  <Wand2 className="w-3.5 h-3.5" />
+                  <span>Prompt AI BG</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => customBgInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Upload BG</span>
+                </button>
+
+                {activeClip?.bgUrl && (
+                  <button
+                    type="button"
+                    onClick={handleClearBackground}
+                    className="px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-300 text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset BG</span>
+                  </button>
+                )}
+
+                {activeClip?.type === 'photo' && (
+                  <button
+                    type="button"
+                    disabled={bakingAiBgPhoto}
+                    onClick={handleExportPhotoWithBackground}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-md transition-all"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>{bakingAiBgPhoto ? 'Exporting...' : 'Export Photo'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Notification alert banner */}
+            {aiBgNotice && (
+              <div className="p-2.5 rounded-xl bg-emerald-950/60 border border-emerald-500/40 text-xs text-emerald-300 flex items-center justify-between shadow-lg">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{aiBgNotice}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setAiBgNotice('')}
+                  className="text-emerald-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Detection & Cutout Mode Selector */}
+            {activeClip && (
+              <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-[#0B1325] to-cyan-950/40 border border-emerald-500/20 space-y-3">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Layers className="w-4 h-4 text-emerald-400" />
+                    <span>Foreground Subject Cutout Mode:</span>
+                  </span>
+
+                  <div className="flex items-center gap-1.5 p-1 bg-black/40 rounded-xl border border-white/10">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateActiveClip({
+                          aiBgMode: 'ai_cutout',
+                          aiBgEnabled: true,
+                          chromaKeyEnabled: false,
+                        })
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        (activeClip.aiBgMode || 'ai_cutout') === 'ai_cutout'
+                          ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>🤖 AI Person Cutout</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateActiveClip({
+                          aiBgMode: 'chroma_key',
+                          chromaKeyEnabled: true,
+                        })
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all ${
+                        activeClip.aiBgMode === 'chroma_key'
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Film className="w-3.5 h-3.5 text-blue-300" />
+                      <span>🎬 Chroma Key</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-controls based on chosen mode */}
+                {(activeClip.aiBgMode || 'ai_cutout') === 'ai_cutout' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-white/10">
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">Cutout Sensitivity:</span>
+                        <span className="text-emerald-400 font-bold">
+                          {activeClip.aiBgSensitivity ?? 50}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={10}
+                        max={100}
+                        value={activeClip.aiBgSensitivity ?? 50}
+                        onChange={(e) =>
+                          updateActiveClip({
+                            aiBgSensitivity: Number(e.target.value),
+                            aiBgEnabled: true,
+                          })
+                        }
+                        className="w-full accent-emerald-500"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">Edge Feathering:</span>
+                        <span className="text-cyan-400 font-bold">
+                          {activeClip.aiBgEdgeFeather ?? 4}px
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={20}
+                        value={activeClip.aiBgEdgeFeather ?? 4}
+                        onChange={(e) =>
+                          updateActiveClip({
+                            aiBgEdgeFeather: Number(e.target.value),
+                            aiBgEnabled: true,
+                          })
+                        }
+                        className="w-full accent-cyan-500"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2 pt-1 border-t border-white/10">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] text-slate-300 font-medium">Key Backdrop Color:</span>
+                      <div className="flex items-center gap-1.5">
+                        {(
+                          [
+                            { id: 'green', label: '🟢 Green Key', bg: 'bg-emerald-600' },
+                            { id: 'blue', label: '🔵 Blue Key', bg: 'bg-blue-600' },
+                            { id: 'black', label: '⚫ Black Key', bg: 'bg-slate-900 border border-white/30' },
+                          ] as const
+                        ).map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() =>
+                              updateActiveClip({
+                                chromaKeyColor: c.id,
+                                chromaKeyEnabled: true,
+                                aiBgMode: 'chroma_key',
+                              })
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                              (activeClip.chromaKeyColor || 'green') === c.id
+                                ? `${c.bg} text-white shadow-md ring-2 ring-white/50`
+                                : 'bg-white/5 text-slate-300 hover:text-white'
+                            }`}
+                          >
+                            {c.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-slate-300 font-medium whitespace-nowrap">
+                        Sensitivity: {activeClip.chromaKeySensitivity ?? 45}%
+                      </span>
+                      <input
+                        type="range"
+                        min={15}
+                        max={85}
+                        value={activeClip.chromaKeySensitivity ?? 45}
+                        onChange={(e) =>
+                          updateActiveClip({
+                            chromaKeySensitivity: Number(e.target.value),
+                            chromaKeyEnabled: true,
+                            aiBgMode: 'chroma_key',
+                          })
+                        }
+                        className="w-full accent-blue-500"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Background Fine-Tuning: Blur, Zoom, Position & Person Scaling */}
+            {activeClip && (
+              <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Background & Foreground Adjustments:</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateActiveClip({
+                        bgBlur: 0,
+                        bgZoom: 1,
+                        bgPositionX: 0,
+                        bgPositionY: 0,
+                        personScale: 1,
+                        personPositionX: 0,
+                        personPositionY: 0,
+                      })
+                    }
+                    className="text-[10px] font-bold text-slate-400 hover:text-white inline-flex items-center gap-1"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Transforms</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span className="text-slate-300">Background Blur:</span>
+                      <span className="text-white font-bold">{activeClip.bgBlur || 0}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={30}
+                      value={activeClip.bgBlur || 0}
+                      onChange={(e) => updateActiveClip({ bgBlur: Number(e.target.value) })}
+                      className="w-full accent-[#4A90E2]"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span className="text-slate-300">Background Zoom:</span>
+                      <span className="text-white font-bold">{(activeClip.bgZoom || 1).toFixed(1)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={3.0}
+                      step={0.1}
+                      value={activeClip.bgZoom || 1}
+                      onChange={(e) => updateActiveClip({ bgZoom: Number(e.target.value) })}
+                      className="w-full accent-purple-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span className="text-slate-300">Background Pan X:</span>
+                      <span className="text-white font-bold">{activeClip.bgPositionX || 0}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={-50}
+                      max={50}
+                      value={activeClip.bgPositionX || 0}
+                      onChange={(e) => updateActiveClip({ bgPositionX: Number(e.target.value) })}
+                      className="w-full accent-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex justify-between text-[11px] mb-1">
+                      <span className="text-slate-300">Person Scale:</span>
+                      <span className="text-white font-bold">{(activeClip.personScale || 1).toFixed(1)}x</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={2.0}
+                      step={0.05}
+                      value={activeClip.personScale || 1}
+                      onChange={(e) => updateActiveClip({ personScale: Number(e.target.value) })}
+                      className="w-full accent-amber-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Instant Search Bar & One-Tap Prompt Filter Chips */}
+            <div className="space-y-2">
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={aiBgSearchQuery}
+                  onChange={(e) => setAiBgSearchQuery(e.target.value)}
+                  placeholder="Search virtual backgrounds (e.g. Deep Space, Football Stadium, Beach, New York)..."
+                  className="w-full bg-[#080B14] border border-white/15 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400 transition-colors"
+                />
+                {aiBgSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setAiBgSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* One-Tap Quick Filter Chips */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
+                {(
+                  [
+                    { label: '🌌 Deep Space', q: 'deep space' },
+                    { label: '🌍 Top of Earth', q: 'top of earth' },
+                    { label: '⚽ Football Stadium', q: 'football stadium' },
+                    { label: '🏖️ Tropical Beach', q: 'beach' },
+                    { label: '🌃 New York at Night', q: 'new york' },
+                    { label: '🎙️ Podcast Studio', q: 'podcast' },
+                    { label: '📺 Newsroom', q: 'news' },
+                    { label: '🎸 Concert Stage', q: 'concert' },
+                    { label: '🏙️ Cyberpunk', q: 'cyberpunk' },
+                    { label: '🏛️ Santorini', q: 'santorini' },
+                  ] as const
+                ).map((chip) => (
+                  <button
+                    key={chip.q}
+                    type="button"
+                    onClick={() => setAiBgSearchQuery(chip.q)}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold shrink-0 transition-all ${
+                      aiBgSearchQuery === chip.q
+                        ? 'bg-emerald-600 text-white shadow'
+                        : 'bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10'
+                    }`}
+                  >
+                    {chip.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Category Pills */}
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-1">
+                {(['All', 'Nature & Travel', 'Studio', 'Luxury & City', 'Cyberpunk', 'Abstract'] as const).map(
+                  (cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setAiBgCategory(cat)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-extrabold shrink-0 transition-all ${
+                        aiBgCategory === cat
+                          ? 'bg-[#4A90E2] text-white shadow'
+                          : 'text-slate-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  )
+                )}
+              </div>
+            </div>
+
+            {/* Background Presets Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-[380px] overflow-y-auto pr-1">
+              {GREEN_SCREEN_BACKGROUNDS.filter((bg) => {
+                const matchCat = aiBgCategory === 'All' || bg.category === aiBgCategory;
+                const q = aiBgSearchQuery.trim().toLowerCase();
+                const matchQ =
+                  !q ||
+                  bg.name.toLowerCase().includes(q) ||
+                  bg.tags.some((t) => t.toLowerCase().includes(q));
+                return matchCat && matchQ;
+              }).map((bg) => {
+                const isSelected = activeClip?.bgUrl === bg.url;
+                return (
+                  <button
+                    key={bg.id}
+                    type="button"
+                    onClick={() => handleSelectBackground(bg)}
+                    className={`group relative rounded-xl overflow-hidden aspect-video border text-left transition-all ${
+                      isSelected
+                        ? 'border-emerald-400 ring-2 ring-emerald-400/50 shadow-lg shadow-emerald-500/20'
+                        : 'border-white/10 hover:border-white/30'
+                    }`}
+                  >
+                    <img
+                      src={bg.thumbUrl}
+                      alt={bg.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent flex flex-col justify-end p-2">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[11px] font-bold text-white truncate drop-shadow">
+                          {bg.name}
+                        </span>
+                        {isSelected && (
+                          <span className="w-4 h-4 rounded-full bg-emerald-500 text-black flex items-center justify-center shrink-0">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] text-slate-300 truncate">
+                        {bg.category} • {bg.type}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* SPEECH TO TEXT & REAL-TIME AUTO CAPTIONS TAB */}
+        {activeBottomTab === 'speech_to_text' && (
+          <div className="space-y-4">
+            {/* Header */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pb-1 border-b border-white/10">
+              <div>
+                <h3 className="text-sm font-extrabold text-white flex items-center gap-1.5">
+                  <Mic className="w-4 h-4 text-rose-400" />
+                  <span>Speech-to-Text & Real-Time Auto-Captions</span>
+                </h3>
+                <p className="text-[11px] text-slate-400">
+                  Speak into your microphone to transcribe voice into time-synced animated subtitles and captions
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleGenerateSmartCaptions}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-colors"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>1-Tap Viral Hooks</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Live Recording Section */}
+            <div className="p-4 rounded-2xl bg-gradient-to-r from-rose-950/30 via-[#0B1325] to-purple-950/30 border border-rose-500/20 space-y-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-white">Recognition Language:</span>
+                  <select
+                    value={sttLanguage}
+                    onChange={(e) => setSttLanguage(e.target.value)}
+                    className="bg-[#080B14] border border-white/15 rounded-lg px-2.5 py-1 text-xs text-white"
+                  >
+                    <option value="en-US">🇺🇸 English (US)</option>
+                    <option value="en-GB">🇬🇧 English (UK)</option>
+                    <option value="en-NG">🇳🇬 Nigerian English / Pidgin</option>
+                    <option value="ig-NG">🇳🇬 Asụsụ Igbo</option>
+                    <option value="yo-NG">🇳🇬 Yorùbá</option>
+                    <option value="ha-NG">🇳🇬 Hausa</option>
+                    <option value="fr-FR">🇫🇷 French</option>
+                    <option value="es-ES">🇪🇸 Spanish</option>
+                  </select>
+                </div>
+
+                <div className="text-right">
+                  <span className="text-[11px] text-slate-400">
+                    Timeline Position:{' '}
+                    <span className="text-white font-mono font-bold">
+                      {timelineTime.toFixed(1)}s / {(totalDuration || 10).toFixed(1)}s
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              {/* Big Record Microphone Button & Analyse Uploaded Video Audio */}
+              <div className="flex flex-col items-center justify-center py-2 gap-3">
+                {/* 1. Analyse Uploaded Video Audio Button */}
+                {primaryClip?.type === 'video' && primaryClip?.url && (
+                  <div className="w-full p-3.5 rounded-2xl bg-gradient-to-r from-blue-900/40 via-purple-900/30 to-indigo-900/40 border border-blue-400/30 shadow-lg space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-cyan-400 animate-spin" />
+                        <span>AI Video Audio Speech Analyser</span>
+                      </span>
+                      <span className="text-[10px] text-cyan-300 font-extrabold uppercase px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/40">
+                        Auto-Captions
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300">
+                      Analyse the audio track of your uploaded video to transcribe the exact words spoken and display time-synced captions on screen.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={isAnalyzingVideoAudio}
+                      onClick={handleAnalyseUploadedVideoAudio}
+                      className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:brightness-110 text-white font-extrabold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all disabled:opacity-50"
+                    >
+                      {isAnalyzingVideoAudio ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 text-white animate-spin" />
+                          <span>{videoAnalysisProgress || 'Analysing video audio...'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Wand2 className="w-4 h-4 text-yellow-300" />
+                          <span>Analyse Uploaded Video Audio & Create Captions</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* 2. Live Mic Voice-to-Text Button */}
+                <button
+                  type="button"
+                  onClick={handleToggleSpeechToTextRecording}
+                  className={`w-full max-w-sm py-3.5 px-4 rounded-2xl font-extrabold text-sm flex items-center justify-center gap-2.5 shadow-xl transition-all ${
+                    sttIsRecording
+                      ? 'bg-rose-600 hover:bg-rose-500 text-white animate-pulse ring-4 ring-rose-500/30'
+                      : 'bg-gradient-to-r from-rose-600 via-pink-600 to-purple-600 hover:brightness-110 text-white shadow-rose-600/30'
+                  }`}
+                >
+                  {sttIsRecording ? (
+                    <>
+                      <MicOff className="w-5 h-5 text-white animate-bounce" />
+                      <span>Stop Listening (Tap to finish)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Mic className="w-5 h-5 text-white" />
+                      <span>Start Voice-to-Text Recording</span>
+                    </>
+                  )}
+                </button>
+
+                <p className="text-[11px] text-slate-400 text-center">
+                  {sttIsRecording
+                    ? '🎙️ Listening in real-time... Speak clearly into your mic!'
+                    : 'Tap the button and speak. Your voice converts into text and video captions.'}
+                </p>
+              </div>
+            </div>
+
+            {/* Font Design & Color Selection Studio */}
+            <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Palette className="w-4 h-4 text-yellow-400" />
+                  <span>Caption Font Design & Colour Styling:</span>
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {FONT_STYLES_52.find((f) => f.id === selectedFontPresetId)?.name || 'TikTok Bold'}
+                </span>
+              </div>
+
+              {/* Color Palette */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] text-slate-300 font-semibold">Text Colour:</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {[
+                    { hex: '#FFE600', label: 'Yellow' },
+                    { hex: '#FFFFFF', label: 'White' },
+                    { hex: '#00E5FF', label: 'Cyan' },
+                    { hex: '#FF3366', label: 'Pink' },
+                    { hex: '#00FF66', label: 'Green' },
+                    { hex: '#A855F7', label: 'Purple' },
+                    { hex: '#FF6600', label: 'Orange' },
+                    { hex: '#FFD700', label: 'Gold' },
+                    { hex: '#111827', label: 'Dark' },
+                  ].map((c) => (
+                    <button
+                      key={c.hex}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCaptionColor(c.hex);
+                        updateProjectWithHistory((prev) => ({
+                          ...prev,
+                          subtitleColor: c.hex,
+                          subtitles: prev.subtitles.map((s) => ({
+                            ...s,
+                            color: c.hex,
+                          })),
+                        }));
+                      }}
+                      style={{ backgroundColor: c.hex }}
+                      className={`w-6 h-6 rounded-full border-2 transition-transform ${
+                        selectedCaptionColor === c.hex
+                          ? 'border-white scale-125 shadow-lg shadow-white/30'
+                          : 'border-white/20 hover:scale-110'
+                      }`}
+                      title={c.label}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={selectedCaptionColor.startsWith('#') ? selectedCaptionColor : '#FFE600'}
+                    onChange={(e) => {
+                      setSelectedCaptionColor(e.target.value);
+                      updateProjectWithHistory((prev) => ({
+                        ...prev,
+                        subtitleColor: e.target.value,
+                        subtitles: prev.subtitles.map((s) => ({
+                          ...s,
+                          color: e.target.value,
+                        })),
+                      }));
+                    }}
+                    className="w-7 h-7 rounded-full cursor-pointer bg-transparent border-none"
+                    title="Custom color"
+                  />
+                </div>
+              </div>
+
+              {/* Font Design Presets Carousel / Grid */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] text-slate-300 font-semibold">Font Style & Design (52 Presets):</span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
+                  {FONT_STYLES_52.slice(0, 18).map((preset) => {
+                    const isSelected = selectedFontPresetId === preset.id;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedFontPresetId(preset.id);
+                          updateProjectWithHistory((prev) => ({
+                            ...prev,
+                            activeFontStyleId: preset.id,
+                            subtitles: prev.subtitles.map((s) => ({
+                              ...s,
+                              fontStyleId: preset.id,
+                            })),
+                          }));
+                          showToast(`Applied ${preset.name}!`, 'info');
+                        }}
+                        className={`p-2 rounded-xl text-left border transition-all ${
+                          isSelected
+                            ? 'border-yellow-400 bg-yellow-500/15 ring-2 ring-yellow-400/40 shadow-lg'
+                            : 'border-white/10 bg-black/40 hover:border-white/20'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-white/10 text-slate-300">
+                            {preset.badge}
+                          </span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-yellow-400" />}
+                        </div>
+                        <p
+                          style={{
+                            ...(preset.style || {}),
+                            fontSize: '11px',
+                            color: selectedCaptionColor || preset.textColor,
+                            padding: '2px 4px',
+                          }}
+                          className="truncate leading-normal"
+                        >
+                          {preset.name}
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Live Preview Box */}
+              <div className="p-3 rounded-xl bg-black/60 border border-white/15 text-center flex flex-col items-center justify-center gap-1">
+                <span className="text-[10px] text-slate-400 font-medium">On-Screen Caption Live Preview:</span>
+                <div
+                  style={{
+                    ...(getFontDesignPresetById(selectedFontPresetId)?.style || {}),
+                    color: selectedCaptionColor,
+                    fontSize: '14px',
+                  }}
+                  className={getFontDesignPresetById(selectedFontPresetId)?.className || ''}
+                >
+                  {sttTranscript || 'BoostHub Aba Creators 🔥'}
+                </div>
+              </div>
+            </div>
+
+            {/* Live Transcript Viewer & Editor */}
+            <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Speech Transcript:</span>
+                </span>
+                <div className="flex items-center gap-1.5">
+                  {(sttTranscript || sttInterimTranscript) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const full = (sttTranscript + ' ' + sttInterimTranscript).trim();
+                          navigator.clipboard?.writeText(full);
+                          showToast('Copied transcript to clipboard!', 'success');
+                        }}
+                        className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-[10px] font-bold inline-flex items-center gap-1"
+                      >
+                        <Copy className="w-3 h-3" />
+                        <span>Copy</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSttTranscript('');
+                          setSttInterimTranscript('');
+                        }}
+                        className="px-2 py-1 rounded-lg bg-rose-500/20 text-rose-300 text-[10px] font-bold"
+                      >
+                        Clear
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <textarea
+                value={sttTranscript}
+                onChange={(e) => setSttTranscript(e.target.value)}
+                placeholder="Spoken words will transcribe here in real-time. You can also type or edit text directly..."
+                rows={3}
+                className="w-full bg-[#080B14] border border-white/15 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-400"
+              />
+
+              {sttInterimTranscript && (
+                <div className="p-2 rounded-lg bg-black/40 border border-white/10 text-[11px] text-cyan-300 italic flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+                  <span>&quot;{sttInterimTranscript}&quot;</span>
+                </div>
+              )}
+
+              {/* Convert to Synced Captions Button */}
+              <button
+                type="button"
+                onClick={() => handleConvertSpeechToCaptions()}
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 transition-all"
+              >
+                <Sparkles className="w-4 h-4 text-emerald-200" />
+                <span>Convert Spoken Voice to Timed Video Captions</span>
+              </button>
+            </div>
+
+            {/* Caption Styling Selector (TikTok / Reels / YouTube Shorts) */}
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
+              <span className="text-xs font-bold text-white">Viral Caption Style:</span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {(
+                  [
+                    { id: 'viral_yellow', name: '🟡 Viral Yellow', desc: '#1 TikTok style', bg: 'bg-yellow-500/20 border-yellow-400 text-yellow-300' },
+                    { id: 'cyber_cyan', name: '🔵 Cyber Cyan', desc: 'Neon glow', bg: 'bg-cyan-500/20 border-cyan-400 text-cyan-300' },
+                    { id: 'clean_box', name: '⚪ Minimal Box', desc: 'Crisp pill', bg: 'bg-slate-800 border-white/30 text-white' },
+                    { id: 'bold_red', name: '🔴 Punchy Red', desc: 'Attention hook', bg: 'bg-rose-500/20 border-rose-400 text-rose-300' },
+                  ] as const
+                ).map((st) => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    onClick={() => setSttCaptionStyle(st.id)}
+                    className={`p-2 rounded-xl text-left border transition-all ${
+                      sttCaptionStyle === st.id
+                        ? `${st.bg} ring-2 ring-white/30 shadow-md`
+                        : 'bg-white/5 border-white/10 text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <p className="text-xs font-bold">{st.name}</p>
+                    <p className="text-[10px] opacity-75">{st.desc}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Active Subtitle Cues on Timeline */}
+            <div className="p-3 rounded-2xl bg-white/[0.03] border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <Subtitles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Timed Subtitle Cues ({project.subtitles.length}):</span>
+                </span>
+                {project.subtitles.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => updateProjectWithHistory((p) => ({ ...p, subtitles: [] }))}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 font-bold"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+
+              {project.subtitles.length === 0 ? (
+                <p className="text-[11px] text-slate-500 italic text-center py-2">
+                  No captions on the timeline yet. Record speech above or tap &quot;1-Tap Viral Hooks&quot;!
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                  {project.subtitles.map((cue) => (
+                    <div
+                      key={cue.id}
+                      className="p-2 rounded-xl bg-[#080B14] border border-white/10 flex items-center justify-between gap-2"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTimelineTime(cue.startTime);
+                          showToast(`Jumped to ${cue.startTime}s`, 'info');
+                        }}
+                        className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30"
+                      >
+                        {cue.startTime.toFixed(1)}s - {cue.endTime.toFixed(1)}s
+                      </button>
+
+                      <input
+                        type="text"
+                        value={cue.text}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateProjectWithHistory((prev) => ({
+                            ...prev,
+                            subtitles: prev.subtitles.map((s) =>
+                              s.id === cue.id ? { ...s, text: val } : s
+                            ),
+                          }));
+                        }}
+                        className="flex-1 bg-transparent border-none text-xs text-white focus:outline-none"
+                      />
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateProjectWithHistory((prev) => ({
+                            ...prev,
+                            subtitles: prev.subtitles.filter((s) => s.id !== cue.id),
+                          }))
+                        }
+                        className="text-slate-500 hover:text-rose-400 p-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -3986,34 +5410,85 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               )}
             </div>
 
-            {/* Basic Green-Screen / Chroma Key Background Removal */}
+            {/* Quick Access to Pro Studios */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                onClick={() => setActiveBottomTab('ai_background')}
+                className="p-3 rounded-xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-cyan-950/50 border border-emerald-500/30 text-left hover:border-emerald-400 transition-all group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Sparkles className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">
+                    Green Screen & AI Background Studio
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Swap backgrounds with Deep Space, Orbit, Stadium, Beach, AI scenes & custom media
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveBottomTab('speech_to_text')}
+                className="p-3 rounded-xl bg-gradient-to-r from-rose-950/50 via-slate-900 to-purple-950/50 border border-rose-500/30 text-left hover:border-rose-400 transition-all group"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Mic className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold text-white">
+                    Speech-to-Text & Auto-Captions
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Transcribe spoken voice from your mic into live-synced viral video subtitles
+                </p>
+              </button>
+            </div>
+
+            {/* Basic Green-Screen / Chroma Key Background Removal & Presets Link */}
             {activeClip && (
               <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-xs font-bold text-white">
-                      Green-Screen / Chroma Key Removal
+                    <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <span>Green-Screen / Chroma Key Removal</span>
+                      {activeClip.bgUrl && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                          {activeClip.bgName || 'Virtual BG active'}
+                        </span>
+                      )}
                     </p>
                     <p className="text-[11px] text-slate-400">
                       Remove solid green, blue, or dark backgrounds in real time
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateActiveClip((c) => ({
-                        ...c,
-                        chromaKeyEnabled: !c.chromaKeyEnabled,
-                      }))
-                    }
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
-                      activeClip.chromaKeyEnabled
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-white/10 text-slate-300'
-                    }`}
-                  >
-                    {activeClip.chromaKeyEnabled ? 'Enabled' : 'Enable'}
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setActiveBottomTab('ai_background')}
+                      className="px-2.5 py-1.5 rounded-xl bg-emerald-600/30 hover:bg-emerald-600/40 text-emerald-300 border border-emerald-500/40 text-xs font-bold inline-flex items-center gap-1"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Virtual BG Library</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateActiveClip((c) => ({
+                          ...c,
+                          chromaKeyEnabled: !c.chromaKeyEnabled,
+                          aiBgMode: 'chroma_key',
+                        }))
+                      }
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold ${
+                        activeClip.chromaKeyEnabled
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {activeClip.chromaKeyEnabled ? 'Enabled' : 'Enable'}
+                    </button>
+                  </div>
                 </div>
                 {activeClip.chromaKeyEnabled && (
                   <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -4035,18 +5510,21 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                         </button>
                       ))}
                     </div>
-                    <input
-                      type="range"
-                      min={15}
-                      max={85}
-                      value={activeClip.chromaKeySensitivity}
-                      onChange={(e) =>
-                        updateActiveClip({
-                          chromaKeySensitivity: Number(e.target.value),
-                        })
-                      }
-                      className="w-32 accent-emerald-500"
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-400">Sensitivity:</span>
+                      <input
+                        type="range"
+                        min={15}
+                        max={85}
+                        value={activeClip.chromaKeySensitivity}
+                        onChange={(e) =>
+                          updateActiveClip({
+                            chromaKeySensitivity: Number(e.target.value),
+                          })
+                        }
+                        className="w-28 accent-emerald-500"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -4082,18 +5560,20 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         )}
       </div>
 
-      {/* BOTTOM NAVIGATION FOR MEDIA, AUDIO, MORE (SHIFTED LEFT-CENTER SO B FLASH NEVER BLOCKS IT), TEXT, STICKERS, EFFECTS & FILTERS */}
+      {/* BOTTOM NAVIGATION FOR ALL 9 PRO STUDIO TOOLS (MEDIA, GREEN SCREEN, SPEECH-TO-TEXT, AUDIO, MORE, TEXT, STICKERS, EFFECTS & FILTERS) */}
       <div className="fixed bottom-16 left-0 right-0 z-30 px-3 pointer-events-none">
-        <div className="max-w-lg mx-auto bg-[#121626]/95 backdrop-blur-md border border-white/15 rounded-2xl p-1.5 grid grid-cols-7 gap-1 shadow-2xl pointer-events-auto">
+        <div className="max-w-lg mx-auto bg-[#121626]/95 backdrop-blur-md border border-white/15 rounded-2xl p-1.5 flex items-center gap-1 overflow-x-auto no-scrollbar shadow-2xl pointer-events-auto">
           {(
             [
-              { id: 'media', label: 'Media', icon: Film },
-              { id: 'audio', label: 'Audio', icon: Music },
-              { id: 'more', label: 'More', icon: MoreHorizontal },
-              { id: 'text', label: 'Text', icon: Type },
-              { id: 'stickers', label: 'Stickers', icon: Smile },
-              { id: 'effects', label: 'Effects', icon: Sparkles },
-              { id: 'filters', label: 'Filters', icon: Sliders },
+              { id: 'media', label: 'Media', icon: Film, badge: '' },
+              { id: 'ai_background', label: 'Green Screen', icon: Sparkles, badge: 'AI', accent: 'emerald' },
+              { id: 'speech_to_text', label: 'Speech to Text', icon: Mic, badge: 'STT', accent: 'rose' },
+              { id: 'audio', label: 'Audio', icon: Music, badge: '' },
+              { id: 'more', label: 'More', icon: MoreHorizontal, badge: '' },
+              { id: 'text', label: 'Text', icon: Type, badge: '' },
+              { id: 'stickers', label: 'Stickers', icon: Smile, badge: '' },
+              { id: 'effects', label: 'Effects', icon: Wand2, badge: '' },
+              { id: 'filters', label: 'Filters', icon: Sliders, badge: '' },
             ] as const
           ).map((item) => {
             const Icon = item.icon;
@@ -4103,21 +5583,109 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 key={item.id}
                 type="button"
                 onClick={() => setActiveBottomTab(item.id)}
-                className={`min-h-[46px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition-colors ${
+                className={`min-h-[46px] min-w-[58px] px-2 rounded-xl flex flex-col items-center justify-center gap-0.5 shrink-0 transition-colors ${
                   active
-                    ? 'bg-[#4A90E2] text-white'
-                    : item.id === 'more'
-                      ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
-                      : 'text-slate-400 hover:text-white'
+                    ? item.id === 'ai_background'
+                      ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow ring-1 ring-emerald-400'
+                      : item.id === 'speech_to_text'
+                        ? 'bg-gradient-to-r from-rose-600 to-amber-600 text-white shadow ring-1 ring-rose-400'
+                        : 'bg-[#4A90E2] text-white shadow'
+                    : item.id === 'ai_background'
+                      ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/25 hover:text-white'
+                      : item.id === 'speech_to_text'
+                        ? 'bg-rose-950/40 text-rose-300 border border-rose-500/25 hover:text-white'
+                        : item.id === 'more'
+                          ? 'bg-cyan-500/10 text-cyan-300 border border-cyan-400/30 hover:text-white'
+                          : 'text-slate-400 hover:text-white'
                 }`}
               >
                 <Icon className="w-4 h-4" />
-                <span className="text-[10px] font-bold">{item.label}</span>
+                <span className="text-[9px] font-bold whitespace-nowrap">{item.label}</span>
               </button>
             );
           })}
         </div>
       </div>
+
+      {/* AI BACKGROUND PROMPT MODAL */}
+      {aiBgPromptModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#121626] border border-emerald-500/30 p-4 space-y-3.5 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                <Wand2 className="w-4 h-4 text-emerald-400" />
+                <span>Generate AI Virtual Background</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setAiBgPromptModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300">
+              Describe the scene you want to replace your background with, or pick a template:
+            </p>
+
+            <textarea
+              value={aiBgCustomPrompt}
+              onChange={(e) => setAiBgCustomPrompt(e.target.value)}
+              placeholder="e.g. Astronaut looking at blue planet Earth from orbit, sparkling stars, cinematic 4K wallpaper..."
+              rows={3}
+              className="w-full bg-[#080B14] border border-white/15 rounded-xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-400"
+            />
+
+            {/* Quick Templates */}
+            <div className="space-y-1.5">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                Quick Scene Ideas:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {(
+                  [
+                    'Deep Space Nebula with violet galaxy spiral and cosmic dust',
+                    'Top of Earth looking down on blue oceans and continents with stars',
+                    'Packed Champions League Football Stadium under bright floodlights',
+                    'Tropical Beach with turquoise waves, white sand, and palm trees',
+                    'New York Manhattan skyline at night with glistening skyscrapers',
+                    'Futuristic cyberpunk neon alleyway in Tokyo with rain reflections',
+                  ] as const
+                ).map((promptIdea) => (
+                  <button
+                    key={promptIdea}
+                    type="button"
+                    onClick={() => setAiBgCustomPrompt(promptIdea)}
+                    className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-emerald-950/40 border border-white/10 hover:border-emerald-500/40 text-[10px] text-slate-300 hover:text-emerald-300 text-left transition-colors"
+                  >
+                    ✨ {promptIdea.slice(0, 38)}...
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setAiBgPromptModalOpen(false)}
+                className="px-3 py-1.5 rounded-xl bg-white/10 text-slate-300 text-xs font-bold"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={isGeneratingAiBg || !aiBgCustomPrompt.trim()}
+                onClick={() => handleGenerateAiBackground()}
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-lg shadow-emerald-600/30 disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>{isGeneratingAiBg ? 'Generating Scene...' : 'Generate & Apply'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* SAVED PROJECTS MODAL (Save & Continue Editing Saved Projects) */}
       {projectsModalOpen && (

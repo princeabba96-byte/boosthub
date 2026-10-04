@@ -1,8 +1,8 @@
 {
-  "packageId": "app.boosthub.social",
+  "packageId": "com.boosthub.aba",
   "host": "princeabba96-byte.github.io",
-  "name": "BoostHub",
-  "launcherName": "BoostHub",
+  "name": "BoostHub Aba - Video Editor for Nigerian Creators",
+  "launcherName": "BoostHub Aba",
   "display": "standalone",
   "themeColor": "#0A84FF",
   "themeColorDark": "#0A0A0A",

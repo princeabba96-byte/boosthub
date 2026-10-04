@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="app.boosthub.social">
+    package="com.boosthub.aba">
 
-    <!-- BoostHub is a Social & Creator Platform (Capshots, Stories, Messaging, B-Shop). -->
+    <!-- BoostHub Aba - Video Editor for Nigerian Creators -->
     <!-- Explicitly strip any ARCore / Google Play Services for AR requirements so APK installs on all Android devices -->
     <uses-feature
         android:name="android.hardware.camera.ar"
@@ -25,7 +25,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="BoostHub"
+        android:label="BoostHub Aba - Video Editor for Nigerian Creators"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.NoTitleBar">
 
@@ -41,7 +41,7 @@
         <activity
             android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
             android:exported="true"
-            android:label="BoostHub"
+            android:label="BoostHub Aba"
             android:screenOrientation="portrait">
             <meta-data
                 android:name="android.support.customtabs.trusted.DEFAULT_URL"

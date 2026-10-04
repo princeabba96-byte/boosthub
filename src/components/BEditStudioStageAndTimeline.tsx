@@ -16,6 +16,7 @@ import {
   Subtitles,
   Layers,
   Upload,
+  Sparkles,
 } from 'lucide-react';
 import {
   BEditProjectState,
@@ -30,6 +31,7 @@ import {
   STUDIO_TRANSITION_EFFECTS,
   StudioTransitionType,
 } from './StudioMediaEditor';
+import { getFontDesignPresetById } from '../data/fontStyles52';
 
 interface BEditStudioStageAndTimelineProps {
   project: BEditProjectState;
@@ -127,32 +129,56 @@ export const BEditStudioStageAndTimeline: React.FC<
           ctx.drawImage(srcEl, 0, 0, w, h);
           const frame = ctx.getImageData(0, 0, w, h);
           const data = frame.data;
-          const threshold = (activeClip.chromaKeySensitivity || 45) * 2.2;
+          const sensitivity = activeClip.chromaKeySensitivity || 50;
           const keyColor = activeClip.chromaKeyColor || 'green';
 
           for (let i = 0; i < data.length; i += 4) {
             const r = data[i];
             const g = data[i + 1];
             const b = data[i + 2];
-            if (
-              keyColor === 'green' &&
-              g > 90 &&
-              g - Math.max(r, b) > 120 - threshold
-            ) {
-              data[i + 3] = 0;
-            } else if (
-              keyColor === 'blue' &&
-              b > 90 &&
-              b - Math.max(r, g) > 120 - threshold
-            ) {
-              data[i + 3] = 0;
-            } else if (
-              keyColor === 'black' &&
-              r < threshold &&
-              g < threshold &&
-              b < threshold
-            ) {
-              data[i + 3] = 0;
+
+            if (keyColor === 'green') {
+              const maxOther = Math.max(r, b);
+              const diff = g - maxOther;
+              // Adaptive threshold based on sensitivity slider (10 to 100)
+              const thresholdLow = Math.max(12, 60 - sensitivity * 0.55);
+              const thresholdHigh = thresholdLow + 35;
+
+              if (diff >= thresholdHigh && g > 75) {
+                // Fully transparent background
+                data[i + 3] = 0;
+              } else if (diff > thresholdLow && g > 65) {
+                // Soft feathered edge with anti-aliasing
+                const factor = (diff - thresholdLow) / (thresholdHigh - thresholdLow);
+                data[i + 3] = Math.round(data[i + 3] * (1 - factor));
+                // Suppress green spill reflection so skin and hair look natural
+                data[i + 1] = Math.round(maxOther + (g - maxOther) * (1 - factor));
+              } else if (diff > 0 && g > 90) {
+                // Green spill suppression on boundary pixels
+                data[i + 1] = Math.round((g + maxOther) / 2);
+              }
+            } else if (keyColor === 'blue') {
+              const maxOther = Math.max(r, g);
+              const diff = b - maxOther;
+              const thresholdLow = Math.max(12, 60 - sensitivity * 0.55);
+              const thresholdHigh = thresholdLow + 35;
+
+              if (diff >= thresholdHigh && b > 75) {
+                data[i + 3] = 0;
+              } else if (diff > thresholdLow && b > 65) {
+                const factor = (diff - thresholdLow) / (thresholdHigh - thresholdLow);
+                data[i + 3] = Math.round(data[i + 3] * (1 - factor));
+                data[i + 2] = Math.round(maxOther + (b - maxOther) * (1 - factor));
+              } else if (diff > 0 && b > 90) {
+                data[i + 2] = Math.round((b + maxOther) / 2);
+              }
+            } else if (keyColor === 'black') {
+              const brightness = (r + g + b) / 3;
+              const darkThreshold = Math.max(10, sensitivity * 0.85);
+              if (brightness < darkThreshold) {
+                const factor = brightness / darkThreshold;
+                data[i + 3] = Math.round(data[i + 3] * factor);
+              }
             }
           }
           ctx.putImageData(frame, 0, 0);
@@ -302,6 +328,46 @@ export const BEditStudioStageAndTimeline: React.FC<
             isFullscreen ? 'flex-1 max-h-[72vh]' : aspectClass
           } rounded-xl overflow-hidden flex items-center justify-center select-none touch-none border border-white/10`}
         >
+          {/* AI Replacement / Green Screen Virtual Background Layer (Positioned behind person) */}
+          {activeClip && activeClip.bgUrl && (
+            <div className="absolute inset-0 pointer-events-none overflow-hidden z-0">
+              {activeClip.bgType === 'video' ? (
+                <video
+                  src={activeClip.bgUrl}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  style={{
+                    filter: (activeClip.bgBlur || 0) > 0 ? `blur(${activeClip.bgBlur}px)` : undefined,
+                    transform: `translate(${activeClip.bgPositionX || 0}%, ${activeClip.bgPositionY || 0}%) scale(${activeClip.bgZoom || 1})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="w-full h-full object-cover transition-transform duration-75"
+                />
+              ) : (
+                <img
+                  src={activeClip.bgUrl}
+                  alt={activeClip.bgName || 'Virtual background'}
+                  style={{
+                    filter: (activeClip.bgBlur || 0) > 0 ? `blur(${activeClip.bgBlur}px)` : undefined,
+                    transform: `translate(${activeClip.bgPositionX || 0}%, ${activeClip.bgPositionY || 0}%) scale(${activeClip.bgZoom || 1})`,
+                    transformOrigin: 'center center',
+                  }}
+                  className="w-full h-full object-cover transition-transform duration-75"
+                />
+              )}
+              <div className="absolute top-2 left-2 px-2.5 py-1 rounded-lg bg-black/80 backdrop-blur-md border border-emerald-400/40 text-[10px] font-bold text-emerald-300 flex items-center gap-1.5 shadow-lg z-10">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                <span className="truncate max-w-[170px]">
+                  {activeClip.bgName || 'Virtual BG'}
+                  {(activeClip.bgBlur || 0) > 0 ? ` • ${activeClip.bgBlur}px blur` : ''}
+                  {(activeClip.bgZoom || 1) !== 1 ? ` • ${activeClip.bgZoom}x zoom` : ''}
+                </span>
+              </div>
+            </div>
+          )}
+
           {activeClip && activeClip.url ? (
             <div
               style={getTransitionStyle()}
@@ -329,10 +395,13 @@ export const BEditStudioStageAndTimeline: React.FC<
                       saturation: activeClip.saturation,
                       exposure: activeClip.exposure,
                     }),
-                    transform: `translate(${activeClip.cropX}%, ${activeClip.cropY}%) rotate(${activeClip.rotation}deg) scale(${
-                      activeClip.cropZoom * (activeClip.flipH ? -1 : 1)
-                    }, ${activeClip.cropZoom * (activeClip.flipV ? -1 : 1)})`,
-                    opacity: activeClip.chromaKeyEnabled ? 0 : 1,
+                    transform: `translate(${activeClip.cropX + (activeClip.personPositionX || 0)}%, ${activeClip.cropY + (activeClip.personPositionY || 0)}%) rotate(${activeClip.rotation}deg) scale(${
+                      activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
+                    }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
+                    mixBlendMode: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && !activeClip.bgUrl ? 'screen' : undefined,
+                    opacity: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' ? 0.01 : 1,
+                    position: 'relative',
+                    zIndex: 10,
                   }}
                   className="w-full h-full object-contain cursor-pointer"
                 />
@@ -350,21 +419,31 @@ export const BEditStudioStageAndTimeline: React.FC<
                       saturation: activeClip.saturation,
                       exposure: activeClip.exposure,
                     }),
-                    transform: `translate(${activeClip.cropX}%, ${activeClip.cropY}%) rotate(${activeClip.rotation}deg) scale(${
-                      activeClip.cropZoom * (activeClip.flipH ? -1 : 1)
-                    }, ${activeClip.cropZoom * (activeClip.flipV ? -1 : 1)})`,
-                    opacity: activeClip.chromaKeyEnabled ? 0 : 1,
+                    transform: `translate(${activeClip.cropX + (activeClip.personPositionX || 0)}%, ${activeClip.cropY + (activeClip.personPositionY || 0)}%) rotate(${activeClip.rotation}deg) scale(${
+                      activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
+                    }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
+                    mixBlendMode: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && !activeClip.bgUrl ? 'screen' : undefined,
+                    opacity: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' ? 0.01 : 1,
+                    position: 'relative',
+                    zIndex: 10,
                   }}
                   className="w-full h-full object-contain cursor-pointer"
                 />
               )}
 
-              {/* Live Chroma-Key Green Screen Canvas */}
-              {activeClip.chromaKeyEnabled && (
+              {/* Live Chroma-Key Green Screen Cutout Canvas (Keys out backdrop, reveals virtual BG) */}
+              {activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && (
                 <canvas
                   ref={chromaCanvasRef}
                   onClick={onTogglePlay}
-                  className="absolute inset-0 w-full h-full object-contain cursor-pointer z-10"
+                  style={{
+                    transform: `translate(${activeClip.cropX + (activeClip.personPositionX || 0)}%, ${activeClip.cropY + (activeClip.personPositionY || 0)}%) rotate(${activeClip.rotation}deg) scale(${
+                      activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
+                    }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
+                    position: 'absolute',
+                    zIndex: 15,
+                  }}
+                  className="inset-0 w-full h-full object-contain cursor-pointer pointer-events-auto"
                 />
               )}
             </div>
@@ -569,13 +648,33 @@ export const BEditStudioStageAndTimeline: React.FC<
           })}
 
           {/* Auto Captions / Subtitles Overlay */}
-          {activeSubtitleCue && (
-            <div className="pointer-events-none absolute bottom-3 left-4 right-4 flex justify-center z-30">
-              <div className="px-3.5 py-1.5 rounded-xl bg-black/85 border border-amber-400/40 text-amber-300 font-extrabold text-xs sm:text-sm text-center shadow-xl">
-                {activeSubtitleCue.text}
+          {activeSubtitleCue && (() => {
+            const subPreset = activeSubtitleCue.fontStyleId
+              ? getFontDesignPresetById(activeSubtitleCue.fontStyleId)
+              : project.activeFontStyleId
+                ? getFontDesignPresetById(project.activeFontStyleId)
+                : null;
+            return (
+              <div className="pointer-events-none absolute bottom-3 left-4 right-4 flex justify-center z-30">
+                <div
+                  style={{
+                    ...(subPreset?.style || {}),
+                    color:
+                      activeSubtitleCue.color ||
+                      project.subtitleColor ||
+                      subPreset?.textColor ||
+                      '#FFE600',
+                  }}
+                  className={
+                    subPreset?.className ||
+                    'px-3.5 py-1.5 rounded-xl bg-black/85 border border-amber-400/40 text-amber-300 font-extrabold text-xs sm:text-sm text-center shadow-xl'
+                  }
+                >
+                  {activeSubtitleCue.text}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
 
         {/* Transport & Quick Clip Action Bar Directly Below Preview */}

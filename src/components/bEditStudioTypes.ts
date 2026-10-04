@@ -40,6 +40,21 @@ export interface BEditTimelineClip {
   chromaKeyEnabled: boolean;
   chromaKeyColor: 'green' | 'blue' | 'black';
   chromaKeySensitivity: number;
+  // AI Background Replacement (Videos & Photos)
+  aiBgEnabled?: boolean;
+  aiBgMode?: 'ai_cutout' | 'chroma_key';
+  aiBgSensitivity?: number;
+  aiBgEdgeFeather?: number;
+  bgUrl?: string;
+  bgType?: 'image' | 'video';
+  bgName?: string;
+  bgBlur?: number;
+  bgZoom?: number;
+  bgPositionX?: number;
+  bgPositionY?: number;
+  personScale?: number;
+  personPositionX?: number;
+  personPositionY?: number;
 }
 
 export interface BEditPiPLayer {
@@ -73,6 +88,8 @@ export interface BEditProjectState {
   soundVolume: number;
   soundLoop: boolean;
   soundEffect: StudioSoundEffect;
+  activeFontStyleId?: string;
+  subtitleColor?: string;
   voiceoverAudioUrl?: string;
   voiceoverRawUrl?: string;
   voiceoverName?: string;
@@ -84,6 +101,8 @@ export interface BEditProjectState {
 
 export type BEditBottomTab =
   | 'media'
+  | 'ai_background'
+  | 'speech_to_text'
   | 'audio'
   | 'text'
   | 'stickers'
@@ -127,6 +146,17 @@ export function createDefaultClip(
     chromaKeyEnabled: false,
     chromaKeyColor: 'green',
     chromaKeySensitivity: 45,
+    aiBgEnabled: false,
+    aiBgMode: 'ai_cutout',
+    aiBgSensitivity: 50,
+    aiBgEdgeFeather: 4,
+    bgBlur: 0,
+    bgZoom: 1,
+    bgPositionX: 0,
+    bgPositionY: 0,
+    personScale: 1,
+    personPositionX: 0,
+    personPositionY: 0,
     ...partial,
   };
 }

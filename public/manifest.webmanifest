@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "BoostHub",
-  "short_name": "BoostHub",
-  "description": "BoostHub — Social & Creator Platform featuring Capshots, 24-hour stories, real-time messaging, and B-Shop.",
+  "name": "BoostHub Aba - Video Editor for Nigerian Creators",
+  "short_name": "BoostHub Aba",
+  "description": "BoostHub Aba - Video Editor for Nigerian Creators. Social video editor with AI audio transcription, green screen chroma key, real-time messaging, stories, and viral video creation.",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0A0A0A",

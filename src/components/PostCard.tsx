@@ -64,6 +64,7 @@ export const PostCard: React.FC<PostCardProps> = ({
   const [menuOpen, setMenuOpen] = useState(false);
   const [mediaError, setMediaError] = useState(false);
   const [isMuted, setIsMuted] = useState(() => getGlobalVideoMuted());
+  const [volumeLevel, setVolumeLevel] = useState<number>(1.0);
   const [isVideoPaused, setIsVideoPaused] = useState(true);
   const [videoCurrentTime, setVideoCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(17);
@@ -263,10 +264,14 @@ export const PostCard: React.FC<PostCardProps> = ({
     if (videoRef.current) {
       videoRef.current.defaultMuted = isMuted;
       videoRef.current.muted = isMuted;
-      videoRef.current.volume = 1.0;
+      videoRef.current.volume = volumeLevel;
       videoRef.current.playsInline = true;
     }
-  }, [isMuted, post.id]);
+    if (voiceoverAudioRef.current) {
+      voiceoverAudioRef.current.muted = isMuted;
+      voiceoverAudioRef.current.volume = volumeLevel;
+    }
+  }, [isMuted, volumeLevel, post.id]);
 
   return (
     <article className="bg-[#131A2A] border border-white/[0.08] rounded-3xl p-4 sm:p-5 transition-colors hover:border-white/[0.14]">
@@ -434,18 +439,31 @@ export const PostCard: React.FC<PostCardProps> = ({
                   data-post-id={post.id}
                   src={cleanMediaSrc}
                   poster={post.thumbnailUrl || undefined}
-                  muted={isMuted || Boolean(attachedAudioUrl) || Boolean(studioMeta?.muteAudio)}
+                  muted={isMuted || Boolean(studioMeta?.muteAudio)}
                   playsInline
                   loop
                   preload="auto"
                   onClick={(e) => {
                     const vid = e.currentTarget;
                     if (vid.paused) {
+                      vid.volume = volumeLevel;
+                      vid.muted = isMuted || Boolean(studioMeta?.muteAudio);
                       vid.play().catch(() => {});
                       if (voiceoverAudioRef.current && !isMuted) {
                         voiceoverAudioRef.current.currentTime = vid.currentTime || 0;
                         voiceoverAudioRef.current.play().catch(() => {});
                       }
+                    } else if (isMuted) {
+                      // Tap playing video to unmute
+                      setIsMuted(false);
+                      setGlobalVideoMuted(false);
+                      vid.muted = false;
+                      vid.volume = volumeLevel;
+                      if (voiceoverAudioRef.current) {
+                        voiceoverAudioRef.current.muted = false;
+                        voiceoverAudioRef.current.volume = volumeLevel;
+                      }
+                      showToast('🔊 Audio On', 'info');
                     } else {
                       vid.pause();
                       voiceoverAudioRef.current?.pause();
@@ -553,6 +571,34 @@ export const PostCard: React.FC<PostCardProps> = ({
                   </div>
                 )}
 
+                {/* Floating "Tap to Unmute" Pill when video is playing with audio muted */}
+                {isMuted && !isVideoPaused && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsMuted(false);
+                      setGlobalVideoMuted(false);
+                      if (videoRef.current) {
+                        videoRef.current.muted = false;
+                        videoRef.current.volume = volumeLevel;
+                        videoRef.current.play().catch(() => {});
+                      }
+                      if (voiceoverAudioRef.current) {
+                        voiceoverAudioRef.current.muted = false;
+                        voiceoverAudioRef.current.volume = volumeLevel;
+                        voiceoverAudioRef.current.currentTime = videoRef.current?.currentTime || 0;
+                        voiceoverAudioRef.current.play().catch(() => {});
+                      }
+                      showToast('🔊 Audio On', 'info');
+                    }}
+                    className="absolute bottom-16 left-3.5 z-25 px-3 py-1.5 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md border border-white/20 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-xl transition-transform active:scale-95 animate-pulse"
+                  >
+                    <VolumeX className="w-4 h-4 text-amber-400" />
+                    <span>Tap to Unmute</span>
+                  </button>
+                )}
+
                 {/* Top-Right Muted Speaker Icon when Auto-Playing */}
                 <button
                   type="button"
@@ -563,17 +609,15 @@ export const PostCard: React.FC<PostCardProps> = ({
                     setGlobalVideoMuted(nextMuted);
                     if (videoRef.current) {
                       videoRef.current.muted =
-                        nextMuted ||
-                        Boolean(attachedAudioUrl) ||
-                        Boolean(studioMeta?.muteAudio);
-                      videoRef.current.volume = 1.0;
-                      if (videoRef.current.paused && !nextMuted) {
+                        nextMuted || Boolean(studioMeta?.muteAudio);
+                      videoRef.current.volume = volumeLevel;
+                      if (!nextMuted) {
                         videoRef.current.play().catch(() => {});
                       }
                     }
                     if (voiceoverAudioRef.current) {
                       voiceoverAudioRef.current.muted = nextMuted;
-                      voiceoverAudioRef.current.volume = 1.0;
+                      voiceoverAudioRef.current.volume = volumeLevel;
                       if (!nextMuted) {
                         voiceoverAudioRef.current.currentTime =
                           videoRef.current?.currentTime || 0;
@@ -600,7 +644,7 @@ export const PostCard: React.FC<PostCardProps> = ({
                   )}
                 </button>
 
-                {/* Bottom Video Progress Bar & 0:09 / 0:17 Time Display */}
+                {/* Bottom Video Progress Bar & 0:09 / 0:17 Time Display with Volume Slider */}
                 <div
                   onClick={(e) => {
                     e.stopPropagation();
@@ -624,6 +668,71 @@ export const PostCard: React.FC<PostCardProps> = ({
                       {formatVideoClock(videoCurrentTime)} /{' '}
                       {formatVideoClock(videoDuration)}
                     </span>
+
+                    {/* Integrated Volume Adjuster */}
+                    <div
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1.5 bg-black/60 px-2 py-0.5 rounded-full border border-white/10"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !isMuted;
+                          setIsMuted(next);
+                          setGlobalVideoMuted(next);
+                          if (videoRef.current) {
+                            videoRef.current.muted = next;
+                            videoRef.current.volume = volumeLevel;
+                            if (!next) videoRef.current.play().catch(() => {});
+                          }
+                          if (voiceoverAudioRef.current) {
+                            voiceoverAudioRef.current.muted = next;
+                            voiceoverAudioRef.current.volume = volumeLevel;
+                            if (!next) voiceoverAudioRef.current.play().catch(() => {});
+                          }
+                        }}
+                        className="text-white hover:text-blue-400"
+                        title={isMuted ? 'Unmute' : 'Mute'}
+                      >
+                        {isMuted ? (
+                          <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                        ) : (
+                          <Volume2 className="w-3.5 h-3.5 text-blue-400" />
+                        )}
+                      </button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={isMuted ? 0 : volumeLevel}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value);
+                          setVolumeLevel(v);
+                          if (v > 0 && isMuted) {
+                            setIsMuted(false);
+                            setGlobalVideoMuted(false);
+                          }
+                          if (v === 0) {
+                            setIsMuted(true);
+                            setGlobalVideoMuted(true);
+                          }
+                          if (videoRef.current) {
+                            videoRef.current.volume = v;
+                            videoRef.current.muted = v === 0;
+                          }
+                          if (voiceoverAudioRef.current) {
+                            voiceoverAudioRef.current.volume = v;
+                            voiceoverAudioRef.current.muted = v === 0;
+                          }
+                        }}
+                        className="w-16 h-1 accent-[#2B8CFF] cursor-pointer"
+                        title={`Volume: ${Math.round((isMuted ? 0 : volumeLevel) * 100)}%`}
+                      />
+                      <span className="text-[10px] text-slate-300 w-7 text-right">
+                        {isMuted ? '0%' : `${Math.round(volumeLevel * 100)}%`}
+                      </span>
+                    </div>
                   </div>
                   <div className="w-full h-1 bg-white/25 rounded-full overflow-hidden">
                     <div

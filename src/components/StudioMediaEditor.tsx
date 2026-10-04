@@ -73,6 +73,8 @@ export interface StudioSubtitleCue {
   startTime: number;
   endTime: number;
   text: string;
+  fontStyleId?: string;
+  color?: string;
 }
 
 export interface StudioTextLayer {
@@ -1041,13 +1043,27 @@ export const StudioFloatingOverlays: React.FC<{
         );
       })}
 
-      {activeSubtitle && (
-        <div className="absolute bottom-14 inset-x-4 flex justify-center">
-          <div className="px-3.5 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs sm:text-sm font-extrabold text-center shadow-lg">
-            {activeSubtitle.text}
+      {activeSubtitle && (() => {
+        const subPreset = activeSubtitle.fontStyleId
+          ? getFontDesignPresetById(activeSubtitle.fontStyleId)
+          : null;
+        return (
+          <div className="absolute bottom-14 inset-x-4 flex justify-center">
+            <div
+              style={{
+                ...(subPreset?.style || {}),
+                color: activeSubtitle.color || subPreset?.textColor || '#FFFFFF',
+              }}
+              className={
+                subPreset?.className ||
+                'px-3.5 py-1.5 rounded-xl bg-black/80 backdrop-blur-md border border-white/20 text-white text-xs sm:text-sm font-extrabold text-center shadow-lg'
+              }
+            >
+              {activeSubtitle.text}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };
@@ -1088,6 +1104,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const customBgInputRef = useRef<HTMLInputElement | null>(null);
   const secondaryVideoInputRef = useRef<HTMLInputElement | null>(null);
   const speechRecognitionRef = useRef<any>(null);
+  const chromaCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const synthIntervalRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const transitionAnimRef = useRef<number | null>(null);
@@ -1146,6 +1163,96 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
   const [newTextBg, setNewTextBg] =
     useState<StudioTextLayer['bgStyle']>('glass');
   const [bakingImage, setBakingImage] = useState(false);
+
+  // Live Clean Chroma Keying Canvas Rendering Engine
+  useEffect(() => {
+    if (!config.chromaKeyEnabled || config.aiBgMode !== 'chroma_key') return;
+    const canvas = chromaCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return;
+
+    let rafId: number;
+    const renderChroma = () => {
+      const srcEl = isVideo
+        ? videoElRef.current
+        : (stageRef.current?.querySelector('img') as HTMLImageElement | null);
+      if (srcEl && ctx) {
+        const w = 360;
+        const h = 640;
+        if (canvas.width !== w) canvas.width = w;
+        if (canvas.height !== h) canvas.height = h;
+        ctx.clearRect(0, 0, w, h);
+        try {
+          ctx.drawImage(srcEl as any, 0, 0, w, h);
+          const frame = ctx.getImageData(0, 0, w, h);
+          const data = frame.data;
+          const sensitivity = config.chromaKeySensitivity ?? 50;
+          const keyColor = config.chromaKeyColor || 'green';
+
+          for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+
+            if (keyColor === 'green') {
+              const maxOther = Math.max(r, b);
+              const diff = g - maxOther;
+              const thresholdLow = Math.max(12, 60 - sensitivity * 0.55);
+              const thresholdHigh = thresholdLow + 35;
+
+              if (diff >= thresholdHigh && g > 75) {
+                data[i + 3] = 0;
+              } else if (diff > thresholdLow && g > 65) {
+                const factor = (diff - thresholdLow) / (thresholdHigh - thresholdLow);
+                data[i + 3] = Math.round(data[i + 3] * (1 - factor));
+                data[i + 1] = Math.round(maxOther + (g - maxOther) * (1 - factor));
+              } else if (diff > 0 && g > 90) {
+                data[i + 1] = Math.round((g + maxOther) / 2);
+              }
+            } else if (keyColor === 'blue') {
+              const maxOther = Math.max(r, g);
+              const diff = b - maxOther;
+              const thresholdLow = Math.max(12, 60 - sensitivity * 0.55);
+              const thresholdHigh = thresholdLow + 35;
+
+              if (diff >= thresholdHigh && b > 75) {
+                data[i + 3] = 0;
+              } else if (diff > thresholdLow && b > 65) {
+                const factor = (diff - thresholdLow) / (thresholdHigh - thresholdLow);
+                data[i + 3] = Math.round(data[i + 3] * (1 - factor));
+                data[i + 2] = Math.round(maxOther + (b - maxOther) * (1 - factor));
+              } else if (diff > 0 && b > 90) {
+                data[i + 2] = Math.round((b + maxOther) / 2);
+              }
+            } else if (keyColor === 'black') {
+              const brightness = (r + g + b) / 3;
+              const darkThreshold = Math.max(10, sensitivity * 0.85);
+              if (brightness < darkThreshold) {
+                const factor = brightness / darkThreshold;
+                data[i + 3] = Math.round(data[i + 3] * factor);
+              }
+            }
+          }
+          ctx.putImageData(frame, 0, 0);
+        } catch {
+          // ignore
+        }
+      }
+      rafId = requestAnimationFrame(renderChroma);
+    };
+
+    rafId = requestAnimationFrame(renderChroma);
+    return () => cancelAnimationFrame(rafId);
+  }, [
+    config.chromaKeyEnabled,
+    config.aiBgMode,
+    config.chromaKeySensitivity,
+    config.chromaKeyColor,
+    mediaUrl,
+    isVideo,
+    isPlaying,
+  ]);
 
   // AI Background Generator Handler
   const handleGenerateAiBackground = async (promptOverride?: string) => {
@@ -1276,7 +1383,22 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         for (let i = 0; i < event.results.length; i++) {
           full += event.results[i][0].transcript + ' ';
         }
-        const clean = full.trim();
+        // Deduplicate repeated words and adjacent identical phrases
+        const words = full.trim().split(/\s+/);
+        const deduped: string[] = [];
+        for (let i = 0; i < words.length; i++) {
+          const curr = words[i];
+          const prev = deduped[deduped.length - 1];
+          if (
+            prev &&
+            prev.toLowerCase().replace(/[^a-z0-9]/gi, '') ===
+              curr.toLowerCase().replace(/[^a-z0-9]/gi, '')
+          ) {
+            continue;
+          }
+          deduped.push(curr);
+        }
+        const clean = deduped.join(' ');
         setSpeechTranscript(clean);
         if (clean) {
           const start = Number((currentTime || 0).toFixed(1));
@@ -1288,7 +1410,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
               text: clean,
               fontFamily: 'display',
               fontStyleId: selectedFontPresetId,
-              color: preset.textColor || '#FFFFFF',
+              color: preset?.textColor || '#FFFFFF',
               bgStyle: 'glass',
               x: 50,
               y: 82,
@@ -1308,6 +1430,8 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   startTime: start,
                   endTime: start + 5,
                   text: clean,
+                  fontStyleId: selectedFontPresetId,
+                  color: preset?.textColor || '#FFFFFF',
                 },
               ],
             };
@@ -2334,52 +2458,71 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
 
           {/* Underlying Foreground Media: Person / Subject (Face, body, clothes, hair, voice 100% untouched) */}
           {mediaUrl ? (
-            isVideo ? (
-              <video
-                ref={videoElRef as React.RefObject<HTMLVideoElement>}
-                src={mediaUrl.split('#')[0]}
-                playsInline
-                onLoadedMetadata={handleLoadedMetadata}
-                onTimeUpdate={handleTimeUpdate}
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onClick={toggleVideoPlay}
-                style={{
-                  filter: buildCssFilterString(config),
-                  transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
-                    combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
-                  }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
-                  mixBlendMode:
-                    config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
-                      ? 'screen'
-                      : undefined,
-                  position: 'relative',
-                  zIndex: 10,
-                  ...transitionMediaStyle,
-                }}
-                className="w-full h-full object-contain cursor-pointer transition-transform duration-75"
-              />
-            ) : (
-              <img
-                src={mediaUrl}
-                alt="Studio preview"
-                onClick={toggleVideoPlay}
-                style={{
-                  filter: buildCssFilterString(config),
-                  transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
-                    combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
-                  }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
-                  mixBlendMode:
-                    config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
-                      ? 'screen'
-                      : undefined,
-                  position: 'relative',
-                  zIndex: 10,
-                  ...transitionMediaStyle,
-                }}
-                className="w-full h-full object-contain transition-transform duration-75 cursor-pointer"
-              />
-            )
+            <>
+              {isVideo ? (
+                <video
+                  ref={videoElRef as React.RefObject<HTMLVideoElement>}
+                  src={mediaUrl.split('#')[0]}
+                  playsInline
+                  onLoadedMetadata={handleLoadedMetadata}
+                  onTimeUpdate={handleTimeUpdate}
+                  onPlay={() => setIsPlaying(true)}
+                  onPause={() => setIsPlaying(false)}
+                  onClick={toggleVideoPlay}
+                  style={{
+                    filter: buildCssFilterString(config),
+                    transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
+                      combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
+                    }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
+                    opacity:
+                      config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
+                        ? 0.01
+                        : 1,
+                    position: 'relative',
+                    zIndex: 10,
+                    ...transitionMediaStyle,
+                  }}
+                  className="w-full h-full object-contain cursor-pointer transition-transform duration-75"
+                />
+              ) : (
+                <img
+                  src={mediaUrl}
+                  alt="Studio preview"
+                  onClick={toggleVideoPlay}
+                  style={{
+                    filter: buildCssFilterString(config),
+                    transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
+                      combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
+                    }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
+                    opacity:
+                      config.chromaKeyEnabled && config.aiBgMode === 'chroma_key'
+                        ? 0.01
+                        : 1,
+                    position: 'relative',
+                    zIndex: 10,
+                    ...transitionMediaStyle,
+                  }}
+                  className="w-full h-full object-contain transition-transform duration-75 cursor-pointer"
+                />
+              )}
+
+              {/* Live Chroma-Key Green Screen Cutout Canvas */}
+              {config.chromaKeyEnabled && config.aiBgMode === 'chroma_key' && (
+                <canvas
+                  ref={chromaCanvasRef}
+                  onClick={toggleVideoPlay}
+                  style={{
+                    transform: `translate(${config.personPositionX || 0}%, ${config.personPositionY || 0}%) rotate(${combinedRotation}deg) scale(${
+                      combinedZoom * (config.personScale || 1) * (config.flipH ? -1 : 1)
+                    }, ${combinedZoom * (config.personScale || 1) * (config.flipV ? -1 : 1)})`,
+                    position: 'absolute',
+                    zIndex: 15,
+                    ...transitionMediaStyle,
+                  }}
+                  className="inset-0 w-full h-full object-contain cursor-pointer pointer-events-auto"
+                />
+              )}
+            </>
           ) : (
             <div
               style={transitionMediaStyle}

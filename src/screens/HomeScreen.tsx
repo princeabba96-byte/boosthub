@@ -39,6 +39,7 @@ import {
   StoryViewerModal,
   CreateStoryModal,
 } from '../components/StoryModal';
+import { getGlobalVideoMuted } from '../utils/globalAudio';
 
 interface SuggestedCreatorCard {
   id: string;
@@ -368,10 +369,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
           if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
             video.dataset.inView = 'true';
-            video.defaultMuted = true;
-            video.muted = true;
+            const isGloballyMuted = getGlobalVideoMuted();
+            video.defaultMuted = isGloballyMuted;
+            video.muted = isGloballyMuted;
+            video.volume = 1.0;
             video.playsInline = true;
-            video.play().catch(() => {});
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(() => {
+                // If unmuted autoplay is blocked by browser policy, fallback to muted autoplay so playback continues
+                video.muted = true;
+                video.play().catch(() => {});
+              });
+            }
 
             // Count 1 view per person after 3 seconds of viewing
             if (postId && !video.dataset.viewCounted) {
