@@ -1774,19 +1774,37 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       let cues: { start: number; end: number; text: string }[] = [];
 
       try {
+        // Local phone-gallery files use blob: URLs that the server cannot fetch. Send the
+        // actual file bytes for reasonably sized clips so the configured transcription AI
+        // can hear the uploaded video's audio rather than accidentally listening to the mic.
+        const sourceFile = clipFilesMapRef.current.get(activeClip.url);
+        let audioBase64 = '';
+        if (sourceFile && sourceFile.size <= 12 * 1024 * 1024) {
+          audioBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+              resolve(dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '');
+            };
+            reader.onerror = () => resolve('');
+            reader.readAsDataURL(sourceFile);
+          });
+        }
         const res = await apiFetch('/api/ai/transcribe-video', {
           method: 'POST',
           body: JSON.stringify({
-            videoUrl: activeClip.url,
+            videoUrl: activeClip.url.startsWith('http') ? activeClip.url : undefined,
+            audioBase64: audioBase64 || undefined,
+            mimeType: sourceFile?.type || 'video/mp4',
             language: sttLanguage,
           }),
         });
         if (res && res.ok && (res.transcript || (res.cues && res.cues.length > 0))) {
-          transcript = res.transcript;
-          cues = res.cues;
+          transcript = res.transcript || '';
+          cues = Array.isArray(res.cues) ? res.cues : [];
         }
       } catch {
-        // Fallback to client extraction
+        // Use the browser fallback if the AI endpoint is unavailable.
       }
 
       // If server could not fetch external URL or returned empty, run client-side audio analysis
