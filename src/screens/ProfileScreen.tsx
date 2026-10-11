@@ -1668,17 +1668,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     {profile.badges.map((b) => (
                       <div
                         key={b.id}
-                        className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center gap-3"
+                        className="relative overflow-hidden p-3.5 rounded-2xl bg-gradient-to-br from-slate-900 via-[#11152a] to-purple-950/50 border border-purple-400/20 flex items-center gap-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                       >
-                        <Award className="w-5 h-5 text-purple-400 shrink-0" />
-                        <div>
-                          <p className="text-xs font-semibold text-white">
+                        <div className="h-12 w-12 rounded-xl border border-amber-300/30 bg-gradient-to-br from-amber-200/15 via-purple-400/10 to-slate-950 flex items-center justify-center shrink-0 shadow-lg">
+                          <Award className="w-6 h-6 text-amber-300" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold uppercase tracking-wide text-white">
                             {b.name}
                           </p>
-                          <p className="text-[11px] text-slate-400">
+                          <p className="text-[11px] text-slate-400 mt-1">
                             {b.description}
                           </p>
+                          <span className="inline-flex mt-2 rounded-full border border-amber-300/20 bg-amber-300/[0.07] px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-200">
+                            Unlocked achievement
+                          </span>
                         </div>
+                        <div className="absolute -right-5 -top-5 h-16 w-16 rounded-full bg-purple-500/10 blur-xl pointer-events-none" />
                       </div>
                     ))}
                   </div>
