@@ -45,6 +45,7 @@ export interface BEditTimelineClip {
   aiBgMode?: 'ai_cutout' | 'chroma_key';
   aiBgSensitivity?: number;
   aiBgEdgeFeather?: number;
+  aiBgThreshold?: number; // 0.3 - 0.9 (default 0.5)
   bgUrl?: string;
   bgType?: 'image' | 'video';
   bgName?: string;
@@ -150,6 +151,7 @@ export function createDefaultClip(
     aiBgMode: 'ai_cutout',
     aiBgSensitivity: 50,
     aiBgEdgeFeather: 4,
+    aiBgThreshold: 0.5,
     bgBlur: 0,
     bgZoom: 1,
     bgPositionX: 0,

@@ -697,7 +697,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
               res.state?.equippedNameStyle ?? snapshotProfile.equippedNameStyle,
           });
         }
-        await refreshProfile();
+        void refreshProfile().catch(() => {});
 
         return {
           state: {
@@ -797,7 +797,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
             xp: res.state?.xp ?? snapshotProfile.xp,
           });
         }
-        await refreshProfile();
+        void refreshProfile().catch(() => {});
 
         return {
           state: {

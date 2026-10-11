@@ -1114,18 +1114,28 @@ export async function togglePostLike(postId: number, userId: string) {
           body: notifBody,
           entityId: String(postId),
         });
-        await sendPushNotificationToUser(postRows[0].userId, {
-          title: 'New Like on BoostHub â¤ï¸',
-          body: notifBody,
-          type: 'like',
-          entityId: String(postId),
-          url: '/?tab=notifications',
-        });
+
+        void (async () => {
+          try {
+            await sendPushNotificationToUser(postRows[0].userId, {
+              title: 'New Like on BoostHub ❤️',
+              body: notifBody,
+              type: 'like',
+              entityId: String(postId),
+              url: '/?tab=notifications',
+            });
+          } catch {}
+        })();
       }
-      await trackMissionAndBadges(userId, 'like');
-      if (postRows.length > 0) {
-        await evaluateUserBadges(postRows[0].userId);
-      }
+
+      void (async () => {
+        try {
+          await trackMissionAndBadges(userId, 'like');
+          if (postRows.length > 0) {
+            await evaluateUserBadges(postRows[0].userId);
+          }
+        } catch {}
+      })();
     }
 
     const allForPost = await db
@@ -1188,7 +1198,7 @@ export async function recordPostShare(
         entityId: String(postId),
       });
       await sendPushNotificationToUser(postRows[0].userId, {
-        title: 'Your Content Was Shared ð',
+        title: 'Your Content Was Shared 🔄',
         body: `${actorName} shared your post.`,
         type: 'share',
         entityId: String(postId),
@@ -1343,16 +1353,16 @@ export async function addPostComment(
         body: notifBody,
         entityId: String(postId),
       });
-      await sendPushNotificationToUser(postRows[0].userId, {
-        title: `${notifTitle} on BoostHub ð¬`,
+      void sendPushNotificationToUser(postRows[0].userId, {
+        title: `${notifTitle} on BoostHub 💬`,
         body: notifBody,
         type: parentId ? 'reply' : 'comment',
         entityId: String(postId),
         url: '/?tab=notifications',
-      });
+      }).catch(() => {});
     }
 
-    await trackMissionAndBadges(userId, 'comment');
+    void trackMissionAndBadges(userId, 'comment').catch(() => {});
     const comments = await getCommentsForPost(postId);
     return comments.find((c) => c.id === inserted[0].id) || inserted[0];
   } catch (error: any) {
@@ -1454,7 +1464,7 @@ export async function toggleFollowUser(followerId: string, followingId: string) 
         entityId: followerId,
       });
       await sendPushNotificationToUser(followingId, {
-        title: 'New Follower on BoostHub ð',
+        title: 'New Follower on BoostHub 🎉',
         body: `${actorName} started following you.`,
         type: 'follow',
         entityId: followerId,
@@ -1630,7 +1640,7 @@ export async function handleFriendAction(
         entityId: userId,
       });
       await sendPushNotificationToUser(targetUserId, {
-        title: 'New Friend Request ð',
+        title: 'New Friend Request 👋',
         body: `${actorName} sent you a friend request.`,
         type: 'friend_request',
         entityId: userId,
@@ -1659,7 +1669,7 @@ export async function handleFriendAction(
         entityId: userId,
       });
       await sendPushNotificationToUser(rel.requesterId, {
-        title: 'Friend Request Accepted ð¤',
+        title: 'Friend Request Accepted 🤝',
         body: `${actorName} accepted your friend request.`,
         type: 'friend_accept',
         entityId: userId,
@@ -1713,13 +1723,11 @@ export async function getActiveStoriesFeed(viewerId: string) {
       .where(inArray(storyReplies.storyId, storyIds));
 
     const viewerProfileIds = Array.from(new Set(views.map((v) => v.viewerId)));
-    const reactionUserIds = Array.from(new Set(reactions.map((r) => r.userId)));
-    const relatedProfileIds = Array.from(new Set([...viewerProfileIds, ...reactionUserIds]));
-    const relatedProfiles =
-      relatedProfileIds.length > 0
-        ? await db.select().from(profiles).where(inArray(profiles.id, relatedProfileIds))
+    const viewerProfiles =
+      viewerProfileIds.length > 0
+        ? await db.select().from(profiles).where(inArray(profiles.id, viewerProfileIds))
         : [];
-    const viewerMap = new Map(relatedProfiles.map((v) => [v.id, v]));
+    const viewerMap = new Map(viewerProfiles.map((v) => [v.id, v]));
 
     return active.map((story) => {
       const storyViewsList = views.filter((v) => v.storyId === story.id);
@@ -1737,15 +1745,7 @@ export async function getActiveStoriesFeed(viewerId: string) {
         viewsCount: storyViewsList.length,
         hasViewed: storyViewsList.some((v) => v.viewerId === viewerId),
         viewers: storyViewsList.map((v) => viewerMap.get(v.viewerId)).filter(Boolean),
-        reactions: storyReactionsList.map((reaction) => {
-          const reactor = viewerMap.get(reaction.userId);
-          return {
-            ...reaction,
-            username: reactor?.username || 'user',
-            displayName: reactor?.displayName || 'BoostHub User',
-            avatarUrl: reactor?.avatarUrl || '',
-          };
-        }),
+        reactions: storyReactionsList,
         replies: storyRepliesList,
       };
     });
@@ -2009,7 +2009,7 @@ export async function sendDirectMessage(
       entityId: senderId,
     });
     await sendPushNotificationToUser(receiverId, {
-      title: `Message from ${senderName} âï¸`,
+      title: `Message from ${senderName} ✉️`,
       body: msgBody,
       type: 'message',
       entityId: senderId,
@@ -2030,8 +2030,8 @@ export async function sendDirectMessage(
       if (adminProfile && adminProfile.id !== senderId) {
         forwardedAdminId = adminProfile.id;
         const forwardedText = payload.content
-          ? `ð¤ [Reply to BOOST BOT]: ${payload.content}`
-          : 'ð¤ [Reply to BOOST BOT]: (Sent a media attachment)';
+          ? `🤖 [Reply to BOOST BOT]: ${payload.content}`
+          : '🤖 [Reply to BOOST BOT]: (Sent a media attachment)';
 
         const [fwdInserted] = await db
           .insert(messages)
@@ -2051,13 +2051,13 @@ export async function sendDirectMessage(
           userId: adminProfile.id,
           actorId: senderId,
           type: 'message',
-          title: `ð¤ BOOST BOT Reply from ${senderName} (@${senderUsername})`,
+          title: `🤖 BOOST BOT Reply from ${senderName} (@${senderUsername})`,
           body: msgBody,
           entityId: senderId,
         });
 
         await sendPushNotificationToUser(adminProfile.id, {
-          title: `ð¤ BOOST BOT Reply from ${senderName}`,
+          title: `🤖 BOOST BOT Reply from ${senderName}`,
           body: msgBody,
           type: 'boost_bot',
           entityId: senderId,
@@ -2786,7 +2786,7 @@ export async function getCreatorDashboardData(userId: string) {
     const postSeries = postsWithStats.slice(0, 10).map((p, idx) => ({
       postId: p.id,
       label: p.caption
-        ? p.caption.slice(0, 14) + (p.caption.length > 14 ? 'â¦' : '')
+        ? p.caption.slice(0, 14) + (p.caption.length > 14 ? '…' : '')
         : `Post #${p.id}`,
       caption: p.caption || `Post #${p.id}`,
       postType: p.postType,
@@ -2951,9 +2951,34 @@ export async function performGlobalSearch(query: string, viewerId: string) {
         .from(profiles)
         .orderBy(desc(profiles.updatedAt))
         .limit(30);
+      const userIds = directoryPeople.map((p) => p.id);
+      let badgesMap: Record<string, any[]> = {};
+      if (userIds.length > 0) {
+        try {
+          const uBadges = await db
+            .select({
+              userId: userBadges.userId,
+              id: badges.id,
+              code: badges.code,
+              name: badges.name,
+              iconName: badges.iconName,
+            })
+            .from(userBadges)
+            .innerJoin(badges, eq(userBadges.badgeId, badges.id))
+            .where(inArray(userBadges.userId, userIds));
+          for (const ub of uBadges) {
+            if (!badgesMap[ub.userId]) badgesMap[ub.userId] = [];
+            badgesMap[ub.userId].push(ub);
+          }
+        } catch {}
+      }
+      const dirWithBadges = directoryPeople.map((p) => ({
+        ...p,
+        badges: badgesMap[p.id] || [],
+      }));
       return {
-        people: directoryPeople,
-        users: directoryPeople,
+        people: dirWithBadges,
+        users: dirWithBadges,
         posts: [],
         videos: [],
         hashtags: [],
@@ -2974,6 +2999,32 @@ export async function performGlobalSearch(query: string, viewerId: string) {
         )
       )
       .limit(30);
+
+    const uIds = matchedPeople.map((p) => p.id);
+    let badgesMap: Record<string, any[]> = {};
+    if (uIds.length > 0) {
+      try {
+        const uBadges = await db
+          .select({
+            userId: userBadges.userId,
+            id: badges.id,
+            code: badges.code,
+            name: badges.name,
+            iconName: badges.iconName,
+          })
+          .from(userBadges)
+          .innerJoin(badges, eq(userBadges.badgeId, badges.id))
+          .where(inArray(userBadges.userId, uIds));
+        for (const ub of uBadges) {
+          if (!badgesMap[ub.userId]) badgesMap[ub.userId] = [];
+          badgesMap[ub.userId].push(ub);
+        }
+      } catch {}
+    }
+    const matchedWithBadges = matchedPeople.map((p) => ({
+      ...p,
+      badges: badgesMap[p.id] || [],
+    }));
 
     const allFeed = await getPersonalizedFeed(viewerId, 'new', 100, 0);
     const lowerQ = q.toLowerCase();
@@ -3015,7 +3066,7 @@ export async function performGlobalSearch(query: string, viewerId: string) {
     }
 
     return {
-      people: matchedPeople,
+      people: matchedWithBadges,
       posts: matchedPosts.slice(0, 25),
       videos: matchedVideos.slice(0, 25),
       hashtags: Array.from(hashtagSet).slice(0, 20),
@@ -3408,7 +3459,7 @@ export async function executeAdminModerationAction(
             actorId: BOOST_BOT_UID,
             type: 'badge',
             title: nextVerified
-              ? 'Verified Badge Granted â'
+              ? 'Verified Badge Granted ✓'
               : 'Verified Badge Removed',
             body: nextVerified
               ? 'Prince Abba granted the official BoostHub Verified Badge to your profile!'
@@ -3715,7 +3766,7 @@ export async function getBShopAndUserGiftsState(userId: string) {
         direction: 'received' as const,
         itemCode: r.itemCode,
         itemName: cat?.name || r.itemCode,
-        itemIcon: cat?.icon || 'ð',
+        itemIcon: cat?.icon || '🎁',
         itemRarity: cat?.rarity || 'Common',
         quantity: r.quantity,
         bpSpent: r.bpSpent,
@@ -3740,7 +3791,7 @@ export async function getBShopAndUserGiftsState(userId: string) {
           direction: 'sent' as const,
           itemCode: s.itemCode,
           itemName: cat?.name || s.itemCode,
-          itemIcon: cat?.icon || 'ð',
+          itemIcon: cat?.icon || '🎁',
           itemRarity: cat?.rarity || 'Common',
           quantity: s.quantity,
           bpSpent: s.bpSpent,
@@ -3900,9 +3951,9 @@ export async function purchaseBShopItem(
     state: updatedState,
     unboxedReward,
     message: unboxedReward
-      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} Ã${unboxedReward.quantity}!`
+      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
       : targetCategory === 'gift'
-        ? `Purchased ${catalogItem.icon} ${catalogItem.name} Ã${quantity}! Added to your Gift Inventory.`
+        ? `Purchased ${catalogItem.icon} ${catalogItem.name} ×${quantity}! Added to your Gift Inventory.`
         : `Unlocked & equipped ${catalogItem.icon} ${catalogItem.name}!`,
   };
 }
@@ -3969,7 +4020,7 @@ export async function sendGiftToCreator(
 
       if (sender.boostPoints < bpNeeded) {
         throw new Error(
-          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} Ã${quantity} requires ${bpNeeded.toLocaleString()} BP (you have ${sender.boostPoints.toLocaleString()} BP). Earn BP by posting, commenting, liking, or completing missions.`
+          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP (you have ${sender.boostPoints.toLocaleString()} BP). Earn BP by posting, commenting, liking, or completing missions.`
         );
       }
 
@@ -4053,7 +4104,7 @@ export async function sendGiftToCreator(
     await db.insert(creatorRewards).values({
       userId: receiverId,
       rewardType: 'gift_tribute',
-      title: `Received ${giftItem.icon} ${giftItem.name} Ã${quantity} (+${totalBpCost.toLocaleString()} BP) from @${sender.username}`,
+      title: `Received ${giftItem.icon} ${giftItem.name} ×${quantity} (+${totalBpCost.toLocaleString()} BP) from @${sender.username}`,
       pointsEarned: totalBpCost,
       status: 'unlocked',
     });
@@ -4068,8 +4119,8 @@ export async function sendGiftToCreator(
       : giftItem.name;
   const notifTitle = `${giftItem.icon} ${sender.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
   const notifBody = message.trim()
-    ? `"${message.trim()}" Â· You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
-    : `You earned ${giftItem.icon} ${giftItem.name} Ã${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
+    ? `"${message.trim()}" · You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
+    : `You earned ${giftItem.icon} ${giftItem.name} ×${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
 
   await db.insert(notifications).values({
     userId: receiverId,
@@ -4094,7 +4145,7 @@ export async function sendGiftToCreator(
   const updatedState = await getBShopAndUserGiftsState(senderId);
   return {
     state: updatedState,
-    message: `Sent ${giftItem.icon} ${giftItem.name} Ã${quantity} to ${receiver.displayName}!`,
+    message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
   };
 }
 
@@ -4184,4 +4235,42 @@ export async function updateUserGiftSettings(
   invalidateUserCache(userId);
   return await getBShopAndUserGiftsState(userId);
 }
+
+export async function logProfileSearchNotification(
+  viewerId: string,
+  targetUserId: string
+): Promise<void> {
+  try {
+    if (!viewerId || !targetUserId || viewerId === targetUserId) return;
+    const viewerRows = await db
+      .select()
+      .from(profiles)
+      .where(eq(profiles.id, viewerId));
+    const viewer = viewerRows[0];
+    const viewerName = viewer?.displayName || viewer?.username || 'A creator';
+
+    const notifTitle = 'Profile Viewed from Search';
+    const notifBody = `${viewerName} searched for your name and viewed your creator profile & badges!`;
+
+    await db.insert(notifications).values({
+      userId: targetUserId,
+      actorId: viewerId,
+      type: 'profile_view',
+      title: notifTitle,
+      body: notifBody,
+      entityId: viewerId,
+    });
+
+    void sendPushNotificationToUser(targetUserId, {
+      title: notifTitle,
+      body: notifBody,
+      type: 'profile_view',
+      entityId: viewerId,
+      url: `/?tab=notifications`,
+    }).catch(() => {});
+  } catch (err) {
+    console.error('Failed to log search notification:', err);
+  }
+}
+
 

@@ -212,6 +212,10 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                       <button
                         key={person.id}
                         onClick={() => {
+                          apiFetch('/api/notifications/log-search', {
+                            method: 'POST',
+                            body: JSON.stringify({ targetUserId: person.id }),
+                          }).catch(() => {});
                           onClose();
                           onSelectUser(person.id);
                         }}
@@ -224,20 +228,42 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                             size="sm"
                           />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="text-sm font-semibold text-white truncate">
                                 {person.displayName}
                               </span>
                               {person.isVerified && (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                              )}
+                              {person.equippedBadge && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-[10px] font-bold text-amber-300 border border-amber-400/30">
+                                  🏅 {person.equippedBadge.replace('badge_', '').replace(/_/g, ' ')}
+                                </span>
                               )}
                             </div>
                             <p className="text-xs text-slate-400 truncate">
                               @{person.username}
                             </p>
+                            {person.badges && person.badges.length > 0 && (
+                              <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                {person.badges.slice(0, 3).map((b) => (
+                                  <span
+                                    key={b.id || b.code}
+                                    className="px-1.5 py-0.5 rounded bg-purple-500/20 text-[9px] font-semibold text-purple-300 border border-purple-500/30 truncate max-w-[120px]"
+                                  >
+                                    🎖️ {b.name}
+                                  </span>
+                                ))}
+                                {person.badges.length > 3 && (
+                                  <span className="text-[9px] text-slate-400">
+                                    +{person.badges.length - 3} more
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <span className="text-xs text-blue-400 font-medium">
+                        <span className="text-xs text-blue-400 font-medium whitespace-nowrap ml-2">
                           View Profile
                         </span>
                       </button>

@@ -44,6 +44,7 @@ import {
   getFontDesignPresetById,
   FontDesignPreset,
 } from '../data/fontStyles52';
+import { deduplicateNGrams } from '../utils/deduplicateTranscript';
 import {
   GREEN_SCREEN_BACKGROUNDS,
   GreenScreenBackground,
@@ -1370,44 +1371,50 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
 
     try {
       const recognition = new SpeechRecognitionClass();
-      recognition.continuous = true;
+      recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
+      let accumulatedFinal = '';
+      let vadTimer: any = null;
+
+      const resetVad = () => {
+        if (vadTimer) clearTimeout(vadTimer);
+        vadTimer = setTimeout(() => {
+          try {
+            recognition.stop();
+          } catch {}
+        }, 700);
+      };
+
       recognition.onstart = () => {
         setIsRecordingSpeech(true);
+        resetVad();
       };
 
       recognition.onresult = (event: any) => {
-        let full = '';
-        for (let i = 0; i < event.results.length; i++) {
-          full += event.results[i][0].transcript + ' ';
-        }
-        // Deduplicate repeated words and adjacent identical phrases
-        const words = full.trim().split(/\s+/);
-        const deduped: string[] = [];
-        for (let i = 0; i < words.length; i++) {
-          const curr = words[i];
-          const prev = deduped[deduped.length - 1];
-          if (
-            prev &&
-            prev.toLowerCase().replace(/[^a-z0-9]/gi, '') ===
-              curr.toLowerCase().replace(/[^a-z0-9]/gi, '')
-          ) {
-            continue;
+        resetVad();
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const item = event.results[i];
+          if (item.isFinal) {
+            accumulatedFinal += ' ' + item[0].transcript;
+          } else {
+            interim += item[0].transcript + ' ';
           }
-          deduped.push(curr);
         }
-        const clean = deduped.join(' ');
-        setSpeechTranscript(clean);
-        if (clean) {
+        const cleanFinal = deduplicateNGrams(accumulatedFinal.trim());
+        const display = cleanFinal || deduplicateNGrams(interim.trim());
+        setSpeechTranscript(display);
+
+        if (display) {
           const start = Number((currentTime || 0).toFixed(1));
           const preset = getFontDesignPresetById(selectedFontPresetId);
           onChangeConfig((prev) => {
             const exists = prev.texts.find((t) => t.id === 'live_stt_layer');
             const newLayer: StudioTextLayer = {
               id: 'live_stt_layer',
-              text: clean,
+              text: display,
               fontFamily: 'display',
               fontStyleId: selectedFontPresetId,
               color: preset?.textColor || '#FFFFFF',
@@ -1429,7 +1436,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
                   id: 'live_stt_sub',
                   startTime: start,
                   endTime: start + 5,
-                  text: clean,
+                  text: display,
                   fontStyleId: selectedFontPresetId,
                   color: preset?.textColor || '#FFFFFF',
                 },
@@ -1440,11 +1447,14 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
       };
 
       recognition.onerror = () => {
+        if (vadTimer) clearTimeout(vadTimer);
         setIsRecordingSpeech(false);
       };
 
       recognition.onend = () => {
+        if (vadTimer) clearTimeout(vadTimer);
         setIsRecordingSpeech(false);
+        setSpeechTranscript((prev) => deduplicateNGrams(prev));
       };
 
       speechRecognitionRef.current = recognition;

@@ -44,6 +44,10 @@ import { ShareModal } from './components/ShareModal';
 import { SearchModal } from './components/SearchModal';
 import { MessagesModal } from './components/MessagesModal';
 import { BFlashAssistant } from './components/BFlashAssistant';
+import {
+  GiftCelebrationOverlay,
+  GiftCelebrationPayload,
+} from './components/GiftCelebrationOverlay';
 
 const BoostHubAppShell: React.FC = () => {
   const { userProfile, loading, isOffline, toasts } = useAuth();
@@ -67,6 +71,24 @@ const BoostHubAppShell: React.FC = () => {
   const [searchInitialQuery, setSearchInitialQuery] = useState('');
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messagePartner, setMessagePartner] = useState<UserProfile | null>(null);
+  const [giftCelebration, setGiftCelebration] =
+    useState<GiftCelebrationPayload | null>(null);
+
+  useEffect(() => {
+    const handleGiftCustomEvent = (e: Event) => {
+      const custom = e as CustomEvent<GiftCelebrationPayload>;
+      if (custom.detail) {
+        setGiftCelebration(custom.detail);
+      }
+    };
+    window.addEventListener('boosthub:gift-celebration', handleGiftCustomEvent);
+    return () => {
+      window.removeEventListener(
+        'boosthub:gift-celebration',
+        handleGiftCustomEvent
+      );
+    };
+  }, []);
 
   useEffect(() => {
     supabase.rpc('create_push_table_if_not_exists').then(
@@ -499,6 +521,12 @@ const BoostHubAppShell: React.FC = () => {
           onClose={() => setMessagesOpen(false)}
         />
       )}
+
+      {/* Virtual Gift Celebration Overlay on Receiver & Sender Screen */}
+      <GiftCelebrationOverlay
+        celebration={giftCelebration}
+        onDismiss={() => setGiftCelebration(null)}
+      />
 
       {/* Non-Blocking Toast Notifications */}
       <div className="fixed bottom-20 lg:bottom-6 right-4 z-50 flex flex-col gap-2 pointer-events-none">

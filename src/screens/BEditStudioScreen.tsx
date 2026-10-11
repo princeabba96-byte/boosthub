@@ -110,6 +110,7 @@ import {
   getFontDesignPresetById,
   FontDesignPreset,
 } from '../data/fontStyles52';
+import { deduplicateNGrams } from '../utils/deduplicateTranscript';
 import { useAuth } from '../state/AuthContext';
 import { INTEREST_CATEGORIES, PostItem } from '../types';
 import { apiFetch } from '../services/api';
@@ -171,8 +172,6 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [activeLangCode, setActiveLangCode] = useState('ig-NG');
   const [voiceStatusMessage, setVoiceStatusMessage] = useState('');
 
-  // Igbo Translation & Voice Diagnostics Debug Panel state
-  const [debugPanelOpen, setDebugPanelOpen] = useState(true);
   const [selectedIgboDialect, setSelectedIgboDialect] =
     useState<IgboRegionalDialect>('anambra_izugbe');
   const [igboDiagnosticReport, setIgboDiagnosticReport] =
@@ -181,7 +180,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [customDiagnosticPhrase, setCustomDiagnosticPhrase] = useState('');
   const [customDiagnosticList, setCustomDiagnosticList] = useState<string[]>([]);
   const [livePreviewIgboText, setLivePreviewIgboText] = useState(
-    'Ana m, aga ahá»a, á»zá»¥ta nri'
+    'Ana m, aga ahịa, ịzụta nri'
   );
   const [fluencyScorePulse, setFluencyScorePulse] = useState(false);
   const fluencyPulseTimerRef = useRef<number | null>(null);
@@ -266,6 +265,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   const [isAnalyzingVideoAudio, setIsAnalyzingVideoAudio] = useState(false);
   const [videoAnalysisProgress, setVideoAnalysisProgress] = useState('');
   const sttRecognitionRef = useRef<any>(null);
+  const sttSilenceTimerRef = useRef<number | null>(null);
 
   // Projects Drawer & Export/Publish Modal State
   const [projectsModalOpen, setProjectsModalOpen] = useState(false);
@@ -496,7 +496,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       setIgboDiagnosticReport(report);
       triggerFluencyScorePulse();
       showToast(
-        `Igbo Diagnostics (${report.dialectProfile.shortLabel}): ${report.passedTests}/${report.totalTests} passed Â· Fluency ${report.averageFluencyScore}%`,
+        `Igbo Diagnostics (${report.dialectProfile.shortLabel}): ${report.passedTests}/${report.totalTests} passed · Fluency ${report.averageFluencyScore}%`,
         report.allPassed ? 'success' : 'info'
       );
     } finally {
@@ -1413,19 +1413,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
           id: `sub_${Date.now()}_1`,
           startTime: 0,
           endTime: seg,
-          text: 'Watch till the end ð¥',
+          text: 'Watch till the end 🔥',
         },
         {
           id: `sub_${Date.now()}_2`,
           startTime: seg,
           endTime: Number((seg * 2).toFixed(1)),
-          text: 'Edited in BoostHub B-Edit Studio â¨',
+          text: 'Edited in BoostHub B-Edit Studio ✨',
         },
         {
           id: `sub_${Date.now()}_3`,
           startTime: Number((seg * 2).toFixed(1)),
           endTime: Number(dur.toFixed(1)),
-          text: 'Follow & drop a comment below! ð',
+          text: 'Follow & drop a comment below! 🚀',
         },
       ],
     }));
@@ -1587,6 +1587,10 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   // --- Real-Time Speech-to-Text Handlers ---
   const handleToggleSpeechToTextRecording = () => {
     if (sttIsRecording) {
+      if (sttSilenceTimerRef.current) {
+        window.clearTimeout(sttSilenceTimerRef.current);
+        sttSilenceTimerRef.current = null;
+      }
       if (sttRecognitionRef.current) {
         try {
           sttRecognitionRef.current.stop();
@@ -1596,6 +1600,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         sttRecognitionRef.current = null;
       }
       setSttIsRecording(false);
+      setSttInterimTranscript('');
       return;
     }
 
@@ -1603,43 +1608,12 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
 
-    function cleanRepeatedWords(text: string): string {
-      if (!text) return '';
-      const words = text.trim().split(/\s+/);
-      const out: string[] = [];
-      for (let i = 0; i < words.length; i++) {
-        const curr = words[i];
-        const prev = out[out.length - 1];
-        if (
-          prev &&
-          prev.toLowerCase().replace(/[^a-z0-9]/gi, '') ===
-            curr.toLowerCase().replace(/[^a-z0-9]/gi, '')
-        ) {
-          continue;
-        }
-        if (out.length >= 2 && i + 1 < words.length) {
-          const prev2 = (
-            out[out.length - 2] +
-            ' ' +
-            out[out.length - 1]
-          ).toLowerCase();
-          const next2 = (curr + ' ' + words[i + 1]).toLowerCase();
-          if (prev2 === next2) {
-            i++;
-            continue;
-          }
-        }
-        out.push(curr);
-      }
-      return out.join(' ');
-    }
-
     if (!SpeechRec) {
       const manualText = prompt(
         'Speech Recognition is not natively supported in this browser. Enter what you spoke in the video to generate synced captions:'
       );
       if (manualText && manualText.trim()) {
-        const clean = cleanRepeatedWords(manualText.trim());
+        const clean = deduplicateNGrams(manualText.trim());
         setSttTranscript(clean);
         handleConvertSpeechToCaptions(clean);
       }
@@ -1648,39 +1622,67 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
     try {
       const recognition = new SpeechRec();
-      recognition.continuous = true;
+      // Set continuous = false to prevent infinite looping and interim result pollution
+      recognition.continuous = false;
       recognition.interimResults = true;
       recognition.lang = sttLanguage;
+
+      let finalAccumulated = '';
+
+      const resetSilenceVADTimer = () => {
+        if (sttSilenceTimerRef.current) {
+          window.clearTimeout(sttSilenceTimerRef.current);
+        }
+        // VAD with 700ms silence stop to finalize phrase
+        sttSilenceTimerRef.current = window.setTimeout(() => {
+          if (recognition) {
+            try {
+              recognition.stop();
+            } catch {}
+          }
+        }, 700);
+      };
 
       recognition.onstart = () => {
         setSttIsRecording(true);
         setSttInterimTranscript('');
+        resetSilenceVADTimer();
       };
 
       recognition.onresult = (event: any) => {
+        resetSilenceVADTimer();
         let interim = '';
-        let finalTrans = '';
-        for (let i = 0; i < event.results.length; i++) {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
           const item = event.results[i];
           if (item.isFinal) {
-            finalTrans += item[0].transcript + ' ';
+            finalAccumulated += ' ' + item[0].transcript;
           } else {
             interim += item[0].transcript + ' ';
           }
         }
-        const cleanedFinal = cleanRepeatedWords(finalTrans);
+        const cleanedFinal = deduplicateNGrams(finalAccumulated);
         if (cleanedFinal) {
           setSttTranscript(cleanedFinal);
         }
-        setSttInterimTranscript(cleanRepeatedWords(interim));
+        setSttInterimTranscript(deduplicateNGrams(interim));
       };
 
       recognition.onerror = () => {
+        if (sttSilenceTimerRef.current) {
+          window.clearTimeout(sttSilenceTimerRef.current);
+          sttSilenceTimerRef.current = null;
+        }
         setSttIsRecording(false);
       };
 
       recognition.onend = () => {
+        if (sttSilenceTimerRef.current) {
+          window.clearTimeout(sttSilenceTimerRef.current);
+          sttSilenceTimerRef.current = null;
+        }
         setSttIsRecording(false);
+        setSttInterimTranscript('');
+        setSttTranscript((prev) => deduplicateNGrams(prev));
       };
 
       sttRecognitionRef.current = recognition;
@@ -1691,43 +1693,49 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
     }
   };
 
-  const handleConvertSpeechToCaptions = (textOverride?: string, timedCues?: { start: number; end: number; text: string }[]) => {
-    const raw = (textOverride || sttTranscript || sttInterimTranscript).trim().replace(/\s+/g, ' ');
-    if (!raw && !(timedCues && timedCues.length)) {
-      showToast('Please analyse a video, use the microphone, or enter spoken words first.', 'info');
+  const handleConvertSpeechToCaptions = (textOverride?: string) => {
+    const raw = deduplicateNGrams(
+      (textOverride || sttTranscript || sttInterimTranscript).trim()
+    );
+    if (!raw) {
+      showToast('Please speak, analyse video audio, or enter text first to generate captions', 'info');
       return;
+    }
+
+    const words = raw.split(/\s+/).filter(Boolean);
+    if (words.length === 0) return;
+
+    const chunkSize = 4;
+    const chunks: string[] = [];
+    for (let i = 0; i < words.length; i += chunkSize) {
+      chunks.push(words.slice(i, i + chunkSize).join(' '));
     }
 
     const videoDur = Math.max(3, totalDuration || 10);
+    const timePerChunk = Math.min(3.5, Math.max(1.8, videoDur / chunks.length));
+    let startTime = Number(timelineTime.toFixed(1));
+    if (startTime + chunks.length * timePerChunk > videoDur) {
+      startTime = 0;
+    }
+
     const fontPreset = getFontDesignPresetById(selectedFontPresetId);
     const resolvedColor = selectedCaptionColor || fontPreset?.textColor || '#FFE600';
-    // Preserve timestamps returned by the transcription service; only estimate timing when none are provided.
-    const newSubtitles: StudioSubtitleCue[] = timedCues && timedCues.length
-      ? timedCues.filter((cue) => cue.text?.trim()).map((cue, idx) => ({
-          id: `stt_sub_${Date.now()}_${idx}`,
-          startTime: Math.max(0, Math.min(videoDur, Number(cue.start) || 0)),
-          endTime: Math.max(Math.min(videoDur, (Number(cue.start) || 0) + 0.5), Math.min(videoDur, Number(cue.end) || (Number(cue.start) || 0) + 2)),
-          text: cue.text.trim(), fontStyleId: selectedFontPresetId, color: resolvedColor,
-        }))
-      : (() => {
-          const words = raw.split(/\s+/).filter(Boolean);
-          const chunks: string[] = [];
-          for (let i = 0; i < words.length; i += 4) chunks.push(words.slice(i, i + 4).join(' '));
-          const timePerChunk = Math.min(3.5, Math.max(1.2, videoDur / Math.max(1, chunks.length)));
-          let startTime = Number(timelineTime.toFixed(1));
-          if (startTime + chunks.length * timePerChunk > videoDur) startTime = 0;
-          return chunks.map((chunk, idx) => {
-            const start = Number((startTime + idx * timePerChunk).toFixed(1));
-            const end = Number(Math.min(videoDur, start + timePerChunk).toFixed(1));
-            return { id: `stt_sub_${Date.now()}_${idx}`, startTime: start, endTime: Math.max(start + 0.5, end), text: chunk, fontStyleId: selectedFontPresetId, color: resolvedColor };
-          });
-        })();
 
-    if (!newSubtitles.length) {
-      showToast('No caption text was returned. Try again or enter the words manually.', 'info');
-      return;
-    }
-    const firstChunkText = newSubtitles[0]?.text || raw;
+    const newSubtitles: StudioSubtitleCue[] = chunks.map((chunk, idx) => {
+      const s = Number((startTime + idx * timePerChunk).toFixed(1));
+      const e = Number(Math.min(videoDur, s + timePerChunk - 0.2).toFixed(1));
+      return {
+        id: `stt_sub_${Date.now()}_${idx}`,
+        startTime: s,
+        endTime: Math.max(s + 1, e),
+        text: chunk,
+        fontStyleId: selectedFontPresetId,
+        color: resolvedColor,
+      };
+    });
+
+    const firstChunkText = chunks[0] || raw;
+
     updateProjectWithHistory((prev) => ({
       ...prev,
       activeFontStyleId: selectedFontPresetId,
@@ -1735,28 +1743,23 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       subtitles: [...prev.subtitles, ...newSubtitles],
       texts: [
         ...prev.texts.filter((t) => t.id !== 'stt_caption_overlay'),
-        { id: 'stt_caption_overlay', text: firstChunkText, fontFamily: 'display', fontStyleId: selectedFontPresetId, color: resolvedColor, bgStyle: 'glass', animation: 'pulse_neon', x: 50, y: 78, scale: 1.15, rotation: 0 },
+        {
+          id: 'stt_caption_overlay',
+          text: firstChunkText,
+          fontFamily: 'display',
+          fontStyleId: selectedFontPresetId,
+          color: resolvedColor,
+          bgStyle: 'glass',
+          animation: 'pulse_neon',
+          x: 50,
+          y: 78,
+          scale: 1.15,
+          rotation: 0,
+        },
       ],
     }));
-    showToast(`Added ${newSubtitles.length} captions${timedCues?.length ? ' with source timestamps' : ''} using ${fontPreset?.name || 'your selected font'}!`, 'success');
-  };
 
-  const handleSpeakText = (text: string) => {
-    const content = text.trim();
-    if (!content) {
-      showToast('Type text first, then tap Read Aloud.', 'info');
-      return;
-    }
-    if (!('speechSynthesis' in window)) {
-      showToast('Text-to-speech is not supported by this browser.', 'error');
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(content);
-    utterance.lang = sttLanguage;
-    utterance.rate = 1;
-    utterance.pitch = 1;
-    window.speechSynthesis.speak(utterance);
+    showToast(`Created ${newSubtitles.length} time-synced captions in ${fontPreset?.name || 'custom font'}!`, 'success');
   };
 
   // Analyse Uploaded Video Audio & Auto-Generate Captions
@@ -1774,37 +1777,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
       let cues: { start: number; end: number; text: string }[] = [];
 
       try {
-        // Local phone-gallery files use blob: URLs that the server cannot fetch. Send the
-        // actual file bytes for reasonably sized clips so the configured transcription AI
-        // can hear the uploaded video's audio rather than accidentally listening to the mic.
-        const sourceFile = clipFilesMapRef.current.get(activeClip.url);
-        let audioBase64 = '';
-        if (sourceFile && sourceFile.size <= 12 * 1024 * 1024) {
-          audioBase64 = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const dataUrl = typeof reader.result === 'string' ? reader.result : '';
-              resolve(dataUrl.includes(',') ? dataUrl.slice(dataUrl.indexOf(',') + 1) : '');
-            };
-            reader.onerror = () => resolve('');
-            reader.readAsDataURL(sourceFile);
-          });
-        }
         const res = await apiFetch('/api/ai/transcribe-video', {
           method: 'POST',
           body: JSON.stringify({
-            videoUrl: activeClip.url.startsWith('http') ? activeClip.url : undefined,
-            audioBase64: audioBase64 || undefined,
-            mimeType: sourceFile?.type || 'video/mp4',
+            videoUrl: activeClip.url,
             language: sttLanguage,
           }),
         });
         if (res && res.ok && (res.transcript || (res.cues && res.cues.length > 0))) {
-          transcript = res.transcript || '';
-          cues = Array.isArray(res.cues) ? res.cues : [];
+          transcript = res.transcript;
+          cues = res.cues;
         }
       } catch {
-        // Use the browser fallback if the AI endpoint is unavailable.
+        // Fallback to client extraction
       }
 
       // If server could not fetch external URL or returned empty, run client-side audio analysis
@@ -1875,8 +1860,8 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
       if (transcript.trim()) {
         setSttTranscript(transcript.trim());
-        handleConvertSpeechToCaptions(transcript.trim(), cues);
-        showToast(cues.length ? 'Transcript added with returned word timings.' : 'Captions added. Check timing against your video before exporting.', cues.length ? 'success' : 'info');
+        handleConvertSpeechToCaptions(transcript.trim());
+        showToast('Successfully analyzed video audio and generated synced captions on screen!', 'success');
       } else {
         showToast('No speech detected in this video clip.', 'info');
       }
@@ -2070,7 +2055,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         body: JSON.stringify({
           postType: primaryClip.type === 'video' ? 'capshot' : 'photo',
           caption:
-            postCaption.trim() || 'Edited in B-Edit Studio â¨ #BEditStudio',
+            postCaption.trim() || 'Edited in B-Edit Studio ✨ #BEditStudio',
           mediaUrl: finalMediaUrl,
           thumbnailUrl: finalThumbnailUrl,
           hashtags: postHashtags.trim() || '#BEditStudio #Capshots',
@@ -2210,7 +2195,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               B-Edit Studio
             </h1>
             <p className="text-[10px] text-slate-400 truncate">
-              {project.clips.length} clip{project.clips.length === 1 ? '' : 's'} Â·{' '}
+              {project.clips.length} clip{project.clips.length === 1 ? '' : 's'} ·{' '}
               {totalDuration.toFixed(1)}s / {BOOSTHUB_MAX_VIDEO_SECONDS}s
             </p>
           </div>
@@ -2272,563 +2257,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         </div>
       </div>
 
-      {/* B-EDIT STUDIO IGBO TRANSLATION & VOICE DIAGNOSTICS DEBUG PANEL */}
-      {false && debugPanelOpen && igboDiagnosticReport && (() => {
-        const liveAnalysis = analyzeIgboPhoneticsAndFluency(
-          livePreviewIgboText,
-          selectedIgboDialect
-        );
-        const activeDialectMeta = getIgboDialectProfile(selectedIgboDialect);
-        return (
-          <div className="bg-[#0B1222] border border-emerald-500/40 rounded-2xl p-3.5 space-y-3 shadow-xl">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-extrabold text-emerald-300 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                    <span>
-                      B-Edit Studio Debug Panel: Real-Time Igbo Fluency & Phonetic Diagnostics
-                    </span>
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold border transition-all duration-300 ${
-                      igboDiagnosticReport.allPassed
-                        ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
-                        : 'bg-amber-500/20 border-amber-400/50 text-amber-300'
-                    } ${
-                      fluencyScorePulse || isRecordingVoice
-                        ? 'scale-105 ring-2 ring-emerald-400/70 shadow-[0_0_14px_rgba(16,185,129,0.45)] animate-pulse'
-                        : ''
-                    }`}
-                  >
-                    {igboDiagnosticReport.passedTests}/{igboDiagnosticReport.totalTests} PASSED Â·{' '}
-                    {igboDiagnosticReport.averageFluencyScore}% FLUENCY Â·{' '}
-                    {igboDiagnosticReport.voiceRate}x CADENCE
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Region: <span className="text-emerald-300 font-semibold">{activeDialectMeta.name}</span> ({activeDialectMeta.region}) â {activeDialectMeta.cadenceNotes}
-                </p>
-              </div>
 
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  disabled={runningDiagnostics}
-                  onClick={() => handleRunIgboDiagnosticsSuite()}
-                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-[11px] font-extrabold"
-                >
-                  {runningDiagnostics ? 'Running...' : 'Re-Run & Log to Console'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDebugPanelOpen(false)}
-                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white"
-                  title="Minimize Debug Panel"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Regional Igbo Dialect Selector & Real-Time Fluency Score Gauges */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {/* Regional Dialect Selector */}
-              <div className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
-                    ðºï¸ Regional Igbo Dialect & Natural Cadence:
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-400">
-                    {activeDialectMeta.voiceRate}x Â· {activeDialectMeta.pauseMs}ms pause
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {IGBO_REGIONAL_DIALECTS.map((d) => {
-                    const active = selectedIgboDialect === d.id;
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => handleSelectIgboRegionalDialect(d.id)}
-                        className={`px-2 py-1.5 rounded-lg text-left border transition-all ${
-                          active
-                            ? 'bg-emerald-600/25 border-emerald-400 text-white shadow'
-                            : 'bg-white/[0.03] border-white/10 text-slate-300 hover:border-emerald-400/40'
-                        }`}
-                      >
-                        <div className="text-[10px] font-extrabold truncate">
-                          {d.shortLabel}
-                        </div>
-                        <div className="text-[9px] text-slate-400 truncate">
-                          {d.region}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Real-Time Suite Fluency Score Breakdown with Pulse & Smooth Transition */}
-              <div
-                className={`p-2.5 rounded-xl border space-y-1.5 transition-all duration-500 ease-out ${
-                  fluencyScorePulse || isRecordingVoice
-                    ? 'bg-emerald-950/30 border-emerald-400/70 ring-2 ring-emerald-400/40 shadow-[0_0_22px_rgba(16,185,129,0.28)] scale-[1.01]'
-                    : 'bg-[#070B16] border-white/10'
-                }`}
-              >
-                <div className="flex items-center justify-between gap-1">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
-                    <span>ð Real-Time Igbo Fluency Scores:</span>
-                    {(isRecordingVoice || fluencyScorePulse) && (
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/50 text-[9px] font-extrabold text-emerald-200 animate-pulse">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                        {isRecordingVoice ? 'LIVE MIC' : 'UPDATED'}
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full transition-all duration-300 ${
-                      fluencyScorePulse || isRecordingVoice
-                        ? 'bg-emerald-500/30 text-emerald-100 ring-1 ring-emerald-300 scale-105 shadow-sm shadow-emerald-400/40'
-                        : 'text-emerald-300'
-                    }`}
-                  >
-                    {liveAnalysis.fluencyMetrics.overallFluencyScore}% Native Fluent
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-[10px]">
-                  <div>
-                    <div className="flex justify-between text-slate-300 mb-0.5">
-                      <span>Overall Fluency</span>
-                      <span
-                        className={`font-mono font-bold transition-all duration-300 ${
-                          fluencyScorePulse || isRecordingVoice
-                            ? 'text-emerald-200 scale-110'
-                            : 'text-emerald-300'
-                        }`}
-                      >
-                        {liveAnalysis.fluencyMetrics.overallFluencyScore}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <div
-                        style={{ width: `${liveAnalysis.fluencyMetrics.overallFluencyScore}%` }}
-                        className={`h-full bg-emerald-400 transition-all duration-500 ease-out ${
-                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
-                        }`}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-slate-300 mb-0.5">
-                      <span>Subdot & Harmony</span>
-                      <span
-                        className={`font-mono font-bold transition-all duration-300 ${
-                          fluencyScorePulse || isRecordingVoice
-                            ? 'text-cyan-200 scale-110'
-                            : 'text-cyan-300'
-                        }`}
-                      >
-                        {liveAnalysis.fluencyMetrics.orthographySubdotScore}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <div
-                        style={{ width: `${liveAnalysis.fluencyMetrics.orthographySubdotScore}%` }}
-                        className={`h-full bg-cyan-400 transition-all duration-500 ease-out ${
-                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
-                        }`}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-slate-300 mb-0.5">
-                      <span>Tonal Cadence</span>
-                      <span
-                        className={`font-mono font-bold transition-all duration-300 ${
-                          fluencyScorePulse || isRecordingVoice
-                            ? 'text-purple-200 scale-110'
-                            : 'text-purple-300'
-                        }`}
-                      >
-                        {liveAnalysis.fluencyMetrics.tonalCadenceScore}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <div
-                        style={{ width: `${liveAnalysis.fluencyMetrics.tonalCadenceScore}%` }}
-                        className={`h-full bg-purple-400 transition-all duration-500 ease-out ${
-                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
-                        }`}
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <div className="flex justify-between text-slate-300 mb-0.5">
-                      <span>Dialect Fidelity</span>
-                      <span
-                        className={`font-mono font-bold transition-all duration-300 ${
-                          fluencyScorePulse || isRecordingVoice
-                            ? 'text-amber-200 scale-110'
-                            : 'text-amber-300'
-                        }`}
-                      >
-                        {liveAnalysis.fluencyMetrics.dialectFidelityScore}%
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-                      <div
-                        style={{ width: `${liveAnalysis.fluencyMetrics.dialectFidelityScore}%` }}
-                        className={`h-full bg-amber-400 transition-all duration-500 ease-out ${
-                          fluencyScorePulse || isRecordingVoice ? 'animate-pulse brightness-125' : ''
-                        }`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Real-Time Phonetic & Tonal Inspector for Active/Typed Phrase */}
-            <div
-              className={`p-2.5 rounded-xl bg-gradient-to-r from-emerald-950/40 via-[#070B16] to-purple-950/30 border space-y-2 transition-all duration-500 ease-out ${
-                fluencyScorePulse || isRecordingVoice
-                  ? 'border-emerald-400/70 shadow-[0_0_18px_rgba(16,185,129,0.22)]'
-                  : 'border-emerald-500/30'
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
-                    ð¬ Live Phonetic & Tonal Cadence Breakdown ({activeDialectMeta.shortLabel}):
-                  </span>
-                  <span
-                    className={`px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-[10px] font-extrabold transition-all duration-300 ${
-                      fluencyScorePulse || isRecordingVoice
-                        ? 'scale-105 ring-2 ring-emerald-400/60 bg-emerald-500/35 animate-pulse'
-                        : ''
-                    }`}
-                  >
-                    {liveAnalysis.fluencyMetrics.overallFluencyScore}% Â·{' '}
-                    {liveAnalysis.fluencyMetrics.cadenceRatingLabel}
-                  </span>
-                </div>
-                <span className="text-[10px] font-mono text-slate-400">
-                  {liveAnalysis.phoneticBreakdown.syllableCount} syllables Â·{' '}
-                  {liveAnalysis.phoneticBreakdown.pauseCount} breath pause(s) Â· ~
-                  {liveAnalysis.phoneticBreakdown.estimatedDurationSec}s
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
-                <div className="p-2 rounded-lg bg-black/50 border border-white/10">
-                  <span className="text-[9px] uppercase font-bold text-slate-400 block">
-                    Syllable Cadence & Breath Pauses:
-                  </span>
-                  <span className="font-mono text-emerald-200 font-bold break-words">
-                    {liveAnalysis.phoneticBreakdown.syllableCadenceGuide}
-                  </span>
-                </div>
-                <div className="p-2 rounded-lg bg-black/50 border border-white/10">
-                  <span className="text-[9px] uppercase font-bold text-slate-400 block">
-                    IPA Transcription & Tone Contour (H=High, L=Low):
-                  </span>
-                  <span className="font-mono text-cyan-200 font-semibold block break-words">
-                    {liveAnalysis.phoneticBreakdown.ipaTranscription}
-                  </span>
-                  <span className="font-mono text-[10px] text-purple-300">
-                    Tones: {liveAnalysis.phoneticBreakdown.toneContourSummary}
-                  </span>
-                </div>
-              </div>
-
-              {/* Word-by-Word Phonetic Chips */}
-              <div className="flex flex-wrap gap-1.5">
-                {liveAnalysis.phoneticBreakdown.wordTokens.map((tok, idx) => (
-                  <div
-                    key={`${tok.word}_${idx}`}
-                    title={tok.toneNote}
-                    className="px-2 py-1 rounded-lg bg-[#0B1325] border border-white/10 text-[10px] flex flex-col"
-                  >
-                    <div className="flex items-center gap-1">
-                      <span className="font-extrabold text-white">
-                        {tok.word}
-                        {tok.hasCommaPauseAfter ? ',' : ''}
-                      </span>
-                      <span className="px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[9px] font-bold">
-                        {tok.tonePattern}
-                      </span>
-                    </div>
-                    <span className="font-mono text-[9px] text-emerald-300">
-                      {tok.syllables} ({tok.phoneticRespelling})
-                    </span>
-                    <span className="font-mono text-[9px] text-slate-400">
-                      /{tok.ipa}/
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* One-Tap Live Voice Verification Bar (Fluent Nigerian Languages + Helium Laugh & Comedy FX) */}
-            <div className="p-2.5 rounded-xl bg-black/50 border border-white/10 space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-purple-300">
-                  ð One-Tap Fluent Nigerian & Comedy Voice Test (Instant Audio):
-                </span>
-                {applyingVoiceBusy && (
-                  <span className="text-[10px] font-bold text-amber-300 animate-pulse">
-                    {voiceStatusMessage || 'Synthesizing voice...'}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'I am going to the market to buy some foodstuff';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('igbo_language_male', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/40 text-emerald-200 text-[11px] font-extrabold"
-                >
-                  ð³ð¬ Speak Fluent Igbo (Market)
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'I hope you buy cheap before I come back';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('igbo_language_female', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/40 border border-emerald-400/40 text-emerald-200 text-[11px] font-extrabold"
-                >
-                  ð³ð¬ Speak Fluent Igbo (Buy Cheap)
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'I am going to the market to buy some foodstuff';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('hausa_language_male', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-blue-600/25 hover:bg-blue-600/40 border border-blue-400/40 text-blue-200 text-[11px] font-extrabold"
-                >
-                  ð³ð¬ Speak Fluent Hausa
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'I am going to the market to buy some foodstuff';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('yoruba_language_male', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-indigo-600/25 hover:bg-indigo-600/40 border border-indigo-400/40 text-indigo-200 text-[11px] font-extrabold"
-                >
-                  ð³ð¬ Speak Fluent Yoruba
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'I wan go market go buy foodstuff';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('naija_pidgin_male', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-cyan-600/25 hover:bg-cyan-600/40 border border-cyan-400/40 text-cyan-200 text-[11px] font-extrabold"
-                >
-                  ð³ð¬ Speak Fluent Pidgin
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase =
-                      'Haha! Hee-hee! Listen to my hilarious Helium Laugh voice on BoostHub!';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('helium_balloon', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-pink-600/30 hover:bg-pink-600/45 border border-pink-400/50 text-pink-200 text-[11px] font-extrabold"
-                >
-                  ð Test Helium Laugh Voice
-                </button>
-                <button
-                  type="button"
-                  disabled={applyingVoiceBusy}
-                  onClick={() => {
-                    setActiveBottomTab('audio');
-                    setAudioSubMode('voice_changer');
-                    const phrase = 'Hello my friends, check out my Chipmunk Comedy voice!';
-                    setVoiceTranscriptText(phrase);
-                    handleApplyVoicePreset('chipmunk_turbo', phrase);
-                  }}
-                  className="px-2.5 py-1.5 rounded-xl bg-amber-600/25 hover:bg-amber-600/40 border border-amber-400/40 text-amber-200 text-[11px] font-extrabold"
-                >
-                  ð¿ï¸ Test Chipmunk Voice
-                </button>
-              </div>
-            </div>
-
-            {/* Diagnostic Test Results List with Real-Time Fluency & Phonetic Breakdown */}
-            <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1">
-              {igboDiagnosticReport.results.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-2.5 rounded-xl bg-[#070B16] border border-white/10 space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
-                          item.passed
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                            : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                        }`}
-                      >
-                        {item.passed ? 'PASS â' : 'CHECK â ï¸'}
-                      </span>
-                      <span className="text-xs font-extrabold text-white">
-                        {item.label}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-400/40 text-[10px] font-extrabold text-emerald-300">
-                        Fluency: {item.fluencyMetrics.overallFluencyScore}% ({item.fluencyMetrics.cadenceRatingLabel})
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {item.wordCount}w Â· {item.phoneticBreakdown.syllableCount}syl Â· ~{item.phoneticBreakdown.estimatedDurationSec}s Â· {item.toneFormatting.voiceRate}x
-                      </span>
-                      <button
-                        type="button"
-                        disabled={applyingVoiceBusy}
-                        onClick={() => {
-                          setVoiceTranscriptText(item.preProcessedEnglish);
-                          setTranslatedDialectText(item.actualIgbo);
-                          setLivePreviewIgboText(item.actualIgbo);
-                          handleApplyVoicePreset(
-                            'igbo_language_male',
-                            item.preProcessedEnglish
-                          );
-                        }}
-                        className="px-2 py-0.5 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[10px] font-extrabold inline-flex items-center gap-1"
-                      >
-                        <Volume2 className="w-3 h-3" />
-                        <span>Speak Igbo</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* 3-Step Translation Pipeline */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[11px]">
-                    <div className="p-1.5 rounded-lg bg-white/[0.03] border border-white/5">
-                      <span className="text-[9px] uppercase font-bold text-slate-400 block">
-                        1. Raw Input (English/Pidgin):
-                      </span>
-                      <span className="text-slate-200 font-medium">
-                        "{item.inputRaw}"
-                      </span>
-                    </div>
-                    <div className="p-1.5 rounded-lg bg-blue-950/25 border border-blue-500/20">
-                      <span className="text-[9px] uppercase font-bold text-blue-300 block">
-                        2. Pre-Processed English:
-                      </span>
-                      <span className="text-blue-100 font-semibold">
-                        "{item.preProcessedEnglish}"
-                      </span>
-                    </div>
-                    <div className="p-1.5 rounded-lg bg-emerald-950/30 border border-emerald-500/30">
-                      <span className="text-[9px] uppercase font-bold text-emerald-300 block">
-                        3. {item.dialectLabel} Output:
-                      </span>
-                      <span className="text-emerald-200 font-extrabold">
-                        "{item.actualIgbo}"
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Phonetic Breakdown & Tonal Cadence Strip */}
-                  <div className="p-2 rounded-lg bg-black/50 border border-white/5 space-y-1 text-[10px]">
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="font-mono text-emerald-300 font-semibold">
-                        <span className="text-slate-400 uppercase font-sans font-bold mr-1">
-                          Cadence:
-                        </span>
-                        {item.phoneticBreakdown.syllableCadenceGuide}
-                      </span>
-                      <span className="font-mono text-purple-300">
-                        Tones: {item.phoneticBreakdown.toneContourSummary}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-1 text-cyan-200/90 font-mono">
-                      <span>IPA: {item.phoneticBreakdown.ipaTranscription}</span>
-                      <span className="text-slate-400">
-                        Pronounce: "{item.phoneticBreakdown.speechFriendlyPhonetic}"
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Fluency Sub-Scores + Spelling Verification Badges */}
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                      Subdots/Harmony: {item.fluencyMetrics.orthographySubdotScore}%
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20">
-                      Tonal Cadence: {item.fluencyMetrics.tonalCadenceScore}%
-                    </span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                      Dialect Fidelity: {item.fluencyMetrics.dialectFidelityScore}%
-                    </span>
-                    {item.spellingChecks.details.map((det, idx) => (
-                      <span
-                        key={idx}
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-                      >
-                        {det}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Custom Phrase Real-Time Diagnostic Runner */}
-            <div className="flex gap-2 pt-1">
-              <input
-                type="text"
-                value={customDiagnosticPhrase}
-                onChange={(e) => setCustomDiagnosticPhrase(e.target.value)}
-                placeholder='Type any English/Pidgin phrase for real-time Igbo phonetic & fluency analysis...'
-                className="flex-1 bg-[#070B16] border border-white/15 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-400"
-              />
-              <button
-                type="button"
-                disabled={runningDiagnostics || !customDiagnosticPhrase.trim()}
-                onClick={() => handleRunIgboDiagnosticsSuite(customDiagnosticPhrase)}
-                className="px-3 py-1.5 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] disabled:opacity-40 text-white text-xs font-extrabold shrink-0"
-              >
-                + Add & Log Test
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
       {uploadingClipPct !== null && (
         <div className="px-3 py-2 rounded-xl bg-blue-950/60 border border-blue-500/30 flex items-center justify-between text-xs text-blue-200">
@@ -3124,7 +2553,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       }
                       className="flex-1 min-h-[40px] rounded-xl bg-white/5 hover:bg-white/10 text-xs text-slate-200 inline-flex items-center justify-center gap-1"
                     >
-                      <RotateCcw className="w-3.5 h-3.5" /> -90Â°
+                      <RotateCcw className="w-3.5 h-3.5" /> -90°
                     </button>
                     <button
                       type="button"
@@ -3136,7 +2565,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       }
                       className="flex-1 min-h-[40px] rounded-xl bg-white/5 hover:bg-white/10 text-xs text-slate-200 inline-flex items-center justify-center gap-1"
                     >
-                      <RotateCw className="w-3.5 h-3.5" /> +90Â°
+                      <RotateCw className="w-3.5 h-3.5" /> +90°
                     </button>
                     <button
                       type="button"
@@ -3320,7 +2749,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       }`}
                     >
                       <Sparkles className="w-3.5 h-3.5 text-emerald-300" />
-                      <span>ð¤ AI Person Cutout</span>
+                      <span>🤖 AI Person Cutout</span>
                     </button>
 
                     <button
@@ -3338,7 +2767,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       }`}
                     >
                       <Film className="w-3.5 h-3.5 text-blue-300" />
-                      <span>ð¬ Chroma Key</span>
+                      <span>🎬 Chroma Key</span>
                     </button>
                   </div>
                 </div>
@@ -3389,6 +2818,32 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                         className="w-full accent-cyan-500"
                       />
                     </div>
+
+                    <div className="sm:col-span-2 pt-1 border-t border-white/5">
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="text-slate-300 font-medium">Mask Threshold (0.3 – 0.9):</span>
+                        <span className="text-emerald-400 font-bold">
+                          {activeClip.aiBgThreshold ?? 0.5} (Full Cutout)
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0.3}
+                        max={0.9}
+                        step={0.05}
+                        value={activeClip.aiBgThreshold ?? 0.5}
+                        onChange={(e) =>
+                          updateActiveClip({
+                            aiBgThreshold: Number(e.target.value),
+                            aiBgEnabled: true,
+                          })
+                        }
+                        className="w-full accent-emerald-400"
+                      />
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        MediaPipe full-body segmentation cutout: completely removes parlour chair and walls, preserving subject.
+                      </p>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2 pt-1 border-t border-white/10">
@@ -3397,9 +2852,9 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       <div className="flex items-center gap-1.5">
                         {(
                           [
-                            { id: 'green', label: 'ð¢ Green Key', bg: 'bg-emerald-600' },
-                            { id: 'blue', label: 'ðµ Blue Key', bg: 'bg-blue-600' },
-                            { id: 'black', label: 'â« Black Key', bg: 'bg-slate-900 border border-white/30' },
+                            { id: 'green', label: '🟢 Green Key', bg: 'bg-emerald-600' },
+                            { id: 'blue', label: '🔵 Blue Key', bg: 'bg-blue-600' },
+                            { id: 'black', label: '⚫ Black Key', bg: 'bg-slate-900 border border-white/30' },
                           ] as const
                         ).map((c) => (
                           <button
@@ -3568,16 +3023,16 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                 {(
                   [
-                    { label: 'ð Deep Space', q: 'deep space' },
-                    { label: 'ð Top of Earth', q: 'top of earth' },
-                    { label: 'â½ Football Stadium', q: 'football stadium' },
-                    { label: 'ðï¸ Tropical Beach', q: 'beach' },
-                    { label: 'ð New York at Night', q: 'new york' },
-                    { label: 'ðï¸ Podcast Studio', q: 'podcast' },
-                    { label: 'ðº Newsroom', q: 'news' },
-                    { label: 'ð¸ Concert Stage', q: 'concert' },
-                    { label: 'ðï¸ Cyberpunk', q: 'cyberpunk' },
-                    { label: 'ðï¸ Santorini', q: 'santorini' },
+                    { label: '🌌 Deep Space', q: 'deep space' },
+                    { label: '🌍 Top of Earth', q: 'top of earth' },
+                    { label: '⚽ Football Stadium', q: 'football stadium' },
+                    { label: '🏖️ Tropical Beach', q: 'beach' },
+                    { label: '🌃 New York at Night', q: 'new york' },
+                    { label: '🎙️ Podcast Studio', q: 'podcast' },
+                    { label: '📺 Newsroom', q: 'news' },
+                    { label: '🎸 Concert Stage', q: 'concert' },
+                    { label: '🏙️ Cyberpunk', q: 'cyberpunk' },
+                    { label: '🏛️ Santorini', q: 'santorini' },
                   ] as const
                 ).map((chip) => (
                   <button
@@ -3656,7 +3111,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                         )}
                       </div>
                       <span className="text-[9px] text-slate-300 truncate">
-                        {bg.category} â¢ {bg.type}
+                        {bg.category} • {bg.type}
                       </span>
                     </div>
                   </button>
@@ -3703,14 +3158,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     onChange={(e) => setSttLanguage(e.target.value)}
                     className="bg-[#080B14] border border-white/15 rounded-lg px-2.5 py-1 text-xs text-white"
                   >
-                    <option value="en-US">ðºð¸ English (US)</option>
-                    <option value="en-GB">ð¬ð§ English (UK)</option>
-                    <option value="en-NG">ð³ð¬ Nigerian English / Pidgin</option>
-                    <option value="ig-NG">ð³ð¬ Asá»¥sá»¥ Igbo</option>
-                    <option value="yo-NG">ð³ð¬ YorÃ¹bÃ¡</option>
-                    <option value="ha-NG">ð³ð¬ Hausa</option>
-                    <option value="fr-FR">ð«ð· French</option>
-                    <option value="es-ES">ðªð¸ Spanish</option>
+                    <option value="en-US">🇺🇸 English (US)</option>
+                    <option value="en-GB">🇬🇧 English (UK)</option>
+                    <option value="en-NG">🇳🇬 Nigerian English / Pidgin</option>
+                    <option value="ig-NG">🇳🇬 Asụsụ Igbo</option>
+                    <option value="yo-NG">🇳🇬 Yorùbá</option>
+                    <option value="ha-NG">🇳🇬 Hausa</option>
+                    <option value="fr-FR">🇫🇷 French</option>
+                    <option value="es-ES">🇪🇸 Spanish</option>
                   </select>
                 </div>
 
@@ -3787,7 +3242,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
                 <p className="text-[11px] text-slate-400 text-center">
                   {sttIsRecording
-                    ? 'ðï¸ Listening in real-time... Speak clearly into your mic!'
+                    ? '🎙️ Listening in real-time... Speak clearly into your mic!'
                     : 'Tap the button and speak. Your voice converts into text and video captions.'}
                 </p>
               </div>
@@ -3867,7 +3322,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               <div className="space-y-1.5">
                 <span className="text-[11px] text-slate-300 font-semibold">Font Style & Design (52 Presets):</span>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1">
-                  {FONT_STYLES_52.map((preset) => {
+                  {FONT_STYLES_52.slice(0, 18).map((preset) => {
                     const isSelected = selectedFontPresetId === preset.id;
                     return (
                       <button
@@ -3925,7 +3380,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                   }}
                   className={getFontDesignPresetById(selectedFontPresetId)?.className || ''}
                 >
-                  {sttTranscript || 'BoostHub Aba Creators ð¥'}
+                  {sttTranscript || 'BoostHub Aba Creators 🔥'}
                 </div>
               </div>
             </div>
@@ -3999,10 +3454,10 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {(
                   [
-                    { id: 'viral_yellow', name: 'ð¡ Viral Yellow', desc: '#1 TikTok style', bg: 'bg-yellow-500/20 border-yellow-400 text-yellow-300' },
-                    { id: 'cyber_cyan', name: 'ðµ Cyber Cyan', desc: 'Neon glow', bg: 'bg-cyan-500/20 border-cyan-400 text-cyan-300' },
-                    { id: 'clean_box', name: 'âª Minimal Box', desc: 'Crisp pill', bg: 'bg-slate-800 border-white/30 text-white' },
-                    { id: 'bold_red', name: 'ð´ Punchy Red', desc: 'Attention hook', bg: 'bg-rose-500/20 border-rose-400 text-rose-300' },
+                    { id: 'viral_yellow', name: '🟡 Viral Yellow', desc: '#1 TikTok style', bg: 'bg-yellow-500/20 border-yellow-400 text-yellow-300' },
+                    { id: 'cyber_cyan', name: '🔵 Cyber Cyan', desc: 'Neon glow', bg: 'bg-cyan-500/20 border-cyan-400 text-cyan-300' },
+                    { id: 'clean_box', name: '⚪ Minimal Box', desc: 'Crisp pill', bg: 'bg-slate-800 border-white/30 text-white' },
+                    { id: 'bold_red', name: '🔴 Punchy Red', desc: 'Attention hook', bg: 'bg-rose-500/20 border-rose-400 text-rose-300' },
                   ] as const
                 ).map((st) => (
                   <button
@@ -4192,7 +3647,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                           {project.customAudioName || 'Extracted Audio Track'}
                         </p>
                         <p className="text-[10px] text-slate-400">
-                          Duration: {(project.soundDuration || 15).toFixed(1)}s Â· Ready in timeline
+                          Duration: {(project.soundDuration || 15).toFixed(1)}s · Ready in timeline
                         </p>
                       </div>
                       <div className="flex items-center gap-1.5">
@@ -4362,7 +3817,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     </div>
                     {isRecordingVoice && (
                       <span className="px-2.5 py-1 rounded-full bg-rose-600 text-white text-[11px] font-mono font-extrabold animate-pulse">
-                        â REC {recordingSeconds.toFixed(1)}s
+                        ● REC {recordingSeconds.toFixed(1)}s
                       </span>
                     )}
                   </div>
@@ -4420,7 +3875,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                   <div className="p-2.5 rounded-xl bg-[#090D1A] border border-emerald-500/30 space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-1.5">
                       <span className="text-[11px] font-extrabold text-emerald-300">
-                        ð³ð¬ Translate & Speak in Real Nigerian Language:
+                        🇳🇬 Translate & Speak in Real Nigerian Language:
                       </span>
                       <div className="flex flex-wrap items-center gap-1">
                         <button
@@ -4433,7 +3888,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                           }}
                           className="px-2 py-0.5 rounded-md bg-purple-500/20 border border-purple-400/40 text-[10px] font-bold text-purple-200 hover:bg-purple-500/30"
                         >
-                          Test: "Going to market..." â Igbo
+                          Test: "Going to market..." → Igbo
                         </button>
                         <button
                           type="button"
@@ -4445,19 +3900,19 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                           }}
                           className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 text-[10px] font-bold text-emerald-200 hover:bg-emerald-500/30"
                         >
-                          Test: "Hope you buy cheap..." â Igbo
+                          Test: "Hope you buy cheap..." → Igbo
                         </button>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                       {[
-                        { id: 'igbo_language_male', label: 'ð³ð¬ Igbo (ig-NG)' },
-                        { id: 'hausa_language_male', label: 'ð³ð¬ Hausa (ha-NG)' },
-                        { id: 'yoruba_language_male', label: 'ð³ð¬ Yoruba (yo-NG)' },
-                        { id: 'naija_pidgin_male', label: 'ð³ð¬ Pidgin (en-NG)' },
-                        { id: 'akwa_ibom_male', label: 'ð³ð¬ Akwa Ibom' },
-                        { id: 'naija_street_hypeman', label: 'ð³ð¬ Lagos Street' },
+                        { id: 'igbo_language_male', label: '🇳🇬 Igbo (ig-NG)' },
+                        { id: 'hausa_language_male', label: '🇳🇬 Hausa (ha-NG)' },
+                        { id: 'yoruba_language_male', label: '🇳🇬 Yoruba (yo-NG)' },
+                        { id: 'naija_pidgin_male', label: '🇳🇬 Pidgin (en-NG)' },
+                        { id: 'akwa_ibom_male', label: '🇳🇬 Akwa Ibom' },
+                        { id: 'naija_street_hypeman', label: '🇳🇬 Lagos Street' },
                       ].map((langBtn) => (
                         <button
                           key={langBtn.id}
@@ -4511,7 +3966,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                             {project.voiceoverName || 'My Voice Cover'}
                           </p>
                           <p className="text-[10px] text-slate-400">
-                            Length: {(project.voiceoverDuration || 5).toFixed(1)}s Â· Active Voice:{' '}
+                            Length: {(project.voiceoverDuration || 5).toFixed(1)}s · Active Voice:{' '}
                             <span className="text-purple-300 font-semibold">
                               {getVoicePresetById(project.voicePresetId || 'original').name}
                             </span>
@@ -4635,7 +4090,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 <div className="p-3 rounded-xl bg-gradient-to-br from-purple-950/50 via-[#0C1120] to-blue-950/40 border border-purple-500/30 space-y-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-[11px] font-extrabold text-purple-200">
-                      ðï¸ Gemini 3.8 Flash Transcription & Real Nigerian Translator
+                      🎙️ Gemini 3.8 Flash Transcription & Real Nigerian Translator
                     </span>
                     <div className="flex flex-wrap items-center gap-1.5">
                       <button
@@ -4663,7 +4118,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                         Test: "Hope you buy cheap..."
                       </button>
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                        {activeDialectLabel} ({activeLangCode}) Â· 0.8x Rate
+                        {activeDialectLabel} ({activeLangCode}) · 0.8x Rate
                       </span>
                     </div>
                   </div>
@@ -4743,17 +4198,17 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                 {/* Quick Nigerian Dialect & Realistic Voice Shortcuts */}
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                   {[
-                    { id: 'naija_street_hypeman', label: 'ð³ð¬ Lagos Street' },
-                    { id: 'igbo_language_male', label: 'ð³ð¬ Igbo (Male)' },
-                    { id: 'igbo_language_female', label: 'ð³ð¬ Igbo (Female)' },
-                    { id: 'hausa_language_male', label: 'ð³ð¬ Hausa (Male)' },
-                    { id: 'hausa_language_female', label: 'ð³ð¬ Hausa (Female)' },
-                    { id: 'yoruba_language_male', label: 'ð³ð¬ Yoruba (Male)' },
-                    { id: 'yoruba_language_female', label: 'ð³ð¬ Yoruba (Female)' },
-                    { id: 'akwa_ibom_male', label: 'ð³ð¬ Akwa Ibom (Male)' },
-                    { id: 'akwa_ibom_female', label: 'ð³ð¬ Akwa Ibom (Female)' },
-                    { id: 'naija_pidgin_male', label: 'ð³ð¬ Pidgin (Male)' },
-                    { id: 'naija_pidgin_female', label: 'ð³ð¬ Pidgin (Female)' },
+                    { id: 'naija_street_hypeman', label: '🇳🇬 Lagos Street' },
+                    { id: 'igbo_language_male', label: '🇳🇬 Igbo (Male)' },
+                    { id: 'igbo_language_female', label: '🇳🇬 Igbo (Female)' },
+                    { id: 'hausa_language_male', label: '🇳🇬 Hausa (Male)' },
+                    { id: 'hausa_language_female', label: '🇳🇬 Hausa (Female)' },
+                    { id: 'yoruba_language_male', label: '🇳🇬 Yoruba (Male)' },
+                    { id: 'yoruba_language_female', label: '🇳🇬 Yoruba (Female)' },
+                    { id: 'akwa_ibom_male', label: '🇳🇬 Akwa Ibom (Male)' },
+                    { id: 'akwa_ibom_female', label: '🇳🇬 Akwa Ibom (Female)' },
+                    { id: 'naija_pidgin_male', label: '🇳🇬 Pidgin (Male)' },
+                    { id: 'naija_pidgin_female', label: '🇳🇬 Pidgin (Female)' },
                   ].map((quick) => {
                     const active = project.voicePresetId === quick.id;
                     return (
@@ -4801,12 +4256,12 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     const active = voiceCategoryFilter === cat;
                     const labelMap: Record<BEditVoiceCategory, string> = {
                       All: 'All (56)',
-                      Nigerian: 'ð³ð¬ Nigerian & Languages (14)',
-                      Comedy: 'ð Comedy (12)',
-                      Girl: 'ð© Female (8)',
-                      Male: 'ð¨ Male (8)',
-                      Children: 'ð§ Children (6)',
-                      'More FX': 'ð¤ More FX (8)',
+                      Nigerian: '🇳🇬 Nigerian & Languages (14)',
+                      Comedy: '😂 Comedy (12)',
+                      Girl: '👩 Female (8)',
+                      Male: '👨 Male (8)',
+                      Children: '🧒 Children (6)',
+                      'More FX': '🤖 More FX (8)',
                     };
                     return (
                       <button
@@ -4900,7 +4355,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const content = textDraft.trim() || 'BoostHub â¨';
+                  const content = textDraft.trim() || 'BoostHub ✨';
                   const newLayer: StudioTextLayer = {
                     id: `txt_${Date.now()}`,
                     text: content,
@@ -4924,19 +4379,6 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               >
                 <Plus className="w-3.5 h-3.5" /> Add Text
               </button>
-              <button
-                type="button"
-                onClick={() => handleSpeakText(textDraft)}
-                className="px-3 py-2 rounded-xl bg-purple-600/80 hover:bg-purple-500 text-white text-xs font-bold whitespace-nowrap"
-                title="Read your typed text aloud using your device voice"
-              >🔊 Read Aloud</button>
-            </div>
-
-            {/* Quick emoji inserts */}
-            <div className="flex flex-wrap gap-1.5" aria-label="Quick emoji inserts">
-              {['😂','🤣','😭','🔥','❤️','😍','😎','🤯','💀','🙌','👏','✨','💯','👀','🎬','🎉','😱','🤔','🥹','😈','💥','🚀','⭐','💸','🙏','🤝','😤','🥳','😅','🤩','💪','🫶','😜','👑','⚡','💔','🤦','🗣️','🎵','🍿','🇳🇬','😂🔥','❤️‍🔥'].map((emoji) => (
-                <button key={emoji} type="button" onClick={() => setTextDraft((current) => `${current}${current ? ' ' : ''}${emoji}`)} className="h-8 min-w-8 px-1 rounded-lg bg-white/5 hover:bg-white/15 text-lg" title={`Insert ${emoji}`}>{emoji}</button>
-              ))}
             </div>
 
             {/* Animated Text Presets */}
@@ -5060,7 +4502,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                       className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white/5 text-xs"
                     >
                       <span className="font-mono text-[10px] text-amber-300">
-                        {cue.startTime}sâ{cue.endTime}s
+                        {cue.startTime}s–{cue.endTime}s
                       </span>
                       <span className="flex-1 text-white truncate">
                         {cue.text}
@@ -5659,7 +5101,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     onClick={() => setAiBgCustomPrompt(promptIdea)}
                     className="px-2.5 py-1 rounded-lg bg-white/5 hover:bg-emerald-950/40 border border-white/10 hover:border-emerald-500/40 text-[10px] text-slate-300 hover:text-emerald-300 text-left transition-colors"
                   >
-                    â¨ {promptIdea.slice(0, 38)}...
+                    ✨ {promptIdea.slice(0, 38)}...
                   </button>
                 ))}
               </div>
@@ -5743,7 +5185,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                         {sp.name}
                       </p>
                       <p className="text-[10px] text-slate-400">
-                        {sp.clips.length} clips Â·{' '}
+                        {sp.clips.length} clips ·{' '}
                         {new Date(sp.updatedAt).toLocaleDateString()}
                       </p>
                     </div>

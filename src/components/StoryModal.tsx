@@ -344,8 +344,9 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
               </button>
               {showViewers && (
                 <div className="mt-3 max-h-36 overflow-y-auto space-y-2 border-t border-white/10 pt-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Viewers</p>
-                  {currentStory.viewers?.length ? (
+                  {currentStory.viewers?.length === 0 ? (
+                    <p className="text-xs text-slate-500">No viewers yet.</p>
+                  ) : (
                     currentStory.viewers.map((v) => (
                       <div key={v.id} className="flex items-center gap-2 text-xs text-white">
                         <Avatar src={v.avatarUrl} name={v.displayName} size="xs" />
@@ -353,18 +354,7 @@ export const StoryViewerModal: React.FC<StoryViewerModalProps> = ({
                         <span className="text-slate-400">@{v.username}</span>
                       </div>
                     ))
-                  ) : <p className="text-xs text-slate-500">No viewers yet.</p>}
-                  <p className="pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Reactions</p>
-                  {currentStory.reactions?.length ? (
-                    currentStory.reactions.map((reaction) => (
-                      <div key={reaction.id} className="flex items-center gap-2 text-xs text-white">
-                        <Avatar src={reaction.avatarUrl || ''} name={reaction.displayName || reaction.username || 'BoostHub User'} size="xs" />
-                        <span>{reaction.displayName || 'BoostHub User'}</span>
-                        <span className="text-slate-400">@{reaction.username || 'user'}</span>
-                        <span className="ml-auto text-lg">{reaction.reaction}</span>
-                      </div>
-                    ))
-                  ) : <p className="text-xs text-slate-500">No reactions yet.</p>}
+                  )}
                 </div>
               )}
             </div>

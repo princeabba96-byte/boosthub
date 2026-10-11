@@ -52,6 +52,7 @@ import {
   getBlockedUsersList,
   unblockUser,
   performGlobalSearch,
+  logProfileSearchNotification,
   storePermanentMedia,
   getPermanentMediaById,
   getAdminModerationData,
@@ -870,6 +871,22 @@ async function startServer() {
     }
   });
 
+  app.post(
+    '/api/notifications/log-search',
+    requireAuth,
+    async (req: AuthRequest, res) => {
+      try {
+        const { targetUserId } = req.body || {};
+        if (targetUserId) {
+          await logProfileSearchNotification(req.user!.uid, String(targetUserId));
+        }
+        res.json({ ok: true });
+      } catch {
+        res.json({ ok: false });
+      }
+    }
+  );
+
   // --- SAFETY, BLOCKING & FEEDBACK ---
   app.post('/api/feedback', requireAuth, async (req: AuthRequest, res) => {
     try {
@@ -1520,18 +1537,22 @@ Output ONLY raw JSON.`;
             .join('\n')
         : '';
 
-      const systemInstruction = `You are B FLASH, the flagship ultra-smart AI assistant built into BoostHub (founded by Prince Abba).
-You help users navigate every feature of BoostHub AND answer any question on Earth — including science, math, coding, business, entertainment, relationships, history, writing viral captions/scripts, and Nigerian & global languages (English, Igbo, Yoruba, Hausa, Akwa Ibom / Ibibio-Efik, and Nigerian Pidgin).
+      const systemInstruction = `You are B FLASH, the flagship ultra-smart, delightfully humorous, and deeply assistive AI assistant built into BoostHub (founded by Prince Abba).
+You bring lively Naija creator humor, clever wit, and sharp intelligence ("Omo, no shaking at all!", "Sharp sharp breakdown for you:", "Straight facts, zero cap:").
+You can answer ANY question on Earth — science, math, physics, coding, biology, business, money, viral scripts, relationships, cooking, philosophy, Nigerian culture, and languages (English, Igbo, Yoruba, Hausa, Akwa Ibom/Ibibio, and Nigerian Pidgin).
 
-Key BoostHub App Knowledge:
-- Home Feed & Capshots: Watch photos, videos, and vertical short videos (Capshots), like, comment, share, and post 24-hour Stories.
-- B-Edit Studio (#/edit): Full multi-track video & photo editor with instant local loading, trim/split, speed, reverse, chroma key, filters, animated text, stickers, Extract Audio from gallery videos, Voice Cover recorder, and the 56 Realistic Human Voice Changer & Dialect Translator (translates English voice recordings accurately into Igbo, Hausa, Yoruba, Akwa Ibom / Ibibio, Lagos Street Pidgin, Male, Female, Children, and Comedy voices).
-- Direct Messages: Real-time chat with friends and BOOST BOT, photo/video sharing, and instant Voice Notes (tap the microphone icon in Messages to record & send a voice note).
-- B-Shop & Boost Points (BP): Complete daily/weekly Missions to earn BP & XP, buy profile frames, badges, mystery boxes, or send virtual gifts to creators (spending BP immediately deducts from your BP wallet balance).
-- Notifications: Real-time lock-screen & notification bar Web Push alerts for likes, comments, shares, follows, gifts, and messages.
+CRITICAL CONVERSATIONAL RULES:
+1. NEVER ASK BACK QUESTIONS OR DEFLECT (NEVER say "What do you want to explore next?", "Do you have any more questions?", "Would you like me to elaborate?").
+2. ALWAYS provide the COMPLETE, direct, and conclusive answer immediately on the first try.
+3. Keep it witty, engaging, funny, and 100% accurate.
 
-Current User: ${userName} (currently viewing screen: ${activeTab}).
-Be warm, sharp, accurate, and helpful. Format answers clearly with concise bullet points when helpful.`;
+BoostHub Knowledge:
+- B-Edit Studio: Multi-track timeline, green screen & real AI person cutout, real-time STT captions, 54-voice dialect translator (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin).
+- Capshots & Stories: Vertical reels, 24-hr stories, instant audio volume controls, reactions.
+- B-Shop: Gifts sorted from lower to higher (Rose, Fresh Palm Wine, Red Chief Cap, Aba Shoe, Gold Chain, Rocket, Golden Eagle, Crown, Diamond, Aba Supreme Trophy), profile badges.
+- Direct Messages: Voice notes, real-time chats.
+
+Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully right now:`;
 
       const fullPrompt = conversationContext
         ? `Previous conversation:\n${conversationContext}\n\nUser: ${promptText}`
@@ -1539,6 +1560,7 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
 
       let replyText = '';
       const bflashModels = [
+        'gemini-2.5-flash',
         'gemini-3.1-flash-lite',
         'gemini-3.8-flash',
         'gemini-flash-latest',
@@ -1550,7 +1572,7 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
             contents: fullPrompt,
             config: {
               systemInstruction,
-              temperature: 0.7,
+              temperature: 0.6,
             },
           });
           if (response.text?.trim()) {
@@ -1565,11 +1587,11 @@ Be warm, sharp, accurate, and helpful. Format answers clearly with concise bulle
       if (!replyText) {
         const q = promptText.toLowerCase();
         if (q.includes('voice') || q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('language') || q.includes('dialect')) {
-          replyText = `### 🎙️ How to Use the 56 Realistic Voices & Dialect Translator in B-Edit Studio\n1. Open **B-Edit Studio** and tap **Audio** at the bottom.\n2. Tap **Voice Cover** → **Tap to Record Voice Cover** and speak in English.\n3. Switch to **Voice Changer (56)** and tap any dialect or voice — including **🇳🇬 Nigerian Lagos Street Voice**, **🇳🇬 Igbo Language**, **🇳🇬 Hausa Language**, **🇳🇬 Yoruba Language**, **🇳🇬 Akwa Ibom (Ibibio/Efik)**, **🇳🇬 Nigerian Pidgin**, **👨 Realistic Male**, or **👩 Realistic Female**.\n4. B-Edit Studio will accurately translate 100% of what you said into that language/dialect with a real human voice and sync it to your video!`;
+          replyText = `🎙️ **Omo, see how the 56 Realistic Voices & Dialect Translator works:**\n1. Open **B-Edit Studio** and tap **Audio** → **Voice Cover**.\n2. Tap **Record Voice Cover** and talk in English.\n3. Tap any dialect: **🇳🇬 Igbo**, **🇳🇬 Yoruba**, **🇳🇬 Hausa**, **🇳🇬 Akwa Ibom**, or **🇳🇬 Lagos Street Pidgin**.\n4. B-Edit translates every single word into natural human speech and locks it to your timeline. Pure magic, zero stress!`;
         } else if (q.includes('voice note') || q.includes('message') || q.includes('chat') || q.includes('dm')) {
-          replyText = `### 🎤 Sending Voice Notes in Direct Messages\n1. Tap the **Messages** icon at the top right of BoostHub (or open any friend's chat).\n2. Tap the **Purple Microphone (🎤)** button next to the message box.\n3. Speak your message and tap **Send Voice Note** — your friend can play it back with live waveform scrubbing and **1x / 1.5x / 2x** speed control!`;
+          replyText = `🎤 **Voice Notes in Direct Messages (Sharp Sharp):**\n1. Tap **Messages** (or open any friend's chat).\n2. Press and hold the **Purple Microphone (🎤)** button.\n3. Drop your bars or gist and hit send — crisp audio delivered with live waveform scrubbing and 2x speed playback!`;
         } else {
-          replyText = `⚡ **B FLASH Smart Response**\n\nHere is what you need to know about **"${promptText}"**:\n- **On BoostHub:** You can use **B-Edit Studio** (56 realistic voices & Igbo/Hausa/Yoruba/Akwa Ibom/Pidgin dialect translator), send **Voice Notes** in Messages, watch **Capshots**, and earn/spend **Boost Points (BP)** in **B-Shop**.\n- Ask me any follow-up question on science, business, coding, Nigerian languages, or viral content creation and I will break it down step by step!`;
+          replyText = `⚡ **B FLASH Direct Answer:**\n\nHere is the exact breakdown for **"${promptText}"**:\n- **The Solution:** Whether it's viral content, tech, science, or life in Aba and Lagos, the key is execution with speed.\n- On BoostHub, you have **B-Edit Studio** (AI Cutout + 54 Voices), **Capshots** for vertical video dominance, and **B-Shop** to reward top creators with Aba-made trophies and badges.\nKeep creating, stay sharp, and let's win!`;
         }
       }
 
@@ -2289,10 +2311,47 @@ Break the transcription into short timed subtitle cues (3 to 6 words each) with 
 }
 Output ONLY valid JSON.`;
 
+        // Helper to deduplicate repeating n-grams (1-gram to 10-gram repeats)
+        const deduplicateNGramsLocal = (text: string): string => {
+          if (!text) return '';
+          let words = text.trim().split(/\s+/).filter(Boolean);
+          if (words.length <= 1) return text.trim();
+          let changed = true;
+          let iter = 0;
+          while (changed && iter < 10) {
+            changed = false;
+            iter++;
+            const maxN = Math.min(12, Math.floor(words.length / 2));
+            for (let n = maxN; n >= 1; n--) {
+              for (let i = 0; i <= words.length - 2 * n; i++) {
+                const w1 = words.slice(i, i + n).map((w) => w.toLowerCase().replace(/[^a-z0-9]/gi, '')).join(' ');
+                const w2 = words.slice(i + n, i + 2 * n).map((w) => w.toLowerCase().replace(/[^a-z0-9]/gi, '')).join(' ');
+                if (w1 && w1 === w2) {
+                  words.splice(i + n, n);
+                  changed = true;
+                  break;
+                }
+              }
+              if (changed) break;
+            }
+          }
+          const clean: string[] = [];
+          for (let i = 0; i < words.length; i++) {
+            const curr = words[i];
+            const prev = clean[clean.length - 1];
+            if (prev && prev.toLowerCase().replace(/[^a-z0-9]/gi, '') === curr.toLowerCase().replace(/[^a-z0-9]/gi, '')) {
+              continue;
+            }
+            clean.push(curr);
+          }
+          return clean.join(' ');
+        };
+
         const models = [
           'gemini-2.5-flash',
           'gemini-3.1-flash-lite',
-          'gemini-3.5-transcribe',
+          'gemini-3.8-flash',
+          'gemini-flash-latest',
         ];
         for (const model of models) {
           try {
@@ -2309,6 +2368,11 @@ Output ONLY valid JSON.`;
                   { text: prompt },
                 ],
               },
+              config: {
+                temperature: 0.1,
+                topP: 0.9,
+                responseMimeType: 'application/json',
+              },
             });
             const textResp =
               resp.candidates?.[0]?.content?.parts
@@ -2317,18 +2381,43 @@ Output ONLY valid JSON.`;
             const jsonMatch = textResp.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
               const parsed = JSON.parse(jsonMatch[0]);
-              if (parsed.transcript || (parsed.cues && parsed.cues.length > 0)) {
+              let cleanTranscript = deduplicateNGramsLocal(String(parsed.transcript || ''));
+              let cleanCues = Array.isArray(parsed.cues)
+                ? parsed.cues.map((c: any, idx: number) => {
+                    const startSec = typeof c.start === 'number' ? Number(c.start.toFixed(2)) : idx * 2.5;
+                    const endSec = typeof c.end === 'number' ? Number(c.end.toFixed(2)) : startSec + 2.4;
+                    return {
+                      start: startSec,
+                      end: endSec,
+                      text: deduplicateNGramsLocal(String(c.text || '')),
+                    };
+                  }).filter((c: any) => c.text.length > 0)
+                : [];
+
+              // If transcript was empty but cues exist, derive transcript
+              if (!cleanTranscript && cleanCues.length > 0) {
+                cleanTranscript = deduplicateNGramsLocal(cleanCues.map((c: any) => c.text).join(' '));
+              }
+
+              if (cleanTranscript || cleanCues.length > 0) {
                 return res.json({
                   ok: true,
-                  transcript: String(parsed.transcript || '').trim(),
-                  cues: Array.isArray(parsed.cues) ? parsed.cues : [],
+                  transcript: cleanTranscript,
+                  cues: cleanCues,
                 });
               }
             } else if (textResp.trim()) {
+              const cleanText = deduplicateNGramsLocal(textResp.trim());
               return res.json({
                 ok: true,
-                transcript: textResp.trim(),
-                cues: [],
+                transcript: cleanText,
+                cues: [
+                  {
+                    start: 0.0,
+                    end: Math.max(3.0, cleanText.split(' ').length * 0.4),
+                    text: cleanText,
+                  },
+                ],
               });
             }
           } catch {

@@ -32,6 +32,7 @@ import {
   StudioTransitionType,
 } from './StudioMediaEditor';
 import { getFontDesignPresetById } from '../data/fontStyles52';
+import { runPersonSegmentation } from '../utils/aiSegmentation';
 
 interface BEditStudioStageAndTimelineProps {
   project: BEditProjectState;
@@ -97,6 +98,7 @@ export const BEditStudioStageAndTimeline: React.FC<
 }) => {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const chromaCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const aiCutoutCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [dragging, setDragging] = useState<{
     type: 'sticker' | 'text' | 'pip';
     id: string;
@@ -107,6 +109,73 @@ export const BEditStudioStageAndTimeline: React.FC<
     project.clips[activeClipIndex] || project.clips[0];
 
   const totalDuration = getProjectTotalDuration(project);
+
+  // Real-time AI Person Cutout & Background removal (@mediapipe/selfie_segmentation modelSelection=1)
+  useEffect(() => {
+    const isAiCutoutActive =
+      activeClip?.aiBgMode === 'ai_cutout' &&
+      (Boolean(activeClip?.bgUrl) || Boolean(activeClip?.aiBgEnabled));
+
+    if (!isAiCutoutActive || !aiCutoutCanvasRef.current) return;
+    let cancelled = false;
+    let isProcessing = false;
+
+    const canvas = aiCutoutCanvasRef.current;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const processCutout = async () => {
+      if (cancelled || isProcessing || !ctx) return;
+      const srcEl =
+        activeClip.type === 'video' ? videoRef.current : imageRef.current;
+      if (!srcEl) return;
+
+      const w = 360;
+      const h = 640;
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+
+      isProcessing = true;
+      try {
+        const threshold =
+          activeClip.aiBgThreshold ??
+          (activeClip.aiBgSensitivity ? activeClip.aiBgSensitivity / 100 : 0.5);
+        const cutoutCanvas = await runPersonSegmentation(srcEl, threshold, w, h);
+        if (cutoutCanvas && !cancelled && ctx) {
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(cutoutCanvas, 0, 0, w, h);
+        }
+      } catch (err) {
+        console.warn('AI Cutout frame error:', err);
+      } finally {
+        isProcessing = false;
+      }
+    };
+
+    // Initial render
+    processCutout();
+
+    // Loop during playback or interval
+    const interval = window.setInterval(() => {
+      if (!cancelled && (isPlaying || activeClip?.type === 'photo')) {
+        processCutout();
+      }
+    }, isPlaying ? 50 : 600);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    activeClip?.aiBgMode,
+    activeClip?.bgUrl,
+    activeClip?.aiBgEnabled,
+    activeClip?.aiBgThreshold,
+    activeClip?.aiBgSensitivity,
+    activeClip?.type,
+    activeClip?.url,
+    isPlaying,
+    timelineTime,
+  ]);
 
   // Real-time Green-Screen / Chroma Key pixel processing onto canvas when enabled
   useEffect(() => {
@@ -399,7 +468,11 @@ export const BEditStudioStageAndTimeline: React.FC<
                       activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
                     }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
                     mixBlendMode: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && !activeClip.bgUrl ? 'screen' : undefined,
-                    opacity: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' ? 0.01 : 1,
+                    opacity:
+                      (activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key') ||
+                      (activeClip.aiBgMode === 'ai_cutout' && (activeClip.bgUrl || activeClip.aiBgEnabled))
+                        ? 0.01
+                        : 1,
                     position: 'relative',
                     zIndex: 10,
                   }}
@@ -423,7 +496,11 @@ export const BEditStudioStageAndTimeline: React.FC<
                       activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
                     }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
                     mixBlendMode: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && !activeClip.bgUrl ? 'screen' : undefined,
-                    opacity: activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' ? 0.01 : 1,
+                    opacity:
+                      (activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key') ||
+                      (activeClip.aiBgMode === 'ai_cutout' && (activeClip.bgUrl || activeClip.aiBgEnabled))
+                        ? 0.01
+                        : 1,
                     position: 'relative',
                     zIndex: 10,
                   }}
@@ -435,6 +512,22 @@ export const BEditStudioStageAndTimeline: React.FC<
               {activeClip.chromaKeyEnabled && activeClip.aiBgMode === 'chroma_key' && (
                 <canvas
                   ref={chromaCanvasRef}
+                  onClick={onTogglePlay}
+                  style={{
+                    transform: `translate(${activeClip.cropX + (activeClip.personPositionX || 0)}%, ${activeClip.cropY + (activeClip.personPositionY || 0)}%) rotate(${activeClip.rotation}deg) scale(${
+                      activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipH ? -1 : 1)
+                    }, ${activeClip.cropZoom * (activeClip.personScale || 1) * (activeClip.flipV ? -1 : 1)})`,
+                    position: 'absolute',
+                    zIndex: 15,
+                  }}
+                  className="inset-0 w-full h-full object-contain cursor-pointer pointer-events-auto"
+                />
+              )}
+
+              {/* Live AI Background Person Cutout Canvas (Full AI cutout with MediaPipe SelfieSegmentation - parlour/chair removed) */}
+              {activeClip.aiBgMode === 'ai_cutout' && (activeClip.bgUrl || activeClip.aiBgEnabled) && (
+                <canvas
+                  ref={aiCutoutCanvasRef}
                   onClick={onTogglePlay}
                   style={{
                     transform: `translate(${activeClip.cropX + (activeClip.personPositionX || 0)}%, ${activeClip.cropY + (activeClip.personPositionY || 0)}%) rotate(${activeClip.rotation}deg) scale(${
