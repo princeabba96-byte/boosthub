@@ -328,6 +328,9 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       );
     if (activeFilter === 'inventory') return getOwnedCount(item.code) > 0;
     return true;
+  }).sort((a, b) => {
+    if (activeFilter === 'gift') return a.costBp - b.costBp;
+    return 0;
   });
 
   if (loading) {

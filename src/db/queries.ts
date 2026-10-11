@@ -1115,7 +1115,7 @@ export async function togglePostLike(postId: number, userId: string) {
           entityId: String(postId),
         });
         await sendPushNotificationToUser(postRows[0].userId, {
-          title: 'New Like on BoostHub ❤️',
+          title: 'New Like on BoostHub â¤ï¸',
           body: notifBody,
           type: 'like',
           entityId: String(postId),
@@ -1188,7 +1188,7 @@ export async function recordPostShare(
         entityId: String(postId),
       });
       await sendPushNotificationToUser(postRows[0].userId, {
-        title: 'Your Content Was Shared 🔄',
+        title: 'Your Content Was Shared ð',
         body: `${actorName} shared your post.`,
         type: 'share',
         entityId: String(postId),
@@ -1344,7 +1344,7 @@ export async function addPostComment(
         entityId: String(postId),
       });
       await sendPushNotificationToUser(postRows[0].userId, {
-        title: `${notifTitle} on BoostHub 💬`,
+        title: `${notifTitle} on BoostHub ð¬`,
         body: notifBody,
         type: parentId ? 'reply' : 'comment',
         entityId: String(postId),
@@ -1454,7 +1454,7 @@ export async function toggleFollowUser(followerId: string, followingId: string) 
         entityId: followerId,
       });
       await sendPushNotificationToUser(followingId, {
-        title: 'New Follower on BoostHub 🎉',
+        title: 'New Follower on BoostHub ð',
         body: `${actorName} started following you.`,
         type: 'follow',
         entityId: followerId,
@@ -1630,7 +1630,7 @@ export async function handleFriendAction(
         entityId: userId,
       });
       await sendPushNotificationToUser(targetUserId, {
-        title: 'New Friend Request 👋',
+        title: 'New Friend Request ð',
         body: `${actorName} sent you a friend request.`,
         type: 'friend_request',
         entityId: userId,
@@ -1659,7 +1659,7 @@ export async function handleFriendAction(
         entityId: userId,
       });
       await sendPushNotificationToUser(rel.requesterId, {
-        title: 'Friend Request Accepted 🤝',
+        title: 'Friend Request Accepted ð¤',
         body: `${actorName} accepted your friend request.`,
         type: 'friend_accept',
         entityId: userId,
@@ -1713,11 +1713,13 @@ export async function getActiveStoriesFeed(viewerId: string) {
       .where(inArray(storyReplies.storyId, storyIds));
 
     const viewerProfileIds = Array.from(new Set(views.map((v) => v.viewerId)));
-    const viewerProfiles =
-      viewerProfileIds.length > 0
-        ? await db.select().from(profiles).where(inArray(profiles.id, viewerProfileIds))
+    const reactionUserIds = Array.from(new Set(reactions.map((r) => r.userId)));
+    const relatedProfileIds = Array.from(new Set([...viewerProfileIds, ...reactionUserIds]));
+    const relatedProfiles =
+      relatedProfileIds.length > 0
+        ? await db.select().from(profiles).where(inArray(profiles.id, relatedProfileIds))
         : [];
-    const viewerMap = new Map(viewerProfiles.map((v) => [v.id, v]));
+    const viewerMap = new Map(relatedProfiles.map((v) => [v.id, v]));
 
     return active.map((story) => {
       const storyViewsList = views.filter((v) => v.storyId === story.id);
@@ -1735,7 +1737,15 @@ export async function getActiveStoriesFeed(viewerId: string) {
         viewsCount: storyViewsList.length,
         hasViewed: storyViewsList.some((v) => v.viewerId === viewerId),
         viewers: storyViewsList.map((v) => viewerMap.get(v.viewerId)).filter(Boolean),
-        reactions: storyReactionsList,
+        reactions: storyReactionsList.map((reaction) => {
+          const reactor = viewerMap.get(reaction.userId);
+          return {
+            ...reaction,
+            username: reactor?.username || 'user',
+            displayName: reactor?.displayName || 'BoostHub User',
+            avatarUrl: reactor?.avatarUrl || '',
+          };
+        }),
         replies: storyRepliesList,
       };
     });
@@ -1999,7 +2009,7 @@ export async function sendDirectMessage(
       entityId: senderId,
     });
     await sendPushNotificationToUser(receiverId, {
-      title: `Message from ${senderName} ✉️`,
+      title: `Message from ${senderName} âï¸`,
       body: msgBody,
       type: 'message',
       entityId: senderId,
@@ -2020,8 +2030,8 @@ export async function sendDirectMessage(
       if (adminProfile && adminProfile.id !== senderId) {
         forwardedAdminId = adminProfile.id;
         const forwardedText = payload.content
-          ? `🤖 [Reply to BOOST BOT]: ${payload.content}`
-          : '🤖 [Reply to BOOST BOT]: (Sent a media attachment)';
+          ? `ð¤ [Reply to BOOST BOT]: ${payload.content}`
+          : 'ð¤ [Reply to BOOST BOT]: (Sent a media attachment)';
 
         const [fwdInserted] = await db
           .insert(messages)
@@ -2041,13 +2051,13 @@ export async function sendDirectMessage(
           userId: adminProfile.id,
           actorId: senderId,
           type: 'message',
-          title: `🤖 BOOST BOT Reply from ${senderName} (@${senderUsername})`,
+          title: `ð¤ BOOST BOT Reply from ${senderName} (@${senderUsername})`,
           body: msgBody,
           entityId: senderId,
         });
 
         await sendPushNotificationToUser(adminProfile.id, {
-          title: `🤖 BOOST BOT Reply from ${senderName}`,
+          title: `ð¤ BOOST BOT Reply from ${senderName}`,
           body: msgBody,
           type: 'boost_bot',
           entityId: senderId,
@@ -2776,7 +2786,7 @@ export async function getCreatorDashboardData(userId: string) {
     const postSeries = postsWithStats.slice(0, 10).map((p, idx) => ({
       postId: p.id,
       label: p.caption
-        ? p.caption.slice(0, 14) + (p.caption.length > 14 ? '…' : '')
+        ? p.caption.slice(0, 14) + (p.caption.length > 14 ? 'â¦' : '')
         : `Post #${p.id}`,
       caption: p.caption || `Post #${p.id}`,
       postType: p.postType,
@@ -3398,7 +3408,7 @@ export async function executeAdminModerationAction(
             actorId: BOOST_BOT_UID,
             type: 'badge',
             title: nextVerified
-              ? 'Verified Badge Granted ✓'
+              ? 'Verified Badge Granted â'
               : 'Verified Badge Removed',
             body: nextVerified
               ? 'Prince Abba granted the official BoostHub Verified Badge to your profile!'
@@ -3705,7 +3715,7 @@ export async function getBShopAndUserGiftsState(userId: string) {
         direction: 'received' as const,
         itemCode: r.itemCode,
         itemName: cat?.name || r.itemCode,
-        itemIcon: cat?.icon || '🎁',
+        itemIcon: cat?.icon || 'ð',
         itemRarity: cat?.rarity || 'Common',
         quantity: r.quantity,
         bpSpent: r.bpSpent,
@@ -3730,7 +3740,7 @@ export async function getBShopAndUserGiftsState(userId: string) {
           direction: 'sent' as const,
           itemCode: s.itemCode,
           itemName: cat?.name || s.itemCode,
-          itemIcon: cat?.icon || '🎁',
+          itemIcon: cat?.icon || 'ð',
           itemRarity: cat?.rarity || 'Common',
           quantity: s.quantity,
           bpSpent: s.bpSpent,
@@ -3890,9 +3900,9 @@ export async function purchaseBShopItem(
     state: updatedState,
     unboxedReward,
     message: unboxedReward
-      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
+      ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} Ã${unboxedReward.quantity}!`
       : targetCategory === 'gift'
-        ? `Purchased ${catalogItem.icon} ${catalogItem.name} ×${quantity}! Added to your Gift Inventory.`
+        ? `Purchased ${catalogItem.icon} ${catalogItem.name} Ã${quantity}! Added to your Gift Inventory.`
         : `Unlocked & equipped ${catalogItem.icon} ${catalogItem.name}!`,
   };
 }
@@ -3959,7 +3969,7 @@ export async function sendGiftToCreator(
 
       if (sender.boostPoints < bpNeeded) {
         throw new Error(
-          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} ×${quantity} requires ${bpNeeded.toLocaleString()} BP (you have ${sender.boostPoints.toLocaleString()} BP). Earn BP by posting, commenting, liking, or completing missions.`
+          `Not enough Boost Points! Sending ${giftItem.icon} ${giftItem.name} Ã${quantity} requires ${bpNeeded.toLocaleString()} BP (you have ${sender.boostPoints.toLocaleString()} BP). Earn BP by posting, commenting, liking, or completing missions.`
         );
       }
 
@@ -4043,7 +4053,7 @@ export async function sendGiftToCreator(
     await db.insert(creatorRewards).values({
       userId: receiverId,
       rewardType: 'gift_tribute',
-      title: `Received ${giftItem.icon} ${giftItem.name} ×${quantity} (+${totalBpCost.toLocaleString()} BP) from @${sender.username}`,
+      title: `Received ${giftItem.icon} ${giftItem.name} Ã${quantity} (+${totalBpCost.toLocaleString()} BP) from @${sender.username}`,
       pointsEarned: totalBpCost,
       status: 'unlocked',
     });
@@ -4058,8 +4068,8 @@ export async function sendGiftToCreator(
       : giftItem.name;
   const notifTitle = `${giftItem.icon} ${sender.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
   const notifBody = message.trim()
-    ? `"${message.trim()}" · You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
-    : `You earned ${giftItem.icon} ${giftItem.name} ×${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
+    ? `"${message.trim()}" Â· You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
+    : `You earned ${giftItem.icon} ${giftItem.name} Ã${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
 
   await db.insert(notifications).values({
     userId: receiverId,
@@ -4084,7 +4094,7 @@ export async function sendGiftToCreator(
   const updatedState = await getBShopAndUserGiftsState(senderId);
   return {
     state: updatedState,
-    message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
+    message: `Sent ${giftItem.icon} ${giftItem.name} Ã${quantity} to ${receiver.displayName}!`,
   };
 }
 
