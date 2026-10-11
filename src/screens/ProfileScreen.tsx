@@ -67,6 +67,22 @@ import { PostCard } from '../components/PostCard';
 import { CreatorDashboard } from '../components/CreatorDashboard';
 import { ProfessionalModeGuideModal } from '../components/ProfessionalModeGuideModal';
 import { formatCompactNumber, formatRelativeTime } from '../utils/format';
+import { UserBadgesProgressModal } from '../components/UserBadgesProgressModal';
+import {
+  USER_BADGES_CATALOG,
+  calculateUserBadges,
+  getHighestBadgeShield,
+  getBadgeByCode,
+} from '../data/userBadgesCatalog';
+import {
+  BronzeShieldFireringEditor,
+  SilverShieldEngagementMaster,
+  GoldShieldContentGod,
+  CrystalShieldDistantWinner,
+  HeroicGrandmasterBoostPro,
+  RookieFlameSkullIcon,
+  MasterPadlockIcon,
+} from '../components/BadgeShieldIcons';
 
 interface ProfileScreenProps {
   viewedUserId: string | null;
@@ -115,6 +131,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
   const [contentTab, setContentTab] = useState<
     'posts' | 'videos' | 'photos' | 'liked' | 'saved' | 'about'
   >(initialContentTab || 'posts');
+  const [badgesModalOpen, setBadgesModalOpen] = useState(false);
 
   // Followers / Following Modal
   const [followModalType, setFollowModalType] = useState<
@@ -788,21 +805,127 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </p>
               )}
 
-              {/* Creator Badges Showcase Bar */}
-              {profile.badges && profile.badges.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap pt-2">
-                  {profile.badges.map((b) => (
-                    <span
-                      key={b.id || b.code}
-                      className="px-2.5 py-1 rounded-xl bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-blue-500/20 border border-amber-400/40 text-[11px] font-bold text-amber-300 flex items-center gap-1 shadow-sm"
-                      title={b.description}
+              {/* Creator Badges Showcase & Season 23 Pass Bar */}
+              {(() => {
+                const userBadges =
+                  profile.badges && profile.badges.length > 0
+                    ? profile.badges
+                    : calculateUserBadges(profile);
+                const topShield = getHighestBadgeShield(userBadges);
+                const userXp = profile.xp || 0;
+                const maxTrackXp = 3000;
+                const xpProgressPct = Math.min(
+                  100,
+                  Math.round((userXp / maxTrackXp) * 100)
+                );
+
+                const renderHeaderShield = (code?: string) => {
+                  switch (code) {
+                    case 'boost_pro':
+                      return <HeroicGrandmasterBoostPro size={42} />;
+                    case 'distant_winner':
+                      return <CrystalShieldDistantWinner size={42} />;
+                    case 'content_god':
+                      return <GoldShieldContentGod size={42} />;
+                    case 'engagement_master':
+                      return <SilverShieldEngagementMaster size={42} />;
+                    case 'firering_editor':
+                      return <BronzeShieldFireringEditor size={42} />;
+                    case 'rookie':
+                      return <RookieFlameSkullIcon size={36} />;
+                    default:
+                      return null;
+                  }
+                };
+
+                return (
+                  <div className="pt-2.5 space-y-2">
+                    {/* Badge Chips & Level Shield */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {topShield && (
+                        <button
+                          type="button"
+                          onClick={() => setBadgesModalOpen(true)}
+                          className="hover:scale-105 transition-transform drop-shadow-md"
+                          title={`${topShield.name} (${topShield.levelLabel}) - Tap to view badges & progress`}
+                        >
+                          {renderHeaderShield(topShield.code)}
+                        </button>
+                      )}
+
+                      {userBadges.map((b) => {
+                        const isTop = b.code === 'top_creator';
+                        const isEarly = b.code === 'early_adopter';
+                        const isHelper = b.code === 'community_helper';
+                        const isPro = b.code === 'boost_pro';
+
+                        let badgeStyle =
+                          'bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-blue-500/20 border-amber-400/40 text-amber-300';
+                        let icon = <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
+
+                        if (isTop) {
+                          badgeStyle =
+                            'bg-gradient-to-r from-yellow-500/25 to-amber-600/25 border-yellow-400/50 text-yellow-300 font-extrabold';
+                          icon = <Trophy className="w-3.5 h-3.5 text-yellow-400 shrink-0" />;
+                        } else if (isEarly) {
+                          badgeStyle =
+                            'bg-gradient-to-r from-orange-500/25 to-red-600/25 border-orange-400/50 text-orange-300 font-extrabold';
+                          icon = <Sparkles className="w-3.5 h-3.5 text-orange-400 shrink-0" />;
+                        } else if (isHelper) {
+                          badgeStyle =
+                            'bg-gradient-to-r from-cyan-500/25 to-blue-600/25 border-cyan-400/50 text-cyan-300 font-extrabold';
+                          icon = <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />;
+                        } else if (isPro) {
+                          badgeStyle =
+                            'bg-gradient-to-r from-red-600/30 via-orange-600/30 to-amber-500/30 border-red-500/50 text-red-200 font-black';
+                          icon = <Trophy className="w-3.5 h-3.5 text-red-400 shrink-0" />;
+                        }
+
+                        return (
+                          <button
+                            key={b.id || b.code}
+                            type="button"
+                            onClick={() => setBadgesModalOpen(true)}
+                            className={`px-2.5 py-1 rounded-xl border text-[11px] font-bold flex items-center gap-1 shadow-sm hover:brightness-125 transition-all ${badgeStyle}`}
+                            title={b.description}
+                          >
+                            {icon}
+                            <span>{b.name}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Season 23 Pass Progress Bar */}
+                    <div
+                      onClick={() => setBadgesModalOpen(true)}
+                      className="p-2.5 rounded-2xl bg-gradient-to-r from-[#0B1224] via-[#111A38] to-[#0B1224] border border-cyan-500/30 hover:border-amber-400/50 cursor-pointer transition-all space-y-1.5 max-w-md group"
                     >
-                      <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span>{b.name}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-orange-300 flex items-center gap-1.5 uppercase tracking-wider">
+                          <Trophy className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Season 23 Pass • {topShield?.levelLabel || 'LV.1 ROOKIE'}</span>
+                        </span>
+                        <span className="text-[10px] font-mono font-bold text-cyan-300 group-hover:text-amber-300 transition-colors">
+                          {userXp} / {maxTrackXp} XP ({xpProgressPct}%)
+                        </span>
+                      </div>
+                      <div className="h-2 w-full bg-slate-900 rounded-full overflow-hidden border border-white/10">
+                        <div
+                          style={{ width: `${xpProgressPct}%` }}
+                          className="h-full bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 rounded-full transition-all duration-700 shadow-[0_0_12px_rgba(249,115,22,0.8)]"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 pt-0.5">
+                        <span>Earn XP by posting & engaging</span>
+                        <span className="text-amber-300 font-bold group-hover:underline">
+                          View Badges & Pass ➔
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -818,6 +941,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 }`}
               >
                 Profile
+              </button>
+              <button
+                onClick={() => setBadgesModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 bg-gradient-to-r from-amber-500/20 via-orange-500/20 to-red-500/20 border border-amber-400/40 text-amber-300 hover:text-white hover:border-amber-400 transition-all shadow-sm"
+              >
+                <Trophy className="w-3.5 h-3.5 text-amber-400" /> 🛡️ Badges & Pass
               </button>
               <button
                 onClick={() => setActiveMainMode('gifts')}
@@ -875,6 +1004,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setBadgesModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-300 transition-colors"
+              >
+                <Trophy className="w-3.5 h-3.5 text-amber-400" /> 🛡️ Badges
+              </button>
               {onOpenBShop && (
                 <button
                   onClick={() => onOpenBShop(profile)}
@@ -1682,31 +1817,104 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                 </div>
               )}
 
-              {profile.badges && profile.badges.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-white mb-2">
-                    Unlocked Badges
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {profile.badges.map((b) => (
-                      <div
-                        key={b.id}
-                        className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center gap-3"
-                      >
-                        <Award className="w-5 h-5 text-purple-400 shrink-0" />
-                        <div>
-                          <p className="text-xs font-semibold text-white">
-                            {b.name}
-                          </p>
-                          <p className="text-[11px] text-slate-400">
-                            {b.description}
-                          </p>
+              {/* Badges & Achievements System */}
+              {(() => {
+                const userBadges =
+                  profile.badges && profile.badges.length > 0
+                    ? profile.badges
+                    : calculateUserBadges(profile);
+                const earnedCodeSet = new Set(userBadges.map((b) => b.code));
+
+                const renderCardShield = (code: string) => {
+                  switch (code) {
+                    case 'boost_pro':
+                      return <HeroicGrandmasterBoostPro size={44} />;
+                    case 'distant_winner':
+                      return <CrystalShieldDistantWinner size={44} />;
+                    case 'content_god':
+                      return <GoldShieldContentGod size={44} />;
+                    case 'engagement_master':
+                      return <SilverShieldEngagementMaster size={44} />;
+                    case 'firering_editor':
+                      return <BronzeShieldFireringEditor size={44} />;
+                    case 'rookie':
+                      return <RookieFlameSkullIcon size={40} />;
+                    default:
+                      return (
+                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500 to-red-600 flex items-center justify-center text-white shadow-md">
+                          <Award className="w-5 h-5" />
                         </div>
+                      );
+                  }
+                };
+
+                return (
+                  <div className="space-y-4 pt-1">
+                    <div className="flex items-center justify-between pb-2 border-b border-white/10">
+                      <div>
+                        <h3 className="text-sm font-black text-white flex items-center gap-1.5">
+                          <Trophy className="w-4 h-4 text-amber-400" />
+                          <span>Season 23 Badges & Creator Achievements</span>
+                        </h3>
+                        <p className="text-[11px] text-slate-400">
+                          Work on the app to complete and earn prestige shields, XP, and badges.
+                        </p>
                       </div>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() => setBadgesModalOpen(true)}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-300 text-xs font-bold transition-colors inline-flex items-center gap-1"
+                      >
+                        <span>View Pass Track</span>
+                        <span>➔</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {USER_BADGES_CATALOG.map((catBadge) => {
+                        const isUnlocked = earnedCodeSet.has(catBadge.code);
+                        return (
+                          <div
+                            key={catBadge.code}
+                            onClick={() => setBadgesModalOpen(true)}
+                            className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
+                              isUnlocked
+                                ? 'bg-gradient-to-r from-white/[0.04] to-amber-950/20 border-amber-400/30 hover:border-amber-400/60 shadow-sm'
+                                : 'bg-white/[0.02] border-white/5 opacity-60 hover:opacity-80'
+                            }`}
+                          >
+                            <div className="shrink-0">
+                              {renderCardShield(catBadge.code)}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center justify-between gap-1">
+                                <p className="text-xs font-black text-white truncate">
+                                  {catBadge.name}
+                                </p>
+                                <span
+                                  className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
+                                    isUnlocked
+                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                      : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  {isUnlocked ? 'EARNED' : 'LOCKED'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-amber-400/90 font-bold mt-0.5">
+                                {catBadge.levelLabel}
+                              </p>
+                              <p className="text-[11px] text-slate-300 line-clamp-2 mt-0.5">
+                                {catBadge.requirementDescription}
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              )}
+                );
+              })()}
             </div>
           ) : filteredPosts.length === 0 ? (
             <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-10 text-center text-xs text-slate-400">
@@ -3228,6 +3436,17 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
             setShowProfModeGuideModal(false);
             setActiveMainMode('dashboard');
           }}
+        />
+      )}
+
+      {/* User Badges & Season Pass Progression Modal */}
+      {badgesModalOpen && (
+        <UserBadgesProgressModal
+          isOpen={badgesModalOpen}
+          onClose={() => setBadgesModalOpen(false)}
+          profile={profile}
+          isMe={isMe}
+          onRefreshProfile={loadProfileAndPosts}
         />
       )}
     </div>

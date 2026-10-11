@@ -16,6 +16,7 @@ import {
   getBShopItemByCode,
   rollMysteryBoxReward,
 } from '../data/bshopCatalog';
+import { calculateUserBadges } from '../data/userBadgesCatalog';
 import {
   dispatchRealPushNotification,
   showBrowserSystemNotification,
@@ -351,6 +352,21 @@ export function mapSupabaseRowToUserProfile(
     isFollowing,
     friendshipStatus,
     friendshipId,
+    badges: calculateUserBadges({
+      id: String(row.id),
+      xp: Number(row.xp ?? (isAbba ? 100200 : 0)),
+      postsCount: userPostsCount,
+      likesReceivedCount: baseLikes,
+      viewsReceivedCount: baseViews,
+      followersCount: totalFollowers,
+      friendsCount: Math.max(baseFriends, acceptedFriendsCount),
+      giftsReceivedCount: Number(meta.gifts_received_count ?? (isAbba ? 7992 : 0)),
+      boostPoints: isAbba ? 999999999 : Number((row as any).balance ?? row.boost_points ?? meta.balance ?? 0),
+      isAdmin: Boolean(isAbba || row.is_admin),
+      isVerified: Boolean(isAbba || meta.verified || row.creator_of_week),
+      createdAt: row.created_at || new Date().toISOString(),
+      equippedBadge: meta.equipped_badge || '',
+    }),
     createdAt: row.created_at || new Date().toISOString(),
   };
 }

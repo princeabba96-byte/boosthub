@@ -22,6 +22,7 @@ import { BShopUserState, UserProfile } from '../types';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
+import { calculateUserBadges } from '../data/userBadgesCatalog';
 
 interface BShopScreenProps {
   onSelectUser: (userId: string) => void;
@@ -838,6 +839,31 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
                                 <p className="text-[11px] text-slate-400 truncate">
                                   @{u.username}
                                 </p>
+                                {(() => {
+                                  const badges =
+                                    u.badges && u.badges.length > 0
+                                      ? u.badges
+                                      : calculateUserBadges(u);
+                                  if (badges.length === 0) return null;
+                                  return (
+                                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                                      {badges.slice(0, 3).map((b) => (
+                                        <span
+                                          key={b.id || b.code}
+                                          className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-500/15 text-amber-300 border border-amber-400/30 truncate max-w-[110px]"
+                                        >
+                                          {b.code === 'top_creator'
+                                            ? '⭐ Top Creator'
+                                            : b.code === 'early_adopter'
+                                              ? '🧭 Early Adopter'
+                                              : b.code === 'community_helper'
+                                                ? '👥 Community Helper'
+                                                : `🛡️ ${b.name}`}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
                             {isSelected ? (

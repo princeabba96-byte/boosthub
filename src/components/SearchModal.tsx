@@ -12,6 +12,19 @@ import {
 import { apiFetch } from '../services/api';
 import { CommunityItem, PostItem, UserProfile } from '../types';
 import { Avatar } from './Avatar';
+import {
+  calculateUserBadges,
+  getHighestBadgeShield,
+  getBadgeByCode,
+} from '../data/userBadgesCatalog';
+import {
+  BronzeShieldFireringEditor,
+  SilverShieldEngagementMaster,
+  GoldShieldContentGod,
+  CrystalShieldDistantWinner,
+  HeroicGrandmasterBoostPro,
+  RookieFlameSkullIcon,
+} from './BadgeShieldIcons';
 
 interface SearchModalProps {
   initialQuery?: string;
@@ -208,66 +221,139 @@ export const SearchModal: React.FC<SearchModalProps> = ({
                 results.people.length > 0 && (
                   <div className="space-y-2.5">
                     <h4 className="text-xs font-semibold text-slate-400">People</h4>
-                    {results.people.map((person) => (
-                      <button
-                        key={person.id}
-                        onClick={() => {
-                          apiFetch('/api/notifications/log-search', {
-                            method: 'POST',
-                            body: JSON.stringify({ targetUserId: person.id }),
-                          }).catch(() => {});
-                          onClose();
-                          onSelectUser(person.id);
-                        }}
-                        className="w-full flex items-center justify-between p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 text-left"
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <Avatar
-                            src={person.avatarUrl}
-                            name={person.displayName}
-                            size="sm"
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-sm font-semibold text-white truncate">
-                                {person.displayName}
-                              </span>
-                              {person.isVerified && (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                              )}
-                              {person.equippedBadge && (
-                                <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-[10px] font-bold text-amber-300 border border-amber-400/30">
-                                  🏅 {person.equippedBadge.replace('badge_', '').replace(/_/g, ' ')}
-                                </span>
+                    {results.people.map((person) => {
+                      const badges =
+                        person.badges && person.badges.length > 0
+                          ? person.badges
+                          : calculateUserBadges(person);
+                      const topShield = getHighestBadgeShield(badges);
+
+                      const renderMiniShield = (code?: string) => {
+                        switch (code) {
+                          case 'boost_pro':
+                            return <HeroicGrandmasterBoostPro size={32} />;
+                          case 'distant_winner':
+                            return <CrystalShieldDistantWinner size={32} />;
+                          case 'content_god':
+                            return <GoldShieldContentGod size={32} />;
+                          case 'engagement_master':
+                            return <SilverShieldEngagementMaster size={32} />;
+                          case 'firering_editor':
+                            return <BronzeShieldFireringEditor size={32} />;
+                          case 'rookie':
+                            return <RookieFlameSkullIcon size={28} />;
+                          default:
+                            return null;
+                        }
+                      };
+
+                      return (
+                        <button
+                          key={person.id}
+                          onClick={() => {
+                            apiFetch('/api/notifications/log-search', {
+                              method: 'POST',
+                              body: JSON.stringify({ targetUserId: person.id }),
+                            }).catch(() => {});
+                            onClose();
+                            onSelectUser(person.id);
+                          }}
+                          className="w-full flex items-center justify-between p-3 rounded-2xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/10 hover:border-amber-400/40 text-left transition-all group"
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="relative shrink-0">
+                              <Avatar
+                                src={person.avatarUrl}
+                                name={person.displayName}
+                                size="sm"
+                              />
+                              {topShield && (
+                                <div className="absolute -bottom-1 -right-1 drop-shadow-md">
+                                  {renderMiniShield(topShield.code)}
+                                </div>
                               )}
                             </div>
-                            <p className="text-xs text-slate-400 truncate">
-                              @{person.username}
-                            </p>
-                            {person.badges && person.badges.length > 0 && (
-                              <div className="flex items-center gap-1 mt-1 flex-wrap">
-                                {person.badges.slice(0, 3).map((b) => (
-                                  <span
-                                    key={b.id || b.code}
-                                    className="px-1.5 py-0.5 rounded bg-purple-500/20 text-[9px] font-semibold text-purple-300 border border-purple-500/30 truncate max-w-[120px]"
-                                  >
-                                    🎖️ {b.name}
-                                  </span>
-                                ))}
-                                {person.badges.length > 3 && (
-                                  <span className="text-[9px] text-slate-400">
-                                    +{person.badges.length - 3} more
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-sm font-semibold text-white truncate group-hover:text-amber-300 transition-colors">
+                                  {person.displayName}
+                                </span>
+                                {person.isVerified && (
+                                  <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                                )}
+                                {topShield && (
+                                  <span className="px-1.5 py-0.5 rounded-md bg-amber-500/20 text-[9px] font-extrabold text-amber-300 border border-amber-400/40">
+                                    {topShield.level > 0 ? `LV.${topShield.level}` : 'PRESTIGE'}
                                   </span>
                                 )}
                               </div>
-                            )}
+                              <p className="text-xs text-slate-400 truncate">
+                                @{person.username}
+                              </p>
+                              {badges.length > 0 && (
+                                <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                                  {badges.slice(0, 4).map((b) => {
+                                    const isTopCreator = b.code === 'top_creator';
+                                    const isEarlyAdopter = b.code === 'early_adopter';
+                                    const isCommunityHelper = b.code === 'community_helper';
+                                    const isGrandmaster = b.code === 'boost_pro';
+
+                                    let badgeStyle =
+                                      'bg-slate-800 text-slate-300 border-slate-700';
+                                    let badgeEmoji = '🎖️';
+
+                                    if (isTopCreator) {
+                                      badgeStyle =
+                                        'bg-amber-500/20 text-amber-300 border-amber-400/40 font-bold';
+                                      badgeEmoji = '⭐';
+                                    } else if (isEarlyAdopter) {
+                                      badgeStyle =
+                                        'bg-orange-500/20 text-orange-300 border-orange-400/40 font-bold';
+                                      badgeEmoji = '🧭';
+                                    } else if (isCommunityHelper) {
+                                      badgeStyle =
+                                        'bg-cyan-500/20 text-cyan-300 border-cyan-400/40 font-bold';
+                                      badgeEmoji = '👥';
+                                    } else if (isGrandmaster) {
+                                      badgeStyle =
+                                        'bg-red-500/20 text-red-300 border-red-500/40 font-bold';
+                                      badgeEmoji = '👑';
+                                    } else if (b.code === 'content_god') {
+                                      badgeStyle =
+                                        'bg-yellow-500/20 text-yellow-300 border-yellow-400/40';
+                                      badgeEmoji = '🛡️';
+                                    } else if (b.code === 'distant_winner') {
+                                      badgeStyle =
+                                        'bg-sky-500/20 text-sky-300 border-sky-400/40';
+                                      badgeEmoji = '💎';
+                                    }
+
+                                    return (
+                                      <span
+                                        key={b.id || b.code}
+                                        className={`px-1.5 py-0.5 rounded text-[9px] border truncate max-w-[130px] flex items-center gap-0.5 ${badgeStyle}`}
+                                        title={b.description}
+                                      >
+                                        <span>{badgeEmoji}</span>
+                                        <span>{b.name}</span>
+                                      </span>
+                                    );
+                                  })}
+                                  {badges.length > 4 && (
+                                    <span className="text-[9px] text-slate-400">
+                                      +{badges.length - 4} more
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <span className="text-xs text-blue-400 font-medium whitespace-nowrap ml-2">
-                          View Profile
-                        </span>
-                      </button>
-                    ))}
+                          <span className="text-xs text-blue-400 group-hover:text-amber-300 font-medium whitespace-nowrap ml-2">
+                            View Profile
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
 

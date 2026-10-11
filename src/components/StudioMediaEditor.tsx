@@ -1371,7 +1371,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
 
     try {
       const recognition = new SpeechRecognitionClass();
-      recognition.continuous = false;
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = 'en-US';
 
@@ -1384,7 +1384,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
           try {
             recognition.stop();
           } catch {}
-        }, 700);
+        }, 10000);
       };
 
       recognition.onstart = () => {
@@ -1446,7 +1446,10 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
         }
       };
 
-      recognition.onerror = () => {
+      recognition.onerror = (event: any) => {
+        if (event && event.error === 'no-speech') {
+          return;
+        }
         if (vadTimer) clearTimeout(vadTimer);
         setIsRecordingSpeech(false);
       };
@@ -1454,7 +1457,7 @@ export const StudioMediaEditor: React.FC<StudioMediaEditorProps> = ({
       recognition.onend = () => {
         if (vadTimer) clearTimeout(vadTimer);
         setIsRecordingSpeech(false);
-        setSpeechTranscript((prev) => deduplicateNGrams(prev));
+        setSpeechTranscript((prev) => deduplicateNGrams(prev.trim()));
       };
 
       speechRecognitionRef.current = recognition;

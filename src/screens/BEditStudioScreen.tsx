@@ -46,6 +46,7 @@ import {
   Hash,
   Rewind,
   Palette,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   BEditBottomTab,
@@ -129,6 +130,7 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
   // Hidden file inputs
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryImageInputRef = useRef<HTMLInputElement | null>(null);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const extractVideoInputRef = useRef<HTMLInputElement | null>(null);
   const pipInputRef = useRef<HTMLInputElement | null>(null);
@@ -1622,8 +1624,8 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
 
     try {
       const recognition = new SpeechRec();
-      // Set continuous = false to prevent infinite looping and interim result pollution
-      recognition.continuous = false;
+      // Continuous speech recognition allows creators to speak uninterrupted
+      recognition.continuous = true;
       recognition.interimResults = true;
       recognition.lang = sttLanguage;
 
@@ -1633,20 +1635,21 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         if (sttSilenceTimerRef.current) {
           window.clearTimeout(sttSilenceTimerRef.current);
         }
-        // VAD with 700ms silence stop to finalize phrase
+        // Extended 10s idle inactivity timer so creator can pause and breathe while speaking
         sttSilenceTimerRef.current = window.setTimeout(() => {
           if (recognition) {
             try {
               recognition.stop();
             } catch {}
           }
-        }, 700);
+        }, 10000);
       };
 
       recognition.onstart = () => {
         setSttIsRecording(true);
         setSttInterimTranscript('');
         resetSilenceVADTimer();
+        showToast('🎙️ Microphone recording active! Speak into your mic...', 'info');
       };
 
       recognition.onresult = (event: any) => {
@@ -1660,19 +1663,28 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
             interim += item[0].transcript + ' ';
           }
         }
-        const cleanedFinal = deduplicateNGrams(finalAccumulated);
+        const cleanedFinal = deduplicateNGrams(finalAccumulated.trim());
         if (cleanedFinal) {
           setSttTranscript(cleanedFinal);
         }
-        setSttInterimTranscript(deduplicateNGrams(interim));
+        setSttInterimTranscript(deduplicateNGrams(interim.trim()));
       };
 
-      recognition.onerror = () => {
+      recognition.onerror = (event: any) => {
+        // 'no-speech' is a normal transient pause during continuous recording; do not terminate
+        if (event && event.error === 'no-speech') {
+          return;
+        }
         if (sttSilenceTimerRef.current) {
           window.clearTimeout(sttSilenceTimerRef.current);
           sttSilenceTimerRef.current = null;
         }
         setSttIsRecording(false);
+        if (event?.error === 'not-allowed') {
+          showToast('Microphone permission denied. Please allow microphone access in your browser.', 'error');
+        } else if (event?.error && event.error !== 'aborted') {
+          showToast(`Speech recognition: ${event.error}`, 'info');
+        }
       };
 
       recognition.onend = () => {
@@ -1682,14 +1694,14 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
         }
         setSttIsRecording(false);
         setSttInterimTranscript('');
-        setSttTranscript((prev) => deduplicateNGrams(prev));
+        setSttTranscript((prev) => deduplicateNGrams(prev.trim()));
       };
 
       sttRecognitionRef.current = recognition;
       recognition.start();
-    } catch {
+    } catch (err: any) {
       setSttIsRecording(false);
-      showToast('Could not access microphone. Please check permissions.', 'error');
+      showToast(err?.message || 'Could not access microphone. Please check permissions.', 'error');
     }
   };
 
@@ -2078,6 +2090,16 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
   return (
     <div className="max-w-lg mx-auto px-3 py-3 pb-28 space-y-3 select-none">
       {/* Hidden File Inputs */}
+      {/* 1. Direct Gallery Photo Input */}
+      <input
+        ref={galleryImageInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif,image/*"
+        multiple
+        onChange={handleAddMediaFiles}
+        className="hidden"
+      />
+      {/* 2. Generic Video/Media Input */}
       <input
         ref={mediaInputRef}
         type="file"
@@ -2424,14 +2446,25 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
               <span className="text-xs font-bold text-white">
                 Media, Trim, Crop & Aspect Ratio
               </span>
-              <button
-                type="button"
-                onClick={() => mediaInputRef.current?.click()}
-                className="px-3 py-1.5 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] text-white text-xs font-bold inline-flex items-center gap-1.5"
-              >
-                <Upload className="w-3.5 h-3.5" />
-                <span>Add Video / Photo</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => galleryImageInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow-sm"
+                  title="Directly select photos from your device Photo Gallery"
+                >
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  <span>Gallery Photo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => mediaInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] text-white text-xs font-bold inline-flex items-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Add Video</span>
+                </button>
+              </div>
             </div>
 
             {/* Aspect Ratio Selector: 9:16, 1:1, 16:9, 4:5 */}

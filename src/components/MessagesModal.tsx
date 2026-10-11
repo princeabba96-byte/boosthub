@@ -15,6 +15,7 @@ import {
   Play,
   Pause,
   Volume2,
+  Video,
 } from 'lucide-react';
 import {
   ConversationSummary,
@@ -202,6 +203,8 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
   const [isRecordingVoiceNote, setIsRecordingVoiceNote] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryImageInputRef = useRef<HTMLInputElement>(null);
+  const videoFileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
@@ -1068,6 +1071,25 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                   </div>
                 )}
 
+                {/* 1. Dedicated Gallery Photo input (bypasses device media picker directly into Photo Gallery) */}
+                <input
+                  ref={galleryImageInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/*"
+                  onChange={handleUploadAttachment}
+                  className="hidden"
+                />
+
+                {/* 2. Dedicated Video input */}
+                <input
+                  ref={videoFileInputRef}
+                  type="file"
+                  accept="video/mp4,video/webm,video/*"
+                  onChange={handleUploadAttachment}
+                  className="hidden"
+                />
+
+                {/* 3. General Attachment fallback */}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1105,14 +1127,26 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                   </div>
                 ) : (
                   <div className="flex items-center gap-2">
+                    {/* Direct Gallery Photo Button */}
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => galleryImageInputRef.current?.click()}
                       disabled={uploadingMedia}
-                      className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center"
-                      title="Send Photo or Video"
+                      className="min-h-[42px] px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 flex items-center justify-center gap-1.5 transition-colors"
+                      title="Send Picture from Gallery"
                     >
                       <ImageIcon className="w-4 h-4" />
+                      <span className="text-[11px] font-bold hidden sm:inline">Gallery</span>
+                    </button>
+                    {/* Send Video Button */}
+                    <button
+                      type="button"
+                      onClick={() => videoFileInputRef.current?.click()}
+                      disabled={uploadingMedia}
+                      className="min-h-[42px] min-w-[42px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center transition-colors"
+                      title="Send Video"
+                    >
+                      <Video className="w-4 h-4 text-blue-400" />
                     </button>
                     <button
                       type="button"
