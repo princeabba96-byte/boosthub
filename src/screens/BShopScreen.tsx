@@ -328,6 +328,10 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       );
     if (activeFilter === 'inventory') return getOwnedCount(item.code) > 0;
     return true;
+  }).sort((a, b) => {
+    // Make the gift tab easy to browse: the lowest Boost Point cost comes first.
+    if (activeFilter === 'gift') return a.costBp - b.costBp;
+    return 0;
   });
 
   if (loading) {
