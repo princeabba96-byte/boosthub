@@ -253,7 +253,7 @@ export interface StoryItem {
   viewsCount: number;
   hasViewed: boolean;
   viewers: UserProfile[];
-  reactions: Array<{ id: any; userId: string; reaction: string }>;
+  reactions: Array<{ id: any; userId: string; reaction: string; username?: string; displayName?: string; avatarUrl?: string }>;
   replies: Array<{ id: any; userId: string; content: string; createdAt: string }>;
 }
 
