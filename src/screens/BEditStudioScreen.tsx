@@ -2635,15 +2635,15 @@ export const BEditStudioScreen: React.FC<BEditStudioScreenProps> = ({
                     <span className="text-[11px] text-slate-400 mr-1">
                       Speed:
                     </span>
-                    {[0.5, 0.75, 1, 1.5, 2].map((sp) => (
+                    {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3].map((sp) => (
                       <button
                         key={sp}
                         type="button"
                         onClick={() => updateActiveClip({ speed: sp })}
-                        className={`px-2.5 py-1.5 rounded-lg text-xs font-bold ${
+                        className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
                           activeClip.speed === sp
-                            ? 'bg-[#4A90E2] text-white'
-                            : 'bg-white/5 text-slate-300'
+                            ? 'bg-[#4A90E2] text-white shadow-sm'
+                            : 'bg-white/5 text-slate-300 hover:bg-white/10'
                         }`}
                       >
                         {sp}x

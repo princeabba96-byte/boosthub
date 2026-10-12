@@ -2125,8 +2125,12 @@ export async function getUserNotifications(userId: string) {
       .orderBy(desc(notifications.createdAt))
       .limit(60);
 
+    const filteredRows = rows.filter(
+      (r) => !(r.actorId && r.actorId === userId && r.type !== 'system' && r.type !== 'mission')
+    );
+
     const actorIds = Array.from(
-      new Set(rows.map((r) => r.actorId).filter(Boolean) as string[])
+      new Set(filteredRows.map((r) => r.actorId).filter(Boolean) as string[])
     );
     const actors =
       actorIds.length > 0
@@ -2134,7 +2138,7 @@ export async function getUserNotifications(userId: string) {
         : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
 
-    return rows.map((n) => ({
+    return filteredRows.map((n) => ({
       ...n,
       actor: n.actorId ? actorMap.get(n.actorId) || null : null,
     }));

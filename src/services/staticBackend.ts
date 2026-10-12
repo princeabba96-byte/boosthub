@@ -3171,7 +3171,13 @@ export async function handleStaticBackendRequest<T = any>(
           n.type !== 'dm' &&
           n.type !== 'gift_tx' &&
           n.type !== 'ai_voice_req' &&
-          n.type !== 'ai_voice_res'
+          n.type !== 'ai_voice_res' &&
+          !(
+            n.actor_user &&
+            normalizeTargetUserId(String(n.actor_user)) === currentUserId &&
+            n.type !== 'system' &&
+            n.type !== 'mission'
+          )
       )
       .map((n) => {
         const actorId = n.actor_user

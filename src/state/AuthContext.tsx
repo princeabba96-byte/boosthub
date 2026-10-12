@@ -288,10 +288,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (row.type === 'gift_tx' || row.type === 'test_rt') return;
 
-      const isForMe =
-        String(row.target_user) === userProfile.id ||
-        String(row.actor_user) === userProfile.id;
-      if (!isForMe) return;
+      // STRICT PRIVACY: ONLY the recipient target_user receives the notification!
+      // The actor who liked or commented NEVER receives an alert about their own action!
+      const isTargetForMe = String(row.target_user) === userProfile.id;
+      if (!isTargetForMe) return;
+
+      // Do NOT notify if actor and target are the same (self-action), except system missions
+      if (
+        row.actor_user &&
+        String(row.actor_user) === userProfile.id &&
+        row.type !== 'mission' &&
+        row.type !== 'system'
+      ) {
+        return;
+      }
 
       const notifType = String(row.type || 'notification').toLowerCase();
       let deepLink = '?tab=notifications';

@@ -119,11 +119,17 @@ export const requireAdmin = async (
   }
   try {
     const profile = await getProfileById(req.user.uid);
-    const isOwnerEmail =
-      String(profile?.email || req.user.email || '')
-        .trim()
-        .toLowerCase() === 'princeabba96@gmail.com';
-    if (!profile || !isOwnerEmail || (!profile.isAdmin && profile.role !== 'admin')) {
+    const email = String(profile?.email || req.user.email || '').trim().toLowerCase();
+    const username = String(profile?.username || '').trim().toLowerCase();
+    const isOwner =
+      email === 'pchukwuka114@gmail.com' ||
+      email === 'princeabba96@gmail.com' ||
+      username === 'princeabba96-byte' ||
+      username === 'princeabba' ||
+      Boolean(profile?.isAdmin) ||
+      profile?.role === 'admin';
+
+    if (!isOwner) {
       return res.status(403).json({ error: 'Forbidden: Administrator access required' });
     }
     next();

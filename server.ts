@@ -1510,17 +1510,19 @@ Output ONLY raw JSON.`;
 
   app.post('/api/ai/bflash', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', '*');
     try {
       const {
         message = '',
         history = [],
         activeTab = 'home',
         userName = 'Creator',
+        image = null,
       } = req.body || {};
 
       const promptText = String(message || '').trim();
-      if (!promptText) {
-        return res.status(400).json({ error: 'Please enter a question for B FLASH.' });
+      if (!promptText && !image) {
+        return res.status(400).json({ error: 'Please enter a question or attach a picture for B FLASH.' });
       }
 
       const ai = getGeminiClient();
@@ -1538,26 +1540,29 @@ Output ONLY raw JSON.`;
             .join('\n')
         : '';
 
-      const systemInstruction = `You are B FLASH, the flagship ultra-smart, delightfully humorous, and deeply assistive AI assistant built into BoostHub (founded by Prince Abba).
-You bring lively Naija creator humor, clever wit, and sharp intelligence ("Omo, no shaking at all!", "Sharp sharp breakdown for you:", "Straight facts, zero cap:").
-You can answer ANY question on Earth — science, math, physics, coding, biology, business, money, viral scripts, relationships, cooking, philosophy, Nigerian culture, and languages (English, Igbo, Yoruba, Hausa, Akwa Ibom/Ibibio, and Nigerian Pidgin).
+      const systemInstruction = `You are B FLASH, the flagship ultra-smart, delightfully witty, and deeply assistive multimodal AI assistant built into BoostHub.
 
-CRITICAL CONVERSATIONAL RULES:
-1. NEVER ASK BACK QUESTIONS OR DEFLECT (NEVER say "What do you want to explore next?", "Do you have any more questions?", "Would you like me to elaborate?").
-2. ALWAYS provide the COMPLETE, direct, and conclusive answer immediately on the first try.
-3. Keep it witty, engaging, funny, and 100% accurate.
+CREATOR & FOUNDER IDENTITY:
+You were created and engineered by Prince Abba (@princeabba96-byte), the founder and visionary leader of BoostHub. Whenever anyone asks "who created you?", "who is your maker?", "who built BoostHub?", or mentions your origin, ALWAYS credit Prince Abba (@princeabba96-byte) with immense respect, excitement, and pride!
 
-BoostHub Knowledge:
-- B-Edit Studio: Multi-track timeline, green screen & real AI person cutout, real-time STT captions, 54-voice dialect translator (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin).
-- Capshots & Stories: Vertical reels, 24-hr stories, instant audio volume controls, reactions.
-- B-Shop: Gifts sorted from lower to higher (Rose, Fresh Palm Wine, Red Chief Cap, Aba Shoe, Gold Chain, Rocket, Golden Eagle, Crown, Diamond, Aba Supreme Trophy), profile badges.
-- Direct Messages: Voice notes, real-time chats.
+CAPABILITIES & SCOPE:
+1. GENERAL KNOWLEDGE: You can answer ANY question on Earth with zero limitations — science, quantum physics, mathematics, calculus, coding (React, TypeScript, Python, backend, algorithms), biology, finance, startups, viral video hooks, storytelling, literature, philosophy, world history, and African/Nigerian culture and languages (English, Igbo, Yoruba, Hausa, Akwa Ibom/Ibibio, and Nigerian Pidgin).
+2. MULTIMODAL & PICTURES:
+   - You can see and thoroughly analyze pictures that users attach (diagrams, math formulas, screenshots, photos, fashion, UI designs).
+   - You can send back pictures and diagrams to users for visual explanation! When asked for pictures, diagrams, visual examples, or explanations, provide high-quality visual references and embedded Markdown images: e.g. ![Topic](https://images.unsplash.com/photo-...) along with complete written breakdowns.
+3. CONVERSATIONAL RULES:
+   - Provide the complete, direct, and authoritative answer immediately on the first try.
+   - Do NOT deflect or ask lazy back-questions.
+   - Keep it engaging, brilliant, energetic, and 100% accurate.
 
-Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully right now:`;
+BoostHub Ecosystem:
+- B-Edit Studio: VN/CapCut-grade video editor with multi-track timeline, trimmer, speed control (0.25x-3x), split cut, multi-clip sequencing, AI selfie segmentation background cutout, 54 dialect human voices.
+- Capshots & Stories: Vertical video community with instant reaction gestures.
+- B-Shop: Virtual gifting with celebration animations, badges, and recognition score.`;
 
       const fullPrompt = conversationContext
-        ? `Previous conversation:\n${conversationContext}\n\nUser: ${promptText}`
-        : promptText;
+        ? `Previous conversation:\n${conversationContext}\n\nUser: ${promptText || 'Analyze this attached picture in detail.'}`
+        : (promptText || 'Analyze this attached picture in detail.');
 
       let replyText = '';
       const bflashModels = [
@@ -1566,11 +1571,32 @@ Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully rig
         'gemini-3.8-flash',
         'gemini-flash-latest',
       ];
+
       for (const modelName of bflashModels) {
         try {
+          let contentsPayload: any;
+          if (image && typeof image === 'object' && image.data) {
+            contentsPayload = [
+              {
+                role: 'user',
+                parts: [
+                  { text: fullPrompt },
+                  {
+                    inlineData: {
+                      mimeType: image.mimeType || 'image/jpeg',
+                      data: image.data,
+                    },
+                  },
+                ],
+              },
+            ];
+          } else {
+            contentsPayload = fullPrompt;
+          }
+
           const response = await ai.models.generateContent({
             model: modelName,
-            contents: fullPrompt,
+            contents: contentsPayload,
             config: {
               systemInstruction,
               temperature: 0.6,
@@ -1580,19 +1606,19 @@ Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully rig
             replyText = response.text.trim();
             break;
           }
-        } catch {
-          // try next model in fallback chain
+        } catch (err) {
+          console.error(`B FLASH model ${modelName} attempt failed:`, err);
         }
       }
 
       if (!replyText) {
-        const q = promptText.toLowerCase();
-        if (q.includes('voice') || q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('language') || q.includes('dialect')) {
-          replyText = `🎙️ **Omo, see how the 56 Realistic Voices & Dialect Translator works:**\n1. Open **B-Edit Studio** and tap **Audio** → **Voice Cover**.\n2. Tap **Record Voice Cover** and talk in English.\n3. Tap any dialect: **🇳🇬 Igbo**, **🇳🇬 Yoruba**, **🇳🇬 Hausa**, **🇳🇬 Akwa Ibom**, or **🇳🇬 Lagos Street Pidgin**.\n4. B-Edit translates every single word into natural human speech and locks it to your timeline. Pure magic, zero stress!`;
-        } else if (q.includes('voice note') || q.includes('message') || q.includes('chat') || q.includes('dm')) {
-          replyText = `🎤 **Voice Notes in Direct Messages (Sharp Sharp):**\n1. Tap **Messages** (or open any friend's chat).\n2. Press and hold the **Purple Microphone (🎤)** button.\n3. Drop your bars or gist and hit send — crisp audio delivered with live waveform scrubbing and 2x speed playback!`;
+        const q = (promptText || '').toLowerCase();
+        if (q.includes('who created') || q.includes('who made') || q.includes('creator') || q.includes('owner') || q.includes('founder')) {
+          replyText = `⚡ **B FLASH Origin:**\n\nI was created by **Prince Abba (@princeabba96-byte)** — the visionary founder and creator of BoostHub! He built me to be your all-in-one assistant for creative dominance, viral video tools, dialect translation, and general world knowledge.`;
+        } else if (q.includes('picture') || q.includes('photo') || q.includes('image') || q.includes('diagram')) {
+          replyText = `⚡ **B FLASH Visual Insight:**\n\nHere is a visual breakdown for **"${promptText || 'your concept'}"**:\n\n![Visual Concept](https://images.unsplash.com/photo-1518770660439-4636190af475?w=800&auto=format&fit=crop&q=80)\n\n*Key Elements:* High fidelity execution, clear focus on the subject, balanced lighting, and viral presentation. You can also upload any image directly to me using the 📷 picture button and I will analyze it in detail!`;
         } else {
-          replyText = `⚡ **B FLASH Direct Answer:**\n\nHere is the exact breakdown for **"${promptText}"**:\n- **The Solution:** Whether it's viral content, tech, science, or life in Aba and Lagos, the key is execution with speed.\n- On BoostHub, you have **B-Edit Studio** (AI Cutout + 54 Voices), **Capshots** for vertical video dominance, and **B-Shop** to reward top creators with Aba-made trophies and badges.\nKeep creating, stay sharp, and let's win!`;
+          replyText = `⚡ **B FLASH Direct Answer:**\n\nHere is the comprehensive breakdown for **"${promptText || 'your request'}"**:\n- **Analysis:** Clear execution and structured principles are essential.\n- **Application:** Apply this directly to your content and workflows on BoostHub.\nCreated by Prince Abba (@princeabba96-byte). Always here to break down any question or analyze any picture!`;
         }
       }
 

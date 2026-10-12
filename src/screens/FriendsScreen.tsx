@@ -112,6 +112,9 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
       clean === 'eaada352-5704-4566-a7a7-88df80853ada' ||
       clean === 'abba' ||
       clean === 'princeabba' ||
+      clean === 'princeabba96-byte' ||
+      clean === 'pchukwuka114@gmail.com' ||
+      clean === 'princeabba96@gmail.com' ||
       clean === 'bh_5c82dc8e3aa243a28413'
     ) {
       return 'eaada352-5704-4566-a7a7-88df80853ada';
