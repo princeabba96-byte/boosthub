@@ -278,20 +278,6 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       });
       setShopState(res.state);
       showToast(res.message, 'success');
-      const recipientUser = creators.find((c) => c.id === selectedRecipientId);
-      window.dispatchEvent(
-        new CustomEvent('boosthub:gift-celebration', {
-          detail: {
-            id: `gift_sent_${Date.now()}`,
-            senderName: userProfile?.displayName || 'You',
-            receiverName: recipientUser?.displayName || 'Creator',
-            itemCode: selectedGiftModalItem.code,
-            quantity: giftQuantity,
-            message: giftMessage,
-            badgeUnlocked: 'Gift Sent! +Creator Standing & Badges Unlocked',
-          },
-        })
-      );
       setSelectedGiftModalItem(null);
     } catch (err: any) {
       showToast(err.message || 'Could not send gift.', 'error');

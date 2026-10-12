@@ -323,6 +323,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         } else {
           showToast(`${row.title || 'Alert'}: ${row.body || ''}`, 'info');
         }
+
+        // Trigger Gift Celebration animation exclusively on the RECEIVER's screen
+        if (notifType === 'gift' || notifType === 'badge' || row.type === 'gift_tx') {
+          window.dispatchEvent(
+            new CustomEvent('boosthub:gift-celebration', {
+              detail: {
+                id: `gift_recv_${rowId}_${Date.now()}`,
+                senderName: row.title || 'A Supporter',
+                receiverName: userProfile.displayName || 'You',
+                itemCode: row.subscription?.itemCode || 'gift_box',
+                quantity: row.subscription?.quantity || 1,
+                message: row.body || 'You received a virtual gift!',
+                badgeUnlocked: 'Gift Received! +XP & Recognition',
+              },
+            })
+          );
+        }
       }
 
       showBrowserSystemNotification(

@@ -781,8 +781,9 @@ async function startServer() {
 
   app.get('/api/communities/:id', requireAuth, async (req: AuthRequest, res) => {
     try {
+      const commIdParam: any = isNaN(Number(req.params.id)) ? req.params.id : Number(req.params.id);
       const detail = await getCommunityDetail(
-        Number(req.params.id),
+        commIdParam,
         req.user!.uid
       );
       if (!detail) return res.status(404).json({ error: 'Community not found.' });
@@ -809,7 +810,7 @@ async function startServer() {
 
   app.post('/api/communities/:id/action', requireAuth, async (req: AuthRequest, res) => {
     try {
-      const communityId = Number(req.params.id);
+      const communityId: any = isNaN(Number(req.params.id)) ? req.params.id : Number(req.params.id);
       const { action, payload } = req.body;
       const result = await handleCommunityAction(
         communityId,

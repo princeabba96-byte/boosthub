@@ -292,6 +292,51 @@ export interface NotificationItem {
   actor?: UserProfile | null;
 }
 
+export interface CommunityMember {
+  id?: any;
+  communityId?: any;
+  userId: string;
+  role: 'admin' | 'moderator' | 'member';
+  status: 'active' | 'pending';
+  joinedAt: string;
+  profile?: UserProfile | null;
+}
+
+export interface CommunityPost {
+  id: any;
+  communityId: any;
+  userId: string;
+  content: string;
+  mediaUrl?: string;
+  mediaType?: 'image' | 'video' | 'chat' | null;
+  likesCount?: number;
+  reactions?: Record<string, number>;
+  myReaction?: string | null;
+  isPinned?: boolean;
+  createdAt: string;
+  author?: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+  };
+}
+
+export interface CommunityChatMessage {
+  id: any;
+  communityId: any;
+  userId: string;
+  content: string;
+  mediaUrl?: string;
+  createdAt: string;
+  author?: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl: string;
+  };
+}
+
 export interface CommunityItem {
   id: any;
   name: string;
@@ -301,10 +346,22 @@ export interface CommunityItem {
   category: string;
   creatorId: string;
   createdAt: string;
+  privacy?: 'public' | 'private' | 'request';
   membersCount?: number;
   postsCount?: number;
   isMember?: boolean;
+  membershipStatus?: 'active' | 'pending' | 'none';
   myRole?: 'admin' | 'moderator' | 'member' | null;
+  members?: CommunityMember[];
+  pendingRequests?: Array<{
+    id: string;
+    userId: string;
+    requestedAt: string;
+    profile: UserProfile;
+  }>;
+  posts?: CommunityPost[];
+  chatMessages?: CommunityChatMessage[];
+  community?: any;
 }
 
 export interface MissionItem {

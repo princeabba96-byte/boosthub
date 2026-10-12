@@ -1,7 +1,9 @@
 import {
   BShopUserState,
   CommentItem,
+  CommunityChatMessage,
   CommunityItem,
+  CommunityPost,
   ConversationSummary,
   DirectMessageItem,
   MissionItem,
@@ -540,11 +542,18 @@ export async function ensureAdminUserSeededInSupabase(): Promise<void> {
 async function resolveCurrentUserId(token: string | null): Promise<string> {
   if (token && token.startsWith('sb_user_')) {
     const rawId = token.replace('sb_user_', '').trim();
+    const clean = rawId.toLowerCase();
     if (
-      rawId === 'bh_5c82dc8e3aa243a28413' ||
-      rawId.toLowerCase() === 'abba'
+      clean === 'bh_5c82dc8e3aa243a28413' ||
+      clean === 'abba' ||
+      clean === 'princeabba' ||
+      clean === ADMIN_ABBA_UUID.toLowerCase() ||
+      clean === 'eaada352-5704-4566-a7a7-88df80853ada'
     ) {
       return ADMIN_ABBA_UUID;
+    }
+    if (clean === 'boost_bot' || clean === '00000000-0000-4000-8000-000000000001') {
+      return BOOST_BOT_UUID;
     }
     if (rawId) {
       return rawId;
@@ -555,17 +564,25 @@ async function resolveCurrentUserId(token: string | null): Promise<string> {
 
 function normalizeTargetUserId(rawId: string): string {
   if (!rawId) return ADMIN_ABBA_UUID;
+  const clean = String(rawId).trim().toLowerCase();
   if (
-    rawId === 'bh_5c82dc8e3aa243a28413' ||
-    rawId.toLowerCase() === 'abba' ||
-    rawId.toLowerCase() === 'princeabba'
+    clean === 'bh_5c82dc8e3aa243a28413' ||
+    clean === 'abba' ||
+    clean === 'princeabba' ||
+    clean === 'eaada352-5704-4566-a7a7-88df80853ada' ||
+    clean === ADMIN_ABBA_UUID.toLowerCase()
   ) {
     return ADMIN_ABBA_UUID;
   }
-  if (rawId === 'boost_bot_official' || rawId === 'boost_bot') {
+  if (
+    clean === 'boost_bot_official' ||
+    clean === 'boost_bot' ||
+    clean === '00000000-0000-4000-8000-000000000001' ||
+    clean === '00000000-0000-4000-8000-000000000099'
+  ) {
     return BOOST_BOT_UUID;
   }
-  return rawId;
+  return String(rawId).trim();
 }
 
 async function fetchAllProfilesMap(): Promise<{
@@ -2488,25 +2505,26 @@ export async function handleStaticBackendRequest<T = any>(
       const myMem = cMembers.find(
         (m) => normalizeTargetUserId(String(m.user_id)) === currentUserId
       );
+      const isOwner = normalizeTargetUserId(String(c.owner_id)) === currentUserId;
       return {
         id: c.id,
         name: String(c.name || 'Community'),
         description: String(c.description || ''),
         imageUrl: String(c.avatar_url || ''),
         rules:
+          (c as any).rules ||
           '1. Be respectful to all members.\n2. Share authentic content.\n3. No spam.',
-        category: 'Creators',
+        category: (c as any).category || 'Creators',
+        privacy: (c.privacy as any) || 'public',
         creatorId: normalizeTargetUserId(String(c.owner_id || ADMIN_ABBA_UUID)),
         createdAt: c.created_at || new Date().toISOString(),
-        membersCount: Math.max(1, cMembers.length),
+        membersCount: Math.max(1, cMembers.filter((m) => m.status !== 'pending').length),
         postsCount: cPosts.filter(
-          (p) => String(p.community_id) === String(c.id)
+          (p) => String(p.community_id) === String(c.id) && p.media_type !== 'chat'
         ).length,
-        isMember: Boolean(myMem || c.owner_id === currentUserId),
-        myRole:
-          c.owner_id === currentUserId
-            ? 'admin'
-            : (myMem?.role as any) || null,
+        isMember: Boolean(isOwner || myMem?.status === 'active'),
+        membershipStatus: isOwner ? 'active' : (myMem?.status || (myMem ? 'active' : 'none')),
+        myRole: isOwner ? 'admin' : ((myMem?.role as any) || null),
       };
     });
 
@@ -2520,7 +2538,7 @@ export async function handleStaticBackendRequest<T = any>(
         name: String(body.name || 'New Community'),
         description: String(body.description || ''),
         avatar_url: String(body.imageUrl || ''),
-        privacy: 'public',
+        privacy: body.privacy === 'private' || body.privacy === 'request' ? 'private' : 'public',
         owner_id: currentUserId,
       })
       .select()
@@ -2546,47 +2564,99 @@ export async function handleStaticBackendRequest<T = any>(
         body.rules ||
         '1. Be respectful to all members.\n2. Share authentic content.\n3. No spam.',
       category: body.category || 'Creators',
+      privacy: created.privacy || 'public',
       creatorId: currentUserId,
       createdAt: created.created_at,
       membersCount: 1,
       postsCount: 0,
       isMember: true,
+      membershipStatus: 'active',
       myRole: 'admin',
     } as unknown as T;
   }
 
   const communityDetailMatch = pathname.match(/^\/api\/communities\/([^/]+)$/);
   if (communityDetailMatch && method === 'GET') {
-    const commId = decodeURIComponent(communityDetailMatch[1]);
-    const [{ byId }, commRes, membersRes, postsRes, followsRes, friendshipsRes] =
+    const rawCommId = decodeURIComponent(communityDetailMatch[1]).trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCommId);
+
+    const [{ byId }, commRes, allCommsRes, followsRes, friendshipsRes] =
       await Promise.all([
         fetchAllProfilesMap(),
-        supabase.from('communities').select('*').eq('id', commId).maybeSingle(),
-        supabase
-          .from('community_members')
-          .select('*')
-          .eq('community_id', commId),
-        supabase
-          .from('community_posts')
-          .select('*')
-          .eq('community_id', commId)
-          .order('created_at', { ascending: false }),
+        isUuid
+          ? supabase.from('communities').select('*').eq('id', rawCommId).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+        supabase.from('communities').select('*').order('created_at', { ascending: false }),
         supabase.from('follows').select('*'),
         supabase.from('friendships').select('*'),
       ]);
 
-    const c = commRes.data;
+    const allComms = (allCommsRes as any)?.data || [];
+    let c = commRes.data;
+    if (!c) {
+      c = allComms.find(
+        (item: any) =>
+          String(item.id).toLowerCase() === rawCommId.toLowerCase() ||
+          String(item.name || '').toLowerCase() === rawCommId.toLowerCase()
+      );
+    }
+    if (!c && allComms.length > 0) {
+      c = allComms[0];
+    }
+    if (!c) {
+      // Create initial community in Supabase if table is completely empty
+      const { data: createdNew } = await supabase
+        .from('communities')
+        .insert({
+          name: 'Boosthub Builders',
+          description: 'Official first creator community on BoostHub.',
+          avatar_url: 'https://fzhfvspodfwyowazuzaa.supabase.co/storage/v1/object/public/posts/communities/eaada352-5704-4566-a7a7-88df80853ada/boosthub_builders.jpg',
+          privacy: 'public',
+          owner_id: ADMIN_ABBA_UUID,
+        })
+        .select()
+        .single();
+      c = createdNew;
+    }
     if (!c) throw new Error('Community not found.');
+
+    const commId = String(c.id);
+
+    const [membersRes, postsRes, reactionsRes] = await Promise.all([
+      supabase
+        .from('community_members')
+        .select('*')
+        .eq('community_id', commId),
+      supabase
+        .from('community_posts')
+        .select('*')
+        .eq('community_id', commId)
+        .order('created_at', { ascending: false }),
+      supabase
+        .from('notifications')
+        .select('*')
+        .eq('type', 'comm_reaction')
+        .eq('body', commId),
+    ]);
+
     const cMembers = membersRes.data || [];
+    const isOwner = normalizeTargetUserId(String(c.owner_id)) === currentUserId;
     const myMem = cMembers.find(
       (m) => normalizeTargetUserId(String(m.user_id)) === currentUserId
     );
+    const isMember = Boolean(isOwner || myMem?.status === 'active');
+    const membershipStatus = isOwner ? 'active' : (myMem?.status || (myMem ? 'active' : 'none'));
+    const myRole = isOwner ? 'admin' : ((myMem?.role as any) || null);
 
     const members = cMembers.map((m) => {
       const uid = normalizeTargetUserId(String(m.user_id));
       const uRow = byId.get(uid) || byId.get(ADMIN_ABBA_UUID);
       return {
-        role: m.role || 'member',
+        id: m.id,
+        communityId: commId,
+        userId: uid,
+        role: (uid === normalizeTargetUserId(String(c.owner_id)) ? 'admin' : m.role || 'member') as 'admin' | 'moderator' | 'member',
+        status: (m.status || 'active') as 'active' | 'pending',
         joinedAt: m.joined_at || new Date().toISOString(),
         profile: mapSupabaseRowToUserProfile(
           uRow || { id: uid, username: 'user' },
@@ -2598,50 +2668,118 @@ export async function handleStaticBackendRequest<T = any>(
       };
     });
 
-    const posts = (postsRes.data || []).map((p) => {
+    const pendingRequests = cMembers
+      .filter((m) => m.status === 'pending')
+      .map((m) => {
+        const uid = normalizeTargetUserId(String(m.user_id));
+        const uRow = byId.get(uid) || byId.get(ADMIN_ABBA_UUID);
+        return {
+          id: m.id,
+          userId: uid,
+          requestedAt: m.joined_at || new Date().toISOString(),
+          profile: mapSupabaseRowToUserProfile(
+            uRow || { id: uid, username: 'user' },
+            followsRes.data || [],
+            friendshipsRes.data || [],
+            [],
+            currentUserId
+          ),
+        };
+      });
+
+    // Build reactions map for each post
+    const allReactions = reactionsRes.data || [];
+    const reactionsByPost = new Map<string, { counts: Record<string, number>; myReaction: string | null; total: number }>();
+    for (const r of allReactions) {
+      const pid = String(r.post_id || '');
+      if (!pid) continue;
+      if (!reactionsByPost.has(pid)) {
+        reactionsByPost.set(pid, { counts: {}, myReaction: null, total: 0 });
+      }
+      const entry = reactionsByPost.get(pid)!;
+      const emoji = String(r.title || '❤️');
+      entry.counts[emoji] = (entry.counts[emoji] || 0) + 1;
+      entry.total += 1;
+      if (normalizeTargetUserId(String(r.actor_user)) === currentUserId) {
+        entry.myReaction = emoji;
+      }
+    }
+
+    const rawPosts = postsRes.data || [];
+    const feedPosts: CommunityPost[] = [];
+    const chatMessages: CommunityChatMessage[] = [];
+
+    for (const p of rawPosts) {
       const uid = normalizeTargetUserId(String(p.user_id));
       const uRow = byId.get(uid) || byId.get(ADMIN_ABBA_UUID);
-      const isAbba = uid === ADMIN_ABBA_UUID;
-      return {
-        id: p.id,
-        communityId: commId,
-        userId: uid,
-        content: p.content || '',
-        mediaUrl: p.media_url || '',
-        isPinned: false,
-        createdAt: p.created_at || new Date().toISOString(),
-        author: {
-          id: uid,
-          username: isAbba ? 'Abba' : String(uRow?.username || 'user'),
-          displayName: isAbba
-            ? 'Prince Abba'
-            : String(uRow?.display_name || 'BoostHub User'),
-          avatarUrl: String(uRow?.avatar_url || ''),
-        },
+      const isAbba = uid === ADMIN_ABBA_UUID || uid === ADMIN_ABBA_ALT_UUID;
+      const author = {
+        id: uid,
+        username: isAbba ? 'Abba' : String(uRow?.username || 'user'),
+        displayName: isAbba
+          ? 'Prince Abba'
+          : String(uRow?.display_name || uRow?.username || 'BoostHub Member'),
+        avatarUrl: String(uRow?.avatar_url || uRow?.profile_picture || ''),
       };
-    });
 
+      if (p.media_type === 'chat') {
+        chatMessages.unshift({
+          id: p.id,
+          communityId: commId,
+          userId: uid,
+          content: p.content || '',
+          mediaUrl: p.media_url || undefined,
+          createdAt: p.created_at || new Date().toISOString(),
+          author,
+        });
+      } else {
+        const rData = reactionsByPost.get(String(p.id)) || { counts: {}, myReaction: null, total: 0 };
+        feedPosts.push({
+          id: p.id,
+          communityId: commId,
+          userId: uid,
+          content: p.content || '',
+          mediaUrl: p.media_url || undefined,
+          mediaType: (p.media_type as any) || (p.media_url ? (p.media_url.match(/\.(mp4|webm|mov|m4v)/i) ? 'video' : 'image') : null),
+          likesCount: rData.total,
+          reactions: rData.counts,
+          myReaction: rData.myReaction,
+          isPinned: Boolean(p.is_pinned),
+          createdAt: p.created_at || new Date().toISOString(),
+          author,
+        });
+      }
+    }
+
+    const activeMembers = members.filter((m) => m.status === 'active');
+
+    const communityObj: CommunityItem = {
+      id: c.id,
+      name: c.name,
+      description: c.description || '',
+      imageUrl: c.avatar_url || '',
+      rules:
+        (c as any).rules ||
+        '1. Be respectful to all members.\n2. Share authentic content.\n3. No spam.',
+      category: (c as any).category || 'Creators',
+      privacy: (c.privacy as any) || 'public',
+      creatorId: normalizeTargetUserId(String(c.owner_id || ADMIN_ABBA_UUID)),
+      createdAt: c.created_at,
+      membersCount: Math.max(1, activeMembers.length),
+      postsCount: feedPosts.length,
+      isMember,
+      membershipStatus,
+      myRole,
+    };
+
+    // If NOT a member, strictly hide posts and chat as required by user prompt!
     return {
-      community: {
-        id: c.id,
-        name: c.name,
-        description: c.description || '',
-        imageUrl: c.avatar_url || '',
-        rules:
-          '1. Be respectful to all members.\n2. Share authentic content.\n3. No spam.',
-        category: 'Creators',
-        creatorId: normalizeTargetUserId(String(c.owner_id || ADMIN_ABBA_UUID)),
-        createdAt: c.created_at,
-        membersCount: Math.max(1, members.length),
-        postsCount: posts.length,
-        isMember: Boolean(myMem || c.owner_id === currentUserId),
-        myRole:
-          c.owner_id === currentUserId
-            ? 'admin'
-            : (myMem?.role as any) || null,
-      },
-      members,
-      posts,
+      ...communityObj,
+      community: communityObj,
+      members: activeMembers,
+      pendingRequests: myRole === 'admin' || myRole === 'moderator' ? pendingRequests : [],
+      posts: isMember ? feedPosts : [],
+      chatMessages: isMember ? chatMessages : [],
     } as unknown as T;
   }
 
@@ -2651,13 +2789,43 @@ export async function handleStaticBackendRequest<T = any>(
   if (communityActionMatch && method === 'POST') {
     const commId = decodeURIComponent(communityActionMatch[1]);
     const action = body.action;
-    if (action === 'join') {
-      await supabase.from('community_members').insert({
-        community_id: commId,
-        user_id: currentUserId,
-        role: 'member',
-        status: 'active',
-      });
+    const payload = body.payload || {};
+
+    if (action === 'join' || action === 'request_join') {
+      const { data: commRow } = await supabase
+        .from('communities')
+        .select('privacy, owner_id')
+        .eq('id', commId)
+        .maybeSingle();
+
+      const isPrivate = commRow?.privacy === 'private' || commRow?.privacy === 'request' || action === 'request_join';
+      const isOwner = normalizeTargetUserId(String(commRow?.owner_id)) === currentUserId;
+      const status = isOwner || !isPrivate ? 'active' : 'pending';
+      const role = isOwner ? 'admin' : 'member';
+
+      // Check existing membership
+      const { data: existing } = await supabase
+        .from('community_members')
+        .select('id, status')
+        .eq('community_id', commId)
+        .eq('user_id', currentUserId)
+        .maybeSingle();
+
+      if (existing) {
+        if (!isPrivate && existing.status !== 'active') {
+          await supabase
+            .from('community_members')
+            .update({ status: 'active' })
+            .eq('id', existing.id);
+        }
+      } else {
+        await supabase.from('community_members').insert({
+          community_id: commId,
+          user_id: currentUserId,
+          role,
+          status,
+        });
+      }
     } else if (action === 'leave') {
       await supabase
         .from('community_members')
@@ -2665,15 +2833,107 @@ export async function handleStaticBackendRequest<T = any>(
         .eq('community_id', commId)
         .eq('user_id', currentUserId);
     } else if (action === 'post') {
+      const content = String(payload.content || body.content || '').trim();
+      const mediaUrl = String(payload.mediaUrl || body.mediaUrl || '');
+      const mediaType = payload.mediaType || body.mediaType || (mediaUrl ? (mediaUrl.match(/\.(mp4|webm|mov|m4v)/i) ? 'video' : 'image') : null);
+
       await supabase.from('community_posts').insert({
         community_id: commId,
         user_id: currentUserId,
-        content: String(body.content || ''),
-        media_url: String(body.mediaUrl || ''),
+        content,
+        media_url: mediaUrl || null,
+        media_type: mediaType || 'post',
       });
-    } else if (action === 'delete_post' && body.postId) {
-      await supabase.from('community_posts').delete().eq('id', body.postId);
+    } else if (action === 'chat') {
+      const content = String(payload.content || body.content || '').trim();
+      const mediaUrl = String(payload.mediaUrl || body.mediaUrl || '');
+      if (content || mediaUrl) {
+        await supabase.from('community_posts').insert({
+          community_id: commId,
+          user_id: currentUserId,
+          content,
+          media_url: mediaUrl || null,
+          media_type: 'chat',
+        });
+      }
+    } else if (action === 'react_post') {
+      const postId = String(payload.postId || body.postId || '');
+      const emoji = String(payload.emoji || body.emoji || '❤️');
+      if (postId) {
+        const { data: existingReaction } = await supabase
+          .from('notifications')
+          .select('id, title')
+          .eq('type', 'comm_reaction')
+          .eq('actor_user', currentUserId)
+          .eq('post_id', postId)
+          .maybeSingle();
+
+        if (existingReaction) {
+          if (existingReaction.title === emoji) {
+            await supabase.from('notifications').delete().eq('id', existingReaction.id);
+          } else {
+            await supabase.from('notifications').update({ title: emoji }).eq('id', existingReaction.id);
+          }
+        } else {
+          await supabase.from('notifications').insert({
+            target_user: currentUserId,
+            actor_user: currentUserId,
+            type: 'comm_reaction',
+            title: emoji,
+            body: commId,
+            post_id: postId,
+            is_read: true,
+          });
+        }
+      }
+    } else if (action === 'approve_request') {
+      const targetUserId = normalizeTargetUserId(String(payload.targetUserId || body.targetUserId));
+      await supabase
+        .from('community_members')
+        .update({ status: 'active' })
+        .eq('community_id', commId)
+        .eq('user_id', targetUserId);
+    } else if (action === 'reject_request') {
+      const targetUserId = normalizeTargetUserId(String(payload.targetUserId || body.targetUserId));
+      await supabase
+        .from('community_members')
+        .delete()
+        .eq('community_id', commId)
+        .eq('user_id', targetUserId);
+    } else if (action === 'update_community' || action === 'update_profile_picture') {
+      const updates: Record<string, any> = {};
+      const newImg = payload.imageUrl || body.imageUrl;
+      const newName = payload.name || body.name;
+      const newDesc = payload.description !== undefined ? payload.description : body.description;
+      const newPrivacy = payload.privacy || body.privacy;
+
+      if (newImg) updates.avatar_url = newImg;
+      if (newName) updates.name = newName;
+      if (newDesc !== undefined) updates.description = newDesc;
+      if (newPrivacy) updates.privacy = newPrivacy;
+
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('communities').update(updates).eq('id', commId);
+      }
+    } else if (action === 'delete_post' && (payload.postId || body.postId)) {
+      await supabase.from('community_posts').delete().eq('id', payload.postId || body.postId);
+    } else if (action === 'set_role') {
+      const targetUserId = normalizeTargetUserId(String(payload.targetUserId || body.targetUserId));
+      const role = payload.role || 'member';
+      await supabase
+        .from('community_members')
+        .update({ role })
+        .eq('community_id', commId)
+        .eq('user_id', targetUserId);
+    } else if (action === 'remove_member') {
+      const targetUserId = normalizeTargetUserId(String(payload.targetUserId || body.targetUserId));
+      await supabase
+        .from('community_members')
+        .delete()
+        .eq('community_id', commId)
+        .eq('user_id', targetUserId);
     }
+
     return { ok: true } as unknown as T;
   }
 

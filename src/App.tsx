@@ -182,7 +182,8 @@ const BoostHubAppShell: React.FC = () => {
       if (
         opts.type === 'friend_request' ||
         opts.type === 'friend_accept' ||
-        tabParam === 'friends'
+        tabParam === 'friends' ||
+        parsedParams.get('community')
       ) {
         setActiveTab('friends');
         return;

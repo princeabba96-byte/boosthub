@@ -16,6 +16,6 @@ export const supabase = createClient(
   }
 );
 
-export const ADMIN_ABBA_UUID = '00000000-0000-4000-8000-000000000001';
+export const ADMIN_ABBA_UUID = 'eaada352-5704-4566-a7a7-88df80853ada';
 export const ADMIN_ABBA_ALT_UUID = 'eaada352-5704-4566-a7a7-88df80853ada';
-export const BOOST_BOT_UUID = '00000000-0000-4000-8000-000000000099';
+export const BOOST_BOT_UUID = '00000000-0000-4000-8000-000000000001';

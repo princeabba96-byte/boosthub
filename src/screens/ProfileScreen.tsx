@@ -840,60 +840,33 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
                 return (
                   <div className="pt-2.5 space-y-2">
-                    {/* Badge Chips & Level Shield */}
+                    {/* Only show the current badge of the user at that time */}
                     <div className="flex items-center gap-2 flex-wrap">
                       {topShield && (
                         <button
                           type="button"
                           onClick={() => setBadgesModalOpen(true)}
-                          className="hover:scale-105 transition-transform drop-shadow-md"
-                          title={`${topShield.name} (${topShield.levelLabel}) - Tap to view badges & progress`}
+                          className="px-3 py-1.5 rounded-2xl bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-blue-500/20 border border-amber-400/40 text-amber-200 text-xs font-bold flex items-center gap-2.5 shadow-sm hover:brightness-125 transition-all group"
+                          title={`${topShield.name} (${topShield.levelLabel}) - Current badge. Tap to view progress`}
                         >
-                          {renderHeaderShield(topShield.code)}
+                          <div className="shrink-0 transition-transform group-hover:scale-110 drop-shadow-md">
+                            {renderHeaderShield(topShield.code)}
+                          </div>
+                          <div className="text-left">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400">
+                                Current Badge
+                              </span>
+                              <span className="text-[9px] font-semibold text-slate-300">
+                                {topShield.levelLabel}
+                              </span>
+                            </div>
+                            <span className="text-xs font-bold text-white block">
+                              {topShield.name}
+                            </span>
+                          </div>
                         </button>
                       )}
-
-                      {userBadges.map((b) => {
-                        const isTop = b.code === 'top_creator';
-                        const isEarly = b.code === 'early_adopter';
-                        const isHelper = b.code === 'community_helper';
-                        const isPro = b.code === 'boost_pro';
-
-                        let badgeStyle =
-                          'bg-gradient-to-r from-amber-500/20 via-purple-500/20 to-blue-500/20 border-amber-400/40 text-amber-300';
-                        let icon = <Award className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
-
-                        if (isTop) {
-                          badgeStyle =
-                            'bg-gradient-to-r from-yellow-500/25 to-amber-600/25 border-yellow-400/50 text-yellow-300 font-extrabold';
-                          icon = <Trophy className="w-3.5 h-3.5 text-yellow-400 shrink-0" />;
-                        } else if (isEarly) {
-                          badgeStyle =
-                            'bg-gradient-to-r from-orange-500/25 to-red-600/25 border-orange-400/50 text-orange-300 font-extrabold';
-                          icon = <Sparkles className="w-3.5 h-3.5 text-orange-400 shrink-0" />;
-                        } else if (isHelper) {
-                          badgeStyle =
-                            'bg-gradient-to-r from-cyan-500/25 to-blue-600/25 border-cyan-400/50 text-cyan-300 font-extrabold';
-                          icon = <Users className="w-3.5 h-3.5 text-cyan-400 shrink-0" />;
-                        } else if (isPro) {
-                          badgeStyle =
-                            'bg-gradient-to-r from-red-600/30 via-orange-600/30 to-amber-500/30 border-red-500/50 text-red-200 font-black';
-                          icon = <Trophy className="w-3.5 h-3.5 text-red-400 shrink-0" />;
-                        }
-
-                        return (
-                          <button
-                            key={b.id || b.code}
-                            type="button"
-                            onClick={() => setBadgesModalOpen(true)}
-                            className={`px-2.5 py-1 rounded-xl border text-[11px] font-bold flex items-center gap-1 shadow-sm hover:brightness-125 transition-all ${badgeStyle}`}
-                            title={b.description}
-                          >
-                            {icon}
-                            <span>{b.name}</span>
-                          </button>
-                        );
-                      })}
                     </div>
 
                     {/* Season 23 Pass Progress Bar */}
@@ -1824,6 +1797,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     ? profile.badges
                     : calculateUserBadges(profile);
                 const earnedCodeSet = new Set(userBadges.map((b) => b.code));
+                const topShield = getHighestBadgeShield(userBadges);
 
                 const renderCardShield = (code: string) => {
                   switch (code) {
@@ -1870,47 +1844,48 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {USER_BADGES_CATALOG.map((catBadge) => {
-                        const isUnlocked = earnedCodeSet.has(catBadge.code);
-                        return (
-                          <div
-                            key={catBadge.code}
-                            onClick={() => setBadgesModalOpen(true)}
-                            className={`p-3.5 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
-                              isUnlocked
-                                ? 'bg-gradient-to-r from-white/[0.04] to-amber-950/20 border-amber-400/30 hover:border-amber-400/60 shadow-sm'
-                                : 'bg-white/[0.02] border-white/5 opacity-60 hover:opacity-80'
-                            }`}
-                          >
-                            <div className="shrink-0">
-                              {renderCardShield(catBadge.code)}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center justify-between gap-1">
-                                <p className="text-xs font-black text-white truncate">
-                                  {catBadge.name}
-                                </p>
-                                <span
-                                  className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded ${
-                                    isUnlocked
-                                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                      : 'bg-slate-800 text-slate-400'
-                                  }`}
-                                >
-                                  {isUnlocked ? 'EARNED' : 'LOCKED'}
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-amber-400/90 font-bold mt-0.5">
-                                {catBadge.levelLabel}
-                              </p>
-                              <p className="text-[11px] text-slate-300 line-clamp-2 mt-0.5">
-                                {catBadge.requirementDescription}
-                              </p>
-                            </div>
+                    <div className="pt-2">
+                      {/* Current Active Badge Display Card */}
+                      {topShield ? (
+                        <div
+                          onClick={() => setBadgesModalOpen(true)}
+                          className="p-4 rounded-3xl border bg-gradient-to-r from-amber-500/10 via-purple-500/10 to-blue-500/10 border-amber-400/40 hover:border-amber-400/70 transition-all cursor-pointer flex items-center gap-4 shadow-lg group"
+                        >
+                          <div className="shrink-0 transition-transform group-hover:scale-105">
+                            {renderCardShield(topShield.code)}
                           </div>
-                        );
-                      })}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center justify-between gap-1">
+                              <p className="text-sm font-black text-white truncate">
+                                {topShield.name}
+                              </p>
+                              <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                                CURRENT BADGE
+                              </span>
+                            </div>
+                            <p className="text-xs text-amber-400 font-bold mt-0.5">
+                              {topShield.levelLabel}
+                            </p>
+                            <p className="text-xs text-slate-300 mt-1 line-clamp-2">
+                              {topShield.description}
+                            </p>
+                            <p className="text-[11px] text-slate-400 mt-2">
+                              <span className="text-slate-500 mr-1.5 font-semibold">Requirements:</span>
+                              <span className="text-slate-200">
+                                {topShield.requirementDescription}
+                              </span>
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => setBadgesModalOpen(true)}
+                          className="p-4 rounded-3xl border border-white/10 bg-white/[0.02] text-center space-y-1 cursor-pointer hover:bg-white/[0.04] transition-all"
+                        >
+                          <p className="text-xs font-bold text-white">No active badge unlocked yet</p>
+                          <p className="text-[11px] text-slate-400">Complete missions, publish content, and interact to unlock your first badge.</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
