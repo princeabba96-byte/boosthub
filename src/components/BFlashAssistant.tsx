@@ -6,24 +6,26 @@ import {
   Sparkles,
   Volume2,
   VolumeX,
+  Film,
   ShoppingBag,
   MessageSquare,
   Video,
   PlusCircle,
   Trash2,
   Wand2,
-  Globe,
+  Image as ImageIcon,
+  Camera,
+  Maximize2,
 } from 'lucide-react';
 import { MainTab } from '../types';
 import { useAuth } from '../state/AuthContext';
-import { apiFetch } from '../services/api';
 
 interface BFlashMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  imageUrl?: string;
   createdAt: string;
-  isWebSearch?: boolean;
 }
 
 interface BFlashAssistantProps {
@@ -32,14 +34,100 @@ interface BFlashAssistantProps {
   onOpenMessages: () => void;
 }
 
+const LIVE_CLOUD_ORIGIN =
+  'https://ais-pre-dcxbkwei6q7fkhlsqjulum-948785102023.europe-west2.run.app';
+
 const QUICK_PROMPTS = [
-  'Explain quantum physics in simple words and crack a joke about it',
-  'Why is the sky blue and what is Rayleigh scattering?',
-  'Tell me a hilarious joke about technology and creators',
-  'How do I translate my voice to Igbo, Hausa, Yoruba, or Akwa Ibom in B-Edit?',
-  'Write 5 viral Capshot captions with trending hashtags',
-  'How do Boost Points (BP), Missions, and B-Shop gifts work?',
+  'Explain quantum entanglement in simple terms',
+  'Tell me a witty joke',
+  'Explain the solar system with diagrams',
+  'How do I translate voice to Nigerian languages in B-Edit?',
+  'Give me 5 viral Capshot hooks for this week',
 ];
+
+function buildSmartFallbackAnswer(query: string, userName: string): string {
+  const q = query.trim().toLowerCase();
+
+  if (
+    q.includes('who created') ||
+    q.includes('who made you') ||
+    q.includes('who is your creator') ||
+    q.includes('who built you') ||
+    q.includes('who is your founder') ||
+    q.includes('who founded boosthub') ||
+    q.includes('prince abba')
+  ) {
+    return `⚡ **B FLASH Origin & Creator:**\n\nI was created and engineered by **Prince Abba (@princeabba96-byte)** — the visionary founder and creator of BoostHub!\n\nPrince Abba built me to be your all-in-one multimodal AI companion for creative dominance, viral storytelling, Nigerian dialect translation, pro video editing, and universal knowledge. Salute to the founder! 👑`;
+  }
+
+  if (q.includes('joke') || q.includes('funny') || q.includes('laugh')) {
+    return `⚡ **B FLASH Joke Time:**\n\nWhy don't scientists trust atoms?\n\nBecause they make up everything! 😄\n\nWant another joke or a deep dive into physics? Ask away!`;
+  }
+
+  // Math expression evaluator
+  const mathMatch = q.replace(/[^0-9+\-*/().%^ ]/g, '').trim();
+  if (
+    mathMatch.length >= 3 &&
+    /[0-9]+\s*[+\-*/]\s*[0-9]+/.test(mathMatch) &&
+    !/[a-z]{4,}/i.test(q.replace(/what|is|calculate|solve|equals/gi, ''))
+  ) {
+    try {
+      const sanitized = mathMatch.replace(/\^/g, '**');
+      // eslint-disable-next-line no-new-func
+      const result = Function(`"use strict"; return (${sanitized});`)();
+      if (typeof result === 'number' && Number.isFinite(result)) {
+        return `⚡ **B FLASH Calculation:**\n\n\`${mathMatch} = ${result.toLocaleString()}\``;
+      }
+    } catch {}
+  }
+
+  if (
+    q.includes('picture') ||
+    q.includes('photo') ||
+    q.includes('image') ||
+    q.includes('diagram') ||
+    q.includes('show me') ||
+    q.includes('visual')
+  ) {
+    return `⚡ **B FLASH Visual Illustration:**\n\nHere is a visual breakdown for your topic:\n\n![Visual Explanation](https://images.unsplash.com/photo-1518770660439-4636190af475?w=900&auto=format&fit=crop&q=80)\n\n*Key Elements:*\n- Clean visual representation with balanced lighting and clear focal points.\n- You can also upload any image directly to me using the 📷 **Picture** button and I will analyze, explain, or translate it immediately!`;
+  }
+
+  if (
+    q.includes('badge') ||
+    q.includes('rank') ||
+    q.includes('mission')
+  ) {
+    return `⚡ **B FLASH Guide — Badges & Progressive Missions:**\n\n1. **Earned, Not Given Freely:** On BoostHub, badges can NEVER be gotten freely! You must complete missions **one rank at a time**.\n2. **Progression Track (Rank 1 to 7):**\n   - **Rank 1 (Rookie Pioneer):** Complete profile, post 1 clip, give 5 likes.\n   - **Rank 2 (Firering Editor):** Edit 3 clips in B-Edit + earn 15 likes. *(Locked until Rank 1 claimed)*.\n   - **Rank 3 (Engagement Master):** 60 likes + 2 communities. *(Locked until Rank 2 claimed)*.\n   - **Rank 4 (Content God):** 12 Capshots + 500 views + send 2 gifts.\n   - **Rank 5 (Distant Winner):** 1,500 XP + 50 followers.\n   - **Rank 6 (Boost Pro Grandmaster):** 3,500 XP + 100 followers + 10 gifts.\n   - **Rank 7 (Sovereign Mythic):** 7,500 XP + 500 followers + top 1% prestige!\n3. Only the founder Prince Abba holds supreme godmode with all badges permanently unlocked!`;
+  }
+
+  if (
+    q.includes('igbo') ||
+    q.includes('hausa') ||
+    q.includes('yoruba') ||
+    q.includes('youroba') ||
+    q.includes('akwa ibom') ||
+    q.includes('ibibio') ||
+    q.includes('pidgin') ||
+    q.includes('voice changer') ||
+    q.includes('dialect')
+  ) {
+    return `⚡ **B FLASH Guide — 54 Realistic Voices & Nigerian Dialect Translator:**\n\n1. Tap **B-Edit** (or **+** → **B-Edit Studio**).\n2. Go to **Audio** → **Voice Cover**.\n3. Tap **Record Voice Cover** and speak naturally in English.\n4. Switch to **54 Voices & Dialects** and tap any voice:\n   - 🇳🇬 **Igbo Language (Odogwu Male / Ada Igbo Female)**: Fluent *Asụsụ Igbo*.\n   - 🇳🇬 **Yoruba Language (Ọmọ Yorùbá / Olori Female)**: Fluent *Èdè Yorùbá*.\n   - 🇳🇬 **Hausa Language (Mallam / Hajiya Hausa)**: Fluent *Harshen Hausa*.\n   - 🇳🇬 **Akwa Ibom / Ibibio (Ette / Mma Akwa Ibom)**: Authentic *Ibibio/Efik*.\n   - 🇳🇬 **Lagos Street Pidgin**: Sharp Naija street flow!\n5. The AI translates every word and locks the voice track to your video timeline!`;
+  }
+
+  if (
+    q.includes('science') ||
+    q.includes('physics') ||
+    q.includes('quantum') ||
+    q.includes('chemistry') ||
+    q.includes('biology') ||
+    q.includes('gravity') ||
+    q.includes('universe')
+  ) {
+    return `⚡ **B FLASH Science Insight:**\n\nIn modern science, physical reality operates according to testable mechanics and fundamental laws. Whether we are discussing quantum superpositions, chemical thermodynamics, or astrophysical gravity wells, complex physical phenomena resolve into mathematical and empirical principles.\n\nAsk me about any specific law, equation, or phenomenon—from special relativity to CRISPR gene editing—and I'll explain it clearly!`;
+  }
+
+  return `⚡ **B FLASH:**\n\nHere is what you need to know about **"${query}"**:\nGreat results come from understanding first principles, testing directly, and executing with consistency. If it's scientific, the mechanics are verifiable; if it's creative or practical, authentic delivery and sharp structure produce the highest impact.\n\nYou can also attach images or diagrams with 📷 **Picture** for an instant detailed breakdown!`;
+}
 
 export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
   activeTab,
@@ -50,20 +138,27 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [attachedImage, setAttachedImage] = useState<{
+    dataUrl: string;
+    mimeType: string;
+    data: string;
+  } | null>(null);
+  const [previewZoomImage, setPreviewZoomImage] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+
   const [messages, setMessages] = useState<BFlashMessage[]>(() => [
     {
       id: 'welcome',
       role: 'assistant',
       content: `Hi ${
-        userProfile?.displayName || 'there'
-      }! ⚡ I'm **B FLASH**, your ultra-smart AI companion. Ask me **anything on Earth** — from quantum physics, biology, and math to coding, viral scripts, Nigerian languages (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin), or BoostHub features! You can also toggle **Web Search** below for real-time live info.`,
+        userProfile?.displayName || 'Creator'
+      }! ⚡ I'm **B FLASH**, your smart multimodal AI assistant.\n\nAsk me **anything on Earth** — science, math, coding, Nigerian languages, viral video hooks, or jokes. You can also **send pictures** using the 📷 button below, and I'll analyze and explain them!`,
       createdAt: new Date().toISOString(),
     },
   ]);
-
-  const bottomRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -81,7 +176,9 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
       return;
     }
     window.speechSynthesis.cancel();
-    const cleanText = msg.content.replace(/[*#`_~]/g, '');
+    const cleanText = msg.content
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .replace(/[*#`_~]/g, '');
     const utter = new SpeechSynthesisUtterance(cleanText);
     utter.rate = 1.02;
     utter.onend = () => setSpeakingId(null);
@@ -90,94 +187,100 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
     window.speechSynthesis.speak(utter);
   };
 
+  const handleSelectImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const mimeType = file.type || 'image/jpeg';
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64Data = dataUrl.split(',')[1] || '';
+      setAttachedImage({
+        dataUrl,
+        mimeType,
+        data: base64Data,
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
   const sendQuestion = async (questionText: string) => {
     const trimmed = questionText.trim();
-    if (!trimmed || loading) return;
+    if ((!trimmed && !attachedImage) || loading) return;
+
+    const userImgUrl = attachedImage?.dataUrl;
+    const userImgPayload = attachedImage
+      ? { mimeType: attachedImage.mimeType, data: attachedImage.data }
+      : null;
 
     const userMsg: BFlashMessage = {
       id: `u_${Date.now()}`,
       role: 'user',
-      content: trimmed,
+      content: trimmed || 'Analyze this picture for me in detail.',
+      imageUrl: userImgUrl,
       createdAt: new Date().toISOString(),
-      isWebSearch: webSearchEnabled,
     };
 
     const updatedHistory = [...messages, userMsg];
     setMessages(updatedHistory);
     setInput('');
+    setAttachedImage(null);
     setLoading(true);
 
     try {
       const payload = {
         message: trimmed,
+        image: userImgPayload,
         history: updatedHistory.slice(-8).map((m) => ({
           role: m.role,
           content: m.content,
         })),
         activeTab,
         userName: userProfile?.displayName || userProfile?.username || 'Creator',
-        webSearch: webSearchEnabled,
       };
 
       let replyText = '';
 
-      // 1. Try unified apiFetch (routes to Express server in preview or staticBackend on live site)
+      // 1. Try local relative server endpoint
       try {
-        const res = await apiFetch<{ ok: boolean; reply: string; webSearch?: boolean }>(
-          '/api/ai/bflash',
-          {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          }
-        );
-        if (res?.reply && res.reply.trim().length > 0) {
-          replyText = res.reply.trim();
+        const res = await fetch('/api/ai/bflash', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.reply) replyText = String(data.reply);
         }
-      } catch {
-        // fall through to client-side LLM query
-      }
+      } catch {}
 
-      // 2. Direct client-side LLM query fallback if server unavailable
-      if (!replyText) {
-        try {
-          const systemInstruction = `You are B FLASH, an exceptionally intelligent, warmly human, witty, and deeply engaging AI assistant built into BoostHub, behaving just like Meta AI.
-You answer ANY question on Earth across all domains: science (quantum physics, astrophysics, biology, chemistry, math, tech), philosophy, daily advice, coding, humor, and Nigerian languages/culture.
-CRITICAL RULES:
-1. Deliver the complete, deep, and conclusive answer immediately without stalling or asking back questions.
-2. Under NO circumstances mention who created you or that Prince Abba created you unless the user explicitly and directly asks "Who created you?".
-3. Be articulate, funny, and personable like a charismatic human friend.`;
-
-          const messagesPayload = [
-            { role: 'system', content: systemInstruction },
-            ...updatedHistory.slice(-6).map((m) => ({
-              role: m.role === 'assistant' ? 'assistant' : 'user',
-              content: m.content,
-            })),
-            { role: 'user', content: trimmed },
-          ];
-
-          const llmRes = await fetch('https://text.pollinations.ai/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messages: messagesPayload,
-              model: 'openai',
-            }),
-          });
-
-          if (llmRes.ok) {
-            const rawText = await llmRes.text();
-            if (rawText && rawText.trim().length > 10) {
-              replyText = rawText.trim();
+      // 2. If running on GitHub Pages or external domain, fallback to live cloud origin
+      if (!replyText && typeof window !== 'undefined') {
+        const isExternalOrGh =
+          window.location.hostname.includes('github.io') ||
+          window.location.protocol === 'file:';
+        if (isExternalOrGh) {
+          try {
+            const cloudRes = await fetch(`${LIVE_CLOUD_ORIGIN}/api/ai/bflash`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            if (cloudRes.ok) {
+              const cloudData = await cloudRes.json();
+              if (cloudData?.reply) replyText = String(cloudData.reply);
             }
-          }
-        } catch {
-          // fallback below
+          } catch {}
         }
       }
 
       if (!replyText) {
-        replyText = `⚡ **B FLASH Direct Answer:**\n\nRegarding **"${trimmed}"**:\nHere is the exact breakdown: the key to understanding this is looking at the core principles step by step. Whether you are exploring advanced science, creative production, or building on BoostHub with **B-Edit Studio** (AI Cutout + 54 Voices) and **Capshots**, staying relentlessly curious is the winning formula!`;
+        replyText = buildSmartFallbackAnswer(
+          trimmed,
+          userProfile?.displayName || 'Creator'
+        );
       }
 
       setMessages((prev) => [
@@ -187,7 +290,6 @@ CRITICAL RULES:
           role: 'assistant',
           content: replyText,
           createdAt: new Date().toISOString(),
-          isWebSearch: webSearchEnabled,
         },
       ]);
     } finally {
@@ -195,9 +297,59 @@ CRITICAL RULES:
     }
   };
 
+  // Helper to render message content with inline image cards
+  const renderMessageContent = (content: string) => {
+    // Check for markdown image: ![alt](url)
+    const imgRegex = /!\[(.*?)\]\((.*?)\)/g;
+    const parts: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = imgRegex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(content.substring(lastIndex, match.index));
+      }
+      const alt = match[1] || 'Explanation Image';
+      const url = match[2];
+      parts.push(
+        <div key={match.index} className="my-2.5 rounded-2xl overflow-hidden border border-white/20 group relative">
+          <img
+            src={url}
+            alt={alt}
+            className="w-full max-h-56 object-cover rounded-xl cursor-pointer hover:brightness-105 transition-all"
+            onClick={() => setPreviewZoomImage(url)}
+          />
+          <button
+            type="button"
+            onClick={() => setPreviewZoomImage(url)}
+            className="absolute bottom-2 right-2 px-2 py-1 rounded-lg bg-black/70 text-[10px] text-white flex items-center gap-1 font-semibold backdrop-blur-xs"
+          >
+            <Maximize2 className="w-3 h-3" /> Zoom
+          </button>
+        </div>
+      );
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < content.length) {
+      parts.push(content.substring(lastIndex));
+    }
+
+    return parts.length > 0 ? parts : content;
+  };
+
   return (
     <>
-      {/* Floating B FLASH Launcher Button: Shifted above B-Edit Studio toolbar when in bedit */}
+      {/* Hidden File Input for Image Upload */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleSelectImageFile}
+      />
+
+      {/* Floating B FLASH Launcher Button */}
       <button
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
@@ -215,17 +367,39 @@ CRITICAL RULES:
             B FLASH
           </span>
           <span className="block text-[9px] font-semibold text-blue-100/90">
-            AI Assistant
+            Multimodal AI
           </span>
         </div>
       </button>
 
+      {/* Fullscreen Image Preview Zoom Lightbox */}
+      {previewZoomImage && (
+        <div
+          onClick={() => setPreviewZoomImage(null)}
+          className="fixed inset-0 z-60 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div className="relative max-w-2xl max-h-[90vh]">
+            <img
+              src={previewZoomImage}
+              alt="Zoom Preview"
+              className="max-w-full max-h-[85vh] rounded-2xl object-contain shadow-2xl border border-white/20"
+            />
+            <button
+              onClick={() => setPreviewZoomImage(null)}
+              className="absolute top-2 right-2 p-2 rounded-full bg-black/70 text-white hover:bg-white/20"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* B FLASH Chat Drawer Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-end sm:items-center justify-end sm:p-4">
-          <div className="w-full sm:w-[420px] h-[85vh] sm:h-[640px] bg-[#0B1021] border-t sm:border border-white/15 rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
+          <div className="w-full sm:w-[440px] h-[85vh] sm:h-[660px] bg-[#0B1021] border-t sm:border border-white/15 rounded-t-3xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
             {/* Header */}
-            <div className="px-4 py-3.5 bg-gradient-to-r from-blue-950/90 via-indigo-950/90 to-purple-950/90 border-b border-white/10 flex items-center justify-between">
+            <div className="px-4 py-3 bg-gradient-to-r from-blue-950/90 via-indigo-950/90 to-purple-950/90 border-b border-white/10 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-amber-400 via-blue-500 to-purple-600 p-0.5 shadow-lg">
                   <div className="w-full h-full rounded-[14px] bg-[#0B1021] flex items-center justify-center">
@@ -237,12 +411,12 @@ CRITICAL RULES:
                     <h3 className="text-sm font-black tracking-wide text-white">
                       B FLASH AI
                     </h3>
-                    <span className="px-1.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[9px] font-extrabold text-emerald-300">
-                      ONLINE
+                    <span className="px-1.5 py-0.2 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[9px] font-extrabold text-emerald-300">
+                      MULTIMODAL
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-300">
-                    Smart BoostHub & General Knowledge AI
+                  <p className="text-[10px] text-slate-300">
+                    Created by Prince Abba • Universal AI & Vision
                   </p>
                 </div>
               </div>
@@ -256,7 +430,7 @@ CRITICAL RULES:
                         id: `welcome_${Date.now()}`,
                         role: 'assistant',
                         content:
-                          'Chat cleared! ⚡ Ask me anything — app tips, translations, math, coding, science, or viral captions.',
+                          'Conversation refreshed! ⚡ Ask me anything, or send a picture using the 📷 button for full visual analysis.',
                         createdAt: new Date().toISOString(),
                       },
                     ])
@@ -282,39 +456,17 @@ CRITICAL RULES:
             </div>
 
             {/* Quick App Navigation Shortcuts */}
-            <div className="px-3 py-2 bg-[#080C1A] border-b border-white/10 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <div className="px-3 py-2 bg-[#080C1A] border-b border-white/5 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               <button
                 type="button"
                 onClick={() => {
                   onChangeTab('bedit');
                   setIsOpen(false);
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-purple-600/20 border border-purple-500/40 text-[11px] font-bold text-purple-200 inline-flex items-center gap-1 shrink-0 hover:bg-purple-600/30"
+                className="px-2.5 py-1 rounded-xl bg-purple-500/15 border border-purple-500/30 text-[11px] font-semibold text-purple-200 inline-flex items-center gap-1 shrink-0 hover:bg-purple-500/25"
               >
-                <Wand2 className="w-3 h-3 text-purple-300" />
-                <span>B-Edit & 54 Voices</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenMessages();
-                  setIsOpen(false);
-                }}
-                className="px-2.5 py-1.5 rounded-xl bg-blue-600/20 border border-blue-500/40 text-[11px] font-bold text-blue-200 inline-flex items-center gap-1 shrink-0 hover:bg-blue-600/30"
-              >
-                <MessageSquare className="w-3 h-3 text-blue-300" />
-                <span>Voice Notes Chat</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onChangeTab('capshots');
-                  setIsOpen(false);
-                }}
-                className="px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] font-semibold text-slate-200 inline-flex items-center gap-1 shrink-0 hover:bg-white/10"
-              >
-                <Video className="w-3 h-3 text-cyan-400" />
-                <span>Capshots</span>
+                <Film className="w-3 h-3 text-purple-400" />
+                <span>B-Edit Studio</span>
               </button>
               <button
                 type="button"
@@ -322,21 +474,21 @@ CRITICAL RULES:
                   onChangeTab('bshop');
                   setIsOpen(false);
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] font-semibold text-slate-200 inline-flex items-center gap-1 shrink-0 hover:bg-white/10"
+                className="px-2.5 py-1 rounded-xl bg-teal-500/15 border border-teal-500/30 text-[11px] font-semibold text-teal-200 inline-flex items-center gap-1 shrink-0 hover:bg-teal-500/25"
               >
-                <ShoppingBag className="w-3 h-3 text-pink-400" />
-                <span>B-Shop</span>
+                <ShoppingBag className="w-3 h-3 text-teal-400" />
+                <span>B-Shop Gifts</span>
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  onChangeTab('create');
+                  onOpenMessages();
                   setIsOpen(false);
                 }}
-                className="px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-[11px] font-semibold text-slate-200 inline-flex items-center gap-1 shrink-0 hover:bg-white/10"
+                className="px-2.5 py-1 rounded-xl bg-blue-500/15 border border-blue-500/30 text-[11px] font-semibold text-blue-200 inline-flex items-center gap-1 shrink-0 hover:bg-blue-500/25"
               >
-                <PlusCircle className="w-3 h-3 text-emerald-400" />
-                <span>Create Post</span>
+                <MessageSquare className="w-3 h-3 text-blue-400" />
+                <span>Messages</span>
               </button>
             </div>
 
@@ -352,28 +504,21 @@ CRITICAL RULES:
                     }`}
                   >
                     <div
-                      className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
+                      className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap ${
                         isBot
-                          ? 'bg-[#121A33] border border-blue-500/25 text-slate-100 rounded-tl-xs'
-                          : 'bg-blue-600 text-white rounded-tr-xs'
+                          ? 'bg-[#121A33] border border-blue-500/25 text-slate-100 rounded-tl-xs shadow-md'
+                          : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-tr-xs shadow-md'
                       }`}
                     >
                       {isBot && (
-                        <div className="flex items-center justify-between gap-2 mb-1 pb-1 border-b border-white/10">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-black text-amber-300 inline-flex items-center gap-1">
-                              <Sparkles className="w-3 h-3" /> B FLASH
-                            </span>
-                            {msg.isWebSearch && (
-                              <span className="px-1.5 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/40 text-[9px] font-extrabold text-cyan-300 inline-flex items-center gap-1">
-                                <Globe className="w-2.5 h-2.5" /> Web Grounded
-                              </span>
-                            )}
-                          </div>
+                        <div className="flex items-center justify-between gap-2 mb-1.5 pb-1 border-b border-white/10">
+                          <span className="text-[10px] font-black text-amber-300 inline-flex items-center gap-1">
+                            <Sparkles className="w-3 h-3" /> B FLASH AI
+                          </span>
                           <button
                             type="button"
                             onClick={() => handleSpeakMessage(msg)}
-                            className="text-[10px] text-blue-300 hover:text-white inline-flex items-center gap-1"
+                            className="text-[10px] text-blue-300 hover:text-white inline-flex items-center gap-1 font-semibold"
                           >
                             {speakingId === msg.id ? (
                               <>
@@ -387,23 +532,36 @@ CRITICAL RULES:
                           </button>
                         </div>
                       )}
-                      <div>{msg.content}</div>
+
+                      {/* Attached User Picture */}
+                      {msg.imageUrl && (
+                        <div className="mb-2 rounded-xl overflow-hidden border border-white/20">
+                          <img
+                            src={msg.imageUrl}
+                            alt="Attached image"
+                            className="max-h-48 w-full object-cover rounded-lg cursor-pointer hover:brightness-105"
+                            onClick={() => setPreviewZoomImage(msg.imageUrl!)}
+                          />
+                        </div>
+                      )}
+
+                      <div>{renderMessageContent(msg.content)}</div>
                     </div>
                   </div>
                 );
               })}
 
               {loading && (
-                <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-[#121A33] border border-blue-500/25 w-fit text-xs text-blue-300">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-[#121A33] border border-blue-500/25 w-fit text-xs text-blue-300 animate-pulse">
                   <Zap className="w-3.5 h-3.5 text-amber-300 animate-bounce" />
-                  <span>B FLASH is thinking...</span>
+                  <span>B FLASH is analyzing & preparing answer...</span>
                 </div>
               )}
               <div ref={bottomRef} />
             </div>
 
-            {/* Suggested Prompts */}
-            <div className="px-3 py-2 bg-[#080C1A] border-t border-white/10 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+            {/* Quick Prompts */}
+            <div className="px-3 py-1.5 bg-[#080C1A] border-t border-white/10 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               {QUICK_PROMPTS.map((prompt, idx) => (
                 <button
                   key={idx}
@@ -412,59 +570,74 @@ CRITICAL RULES:
                   onClick={() => sendQuestion(prompt)}
                   className="px-2.5 py-1 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-[10px] text-slate-300 whitespace-nowrap shrink-0 transition-colors"
                 >
-                  {prompt.length > 48 ? `${prompt.slice(0, 48)}...` : prompt}
+                  {prompt}
                 </button>
               ))}
             </div>
 
-            {/* Input Form with Web Search Toggle */}
-            <div className="p-2.5 sm:p-3 bg-[#0B1021] border-t border-white/10 space-y-2">
-              <div className="flex items-center justify-between px-1">
+            {/* Attached Image Preview Bar before sending */}
+            {attachedImage && (
+              <div className="px-3 py-2 bg-[#0B132B] border-t border-cyan-500/30 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <img
+                    src={attachedImage.dataUrl}
+                    alt="Upload thumbnail"
+                    className="w-10 h-10 object-cover rounded-lg border border-cyan-400/50"
+                  />
+                  <div className="text-[11px] text-cyan-200">
+                    <p className="font-bold">Picture Attached</p>
+                    <p className="text-[9px] text-slate-400">
+                      B FLASH will analyze this picture with your question
+                    </p>
+                  </div>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setWebSearchEnabled((prev) => !prev)}
-                  className={`px-2.5 py-1 rounded-full border text-[10px] font-bold flex items-center gap-1.5 transition-all ${
-                    webSearchEnabled
-                      ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20 ring-1 ring-cyan-400/40'
-                      : 'bg-white/5 border-white/10 text-slate-400 hover:text-slate-200'
-                  }`}
-                  title={webSearchEnabled ? 'Live Web Search enabled' : 'Click to enable live Web Search'}
+                  onClick={() => setAttachedImage(null)}
+                  className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white"
                 >
-                  <Globe className={`w-3 h-3 ${webSearchEnabled ? 'text-cyan-300 animate-pulse' : 'text-slate-400'}`} />
-                  <span>Web Search: {webSearchEnabled ? 'ON' : 'OFF'}</span>
+                  <X className="w-4 h-4" />
                 </button>
-                <span className="text-[10px] text-slate-400 hidden sm:inline">
-                  {webSearchEnabled ? '🌐 Live Google grounding active' : '⚡ Meta AI instant knowledge'}
-                </span>
               </div>
+            )}
 
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  sendQuestion(input);
-                }}
-                className="flex items-center gap-2"
+            {/* Input Form with Picture Button */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendQuestion(input);
+              }}
+              className="p-3 bg-[#0B1021] border-t border-white/10 flex items-center gap-2"
+            >
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="min-h-[40px] min-w-[40px] rounded-2xl bg-white/5 hover:bg-white/10 border border-white/15 text-cyan-400 hover:text-cyan-300 flex items-center justify-center transition-colors shadow-sm"
+                title="Send picture to B FLASH"
               >
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={
-                    webSearchEnabled
-                      ? 'Search live web or ask science, tech, math, jokes...'
-                      : 'Ask B FLASH anything — science, math, jokes, advice...'
-                  }
-                  className="flex-1 bg-white/5 border border-white/15 rounded-2xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                />
-                <button
-                  type="submit"
-                  disabled={!input.trim() || loading}
-                  className="min-h-[40px] min-w-[40px] rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
-              </form>
-            </div>
+                <ImageIcon className="w-4 h-4" />
+              </button>
+
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder={
+                  attachedImage
+                    ? 'Ask about this picture...'
+                    : 'Ask B FLASH anything or send pictures...'
+                }
+                className="flex-1 bg-white/5 border border-white/15 rounded-2xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              />
+
+              <button
+                type="submit"
+                disabled={(!input.trim() && !attachedImage) || loading}
+                className="min-h-[40px] min-w-[40px] rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
           </div>
         </div>
       )}

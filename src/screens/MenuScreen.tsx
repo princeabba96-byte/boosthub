@@ -13,19 +13,20 @@ import {
   Search,
   Sparkles,
   ShieldCheck,
-  ShieldAlert,
-  Bot,
   Bell,
   X,
   CheckCircle2,
   BookOpen,
   MessageSquare,
+  Package,
+  Download,
+  ExternalLink,
 } from 'lucide-react';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { MainTab } from '../types';
 import { apiFetch } from '../services/api';
-import { BoostBotModal } from '../components/BoostBotModal';
+import { isPlatformFounder } from '../utils/creatorAdmin';
 
 interface MenuScreenProps {
   onNavigateTab: (tab: MainTab) => void;
@@ -35,35 +36,32 @@ interface MenuScreenProps {
     settingsSubMenu?: 'general' | 'notifications';
   }) => void;
   onOpenSearch: () => void;
+  onOpenOverseer?: () => void;
 }
 
 export const MenuScreen: React.FC<MenuScreenProps> = ({
   onNavigateTab,
   onOpenMyProfile,
   onOpenSearch,
+  onOpenOverseer,
 }) => {
   const { userProfile, logout, showToast } = useAuth();
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [githubToken, setGithubToken] = useState(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('bh_gh_token') || '';
+      return sessionStorage.getItem('boosthub_gh_token') || '';
     }
     return '';
   });
   const [pushingGithub, setPushingGithub] = useState(false);
   const [githubPushStatus, setGithubPushStatus] = useState<string | null>(null);
-  const [boostBotOpen, setBoostBotOpen] = useState(false);
 
-  const isFounderAdmin =
-    userProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com' ||
-    userProfile?.username?.trim().toLowerCase() === 'abba' ||
-    userProfile?.id === 'eaada352-5704-4566-a7a7-88df80853ada' ||
-    Boolean((userProfile as any)?.is_admin);
+  const isFounderAdmin = isPlatformFounder(userProfile);
 
   const handleDirectPushToGithubPages = async () => {
     setPushingGithub(true);
-    setGithubPushStatus('Pushing production bundle to princeabba96-byte/boosthub main branch...');
+    setGithubPushStatus('Pushing v23 bundle to princeabba96-byte/boosthub main branch...');
     try {
       const res = await apiFetch<{
         ok: boolean;
@@ -91,6 +89,48 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
     } finally {
       setPushingGithub(false);
     }
+  };
+
+  const handleDownloadUptodownPackage = () => {
+    const uptodownConfig = {
+      appName: 'BoostHub - Video Editor & Creator Community',
+      packageName: 'com.boosthub.aba',
+      versionName: '1.0.2',
+      versionCode: 2,
+      category: 'Multimedia / Video Players & Editors',
+      developer: 'Prince Abba (@princeabba96-byte)',
+      targetPlatform: 'Android 5.0+ (API 21-35)',
+      description:
+        'BoostHub is the premier creator social platform featuring Capshots vertical videos, B-Edit Studio pro video editor, B FLASH multimodal AI assistant, B-Shop virtual gifting, and creator communities.',
+      uptodownSubmissionGuide: [
+        '1. Register or log into the Uptodown Developer Zone: https://publishers.uptodown.com',
+        '2. Click "Add New App" and select Android.',
+        '3. Enter Title: BoostHub and Package: com.boosthub.aba.',
+        '4. Provide the app description, category (Video Players / Social), and screenshots.',
+        '5. Upload your APK or submit the PWA live manifest URL: https://princeabba96-byte.github.io/boosthub/manifest.json',
+        '6. Submit for review! Uptodown reviews and indexes within 24-48 hours.',
+      ],
+      manifestUrl: 'https://princeabba96-byte.github.io/boosthub/manifest.json',
+      liveUrl: 'https://princeabba96-byte.github.io/boosthub/',
+      packageConfigs: {
+        twaManifest: '/twa-manifest.json',
+        androidManifest: '/AndroidManifest.xml',
+        webManifest: '/manifest.json',
+      },
+    };
+
+    const blob = new Blob([JSON.stringify(uptodownConfig, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'boosthub-uptodown-package-config.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Downloaded Uptodown Package Configuration!', 'success');
   };
 
   const handleLogout = async () => {
@@ -213,6 +253,35 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* CLASSIFIED: Boost Bot Overseer System (Visible ONLY to Founder Prince Abba) */}
+      {isFounderAdmin && (
+        <button
+          type="button"
+          onClick={onOpenOverseer}
+          className="w-full mb-5 p-4 rounded-3xl bg-gradient-to-r from-[#070D18] via-[#0A1624] to-[#070D18] border-2 border-emerald-500/50 hover:border-emerald-400 text-left transition-all shadow-[0_0_35px_rgba(16,185,129,0.25)] group flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/60 flex items-center justify-center text-emerald-400 group-hover:scale-105 transition-transform shadow-lg shadow-emerald-500/20">
+              <ShieldCheck className="w-6 h-6 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-mono text-sm font-black text-white tracking-wide">
+                  BOOST BOT: OVERSEER SYSTEM
+                </p>
+                <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/50 text-[9px] font-black text-emerald-300 tracking-wider">
+                  COVERT SENTINEL
+                </span>
+              </div>
+              <p className="text-xs text-emerald-300/90 mt-0.5">
+                Violations radar • Proof evidence • User credentials • Block & suspend
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-emerald-400 group-hover:translate-x-1 transition-transform" />
+        </button>
       )}
 
       {/* Section 1: Marketplace & Creator Studio */}
@@ -417,90 +486,92 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
         </button>
 
         {isFounderAdmin && (
-          <div className="mt-4 space-y-3">
-            {/* BoostBot Internal AI Card */}
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-[#121B38] via-[#0E152E] to-[#1E1438] border border-cyan-500/40 space-y-3 shadow-xl shadow-cyan-950/40">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300">
-                    <ShieldAlert className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-xs font-black text-white flex items-center gap-1.5">
-                      <span>BOOST BOT Internal AI Auditor</span>
-                      <span className="px-1.5 py-0.2 rounded-md bg-purple-500/20 border border-purple-400/40 text-[9px] font-extrabold text-purple-300">
-                        FOUNDER ONLY
-                      </span>
-                    </p>
-                    <p className="text-[11px] text-slate-300">
-                      Live AI Compliance: Scans all users, posts & comments for rule violations
-                    </p>
-                  </div>
-                </div>
-
-                <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 border border-cyan-400/40 text-[10px] font-extrabold text-cyan-300 shrink-0">
-                  Real AI Active
-                </span>
-              </div>
-
-              <div className="pt-2 border-t border-white/10 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Confidential security co-pilot for Prince Abba</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setBoostBotOpen(true)}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 via-blue-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-black shadow-lg shadow-cyan-600/25 inline-flex items-center justify-center gap-1.5 transition-all active:scale-95"
-                >
-                  <Bot className="w-3.5 h-3.5 text-cyan-200" />
-                  <span>Open BoostBot Auditor</span>
-                </button>
-              </div>
-            </div>
-
-            {/* GitHub Pages 1-Click Sync Card */}
-            <div className="p-4 rounded-2xl bg-gradient-to-br from-[#1E1E26] to-[#141829] border border-[#4A90E2]/40 space-y-3 shadow-lg">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-[#4A90E2]" />
-                    <span>GitHub Pages Live Sync (Founder Only)</span>
-                  </p>
-                  <p className="text-[11px] text-slate-400">
-                    Target: <code className="text-blue-300">princeabba96-byte/boosthub</code> (main branch)
-                  </p>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">
-                  Production Ready
-                </span>
-              </div>
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <input
-                  type="password"
-                  value={githubToken}
-                  onChange={(e) => setGithubToken(e.target.value)}
-                  placeholder="Paste GitHub Personal Access Token (ghp_...) to push directly"
-                  className="flex-1 px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4A90E2]"
-                />
-                <button
-                  type="button"
-                  onClick={handleDirectPushToGithubPages}
-                  disabled={pushingGithub}
-                  className="px-4 py-2 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] disabled:opacity-50 text-white text-xs font-bold whitespace-nowrap shadow"
-                >
-                  {pushingGithub ? 'Pushing to GitHub...' : 'Push to GitHub Pages'}
-                </button>
-              </div>
-              {githubPushStatus && (
-                <p className="text-[11px] text-blue-300 font-medium">
-                  {githubPushStatus}
+          <div className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-[#1E1E26] to-[#141829] border border-[#4A90E2]/40 space-y-3 shadow-lg">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-extrabold text-white flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#4A90E2]" />
+                  <span>GitHub Pages v23 Live Sync (Founder Only)</span>
                 </p>
-              )}
+                <p className="text-[11px] text-slate-400">
+                  Target: <code className="text-blue-300">princeabba96-byte/boosthub</code> (main • v23 bundle ready)
+                </p>
+              </div>
+              <span className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-bold text-emerald-300">
+                v23 Built
+              </span>
             </div>
+
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="password"
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+                placeholder="Paste GitHub Personal Access Token to push directly"
+                className="flex-1 px-3 py-2 rounded-xl bg-black/40 border border-white/10 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-[#4A90E2]"
+              />
+              <button
+                type="button"
+                onClick={handleDirectPushToGithubPages}
+                disabled={pushingGithub}
+                className="px-4 py-2 rounded-xl bg-[#4A90E2] hover:bg-[#357ABD] disabled:opacity-50 text-white text-xs font-bold whitespace-nowrap shadow"
+              >
+                {pushingGithub ? 'Pushing v23...' : 'Push v23 to GitHub Pages'}
+              </button>
+            </div>
+            {githubPushStatus && (
+              <p className="text-[11px] text-blue-300 font-medium">
+                {githubPushStatus}
+              </p>
+            )}
           </div>
         )}
+
+        {/* Uptodown App Store Packaging & Distribution Card */}
+        <div className="p-4 rounded-2xl bg-gradient-to-br from-[#121B2A] via-[#101E36] to-[#0D1526] border border-cyan-500/30 space-y-3 shadow-lg">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-400/40 flex items-center justify-center text-cyan-300 shadow">
+                <Package className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="text-xs font-black text-white flex items-center gap-1.5">
+                  <span>Uptodown App Package & Release</span>
+                  <span className="px-1.5 py-0.2 rounded bg-cyan-500/20 border border-cyan-400/40 text-[9px] font-bold text-cyan-300">
+                    v1.0.2 Ready
+                  </span>
+                </p>
+                <p className="text-[11px] text-slate-300">
+                  Target: <code className="text-cyan-200">com.boosthub.aba</code> • Standalone APK / PWA bundle
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-300 leading-relaxed">
+            BoostHub is packaged with offline Service Worker, portrait mode lock, camera & media permissions, and zero ARCore blocks so you can publish directly to the Uptodown App Store.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-white/10">
+            <button
+              type="button"
+              onClick={handleDownloadUptodownPackage}
+              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold inline-flex items-center gap-1.5 shadow"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download Uptodown Package</span>
+            </button>
+            <a
+              href="https://publishers.uptodown.com"
+              target="_blank"
+              rel="noreferrer"
+              className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-slate-200 text-xs font-bold inline-flex items-center gap-1.5 border border-white/15"
+            >
+              <ExternalLink className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Open Uptodown Developer Zone</span>
+            </a>
+          </div>
+        </div>
       </div>
 
       {/* Logout Card */}
@@ -612,12 +683,6 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
           </div>
         </div>
       )}
-
-      {/* BoostBot Internal AI Modal (Founder Prince Abba Only) */}
-      <BoostBotModal
-        isOpen={boostBotOpen}
-        onClose={() => setBoostBotOpen(false)}
-      />
     </div>
   );
 };

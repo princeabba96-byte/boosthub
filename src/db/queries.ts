@@ -2314,6 +2314,7 @@ export async function handleCommunityAction(
     | 'pin_post'
     | 'delete_post'
     | 'like_post'
+    | 'react_post'
     | 'set_role'
     | 'remove_member'
     | 'update_rules',
@@ -2382,6 +2383,23 @@ export async function handleCommunityAction(
           .where(eq(communityPosts.id, Number(payload.postId)));
       }
       return { ok: true };
+    }
+
+    if (action === 'react_post' && payload?.postId) {
+      const targetRows = await db
+        .select()
+        .from(communityPosts)
+        .where(eq(communityPosts.id, Number(payload.postId)));
+      if (targetRows.length > 0) {
+        const isRemove = Boolean(payload?.isRemove);
+        const nextLikes = Math.max(0, (targetRows[0].likesCount || 0) + (isRemove ? -1 : 1));
+        await db
+          .update(communityPosts)
+          .set({ likesCount: nextLikes })
+          .where(eq(communityPosts.id, Number(payload.postId)));
+        return { ok: true, likesCount: nextLikes, emoji: payload?.emoji };
+      }
+      return { ok: true, emoji: payload?.emoji };
     }
 
     const myRole = existingMember[0]?.role;

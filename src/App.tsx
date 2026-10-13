@@ -48,9 +48,12 @@ import {
   GiftCelebrationOverlay,
   GiftCelebrationPayload,
 } from './components/GiftCelebrationOverlay';
+import { BoostBotOverseerModal } from './components/BoostBotOverseerModal';
+import { isPlatformFounder, MASTER_CREATOR_PIN } from './utils/creatorAdmin';
 
 const BoostHubAppShell: React.FC = () => {
-  const { userProfile, loading, isOffline, toasts } = useAuth();
+  const { userProfile, loading, isOffline, toasts, realtimeEvents, showToast } =
+    useAuth();
   const [activeTab, setActiveTab] = useState<MainTab>('home');
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
   const [viewedUserId, setViewedUserId] = useState<string | null>(null);
@@ -73,6 +76,48 @@ const BoostHubAppShell: React.FC = () => {
   const [messagePartner, setMessagePartner] = useState<UserProfile | null>(null);
   const [giftCelebration, setGiftCelebration] =
     useState<GiftCelebrationPayload | null>(null);
+
+  // Overseer Boost Bot State & Secret PIN verification
+  const [overseerOpen, setOverseerOpen] = useState(false);
+  const [showMasterPinPrompt, setShowMasterPinPrompt] = useState(false);
+  const [masterPinInput, setMasterPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+
+  useEffect(() => {
+    const handleSecretTrigger = () => {
+      if (isPlatformFounder(userProfile)) {
+        setOverseerOpen(true);
+      } else {
+        setShowMasterPinPrompt(true);
+      }
+    };
+    window.addEventListener('boosthub:secret-overseer-trigger', handleSecretTrigger);
+    return () => {
+      window.removeEventListener(
+        'boosthub:secret-overseer-trigger',
+        handleSecretTrigger
+      );
+    };
+  }, [userProfile]);
+
+  useEffect(() => {
+    if (!realtimeEvents || realtimeEvents.length === 0) return;
+    const latest = realtimeEvents[realtimeEvents.length - 1];
+    if (latest && latest.type === 'gift_received' && latest.payload) {
+      const p = latest.payload;
+      if (String(p.receiverId) === userProfile?.id) {
+        setGiftCelebration({
+          id: `gift_recv_${Date.now()}`,
+          senderName: p.senderName || 'A Supporter',
+          receiverName: userProfile?.displayName || 'You',
+          itemCode: p.itemCode || 'trophy',
+          quantity: Number(p.quantity) || 1,
+          message: p.message || '',
+          badgeUnlocked: 'Received with +Creator XP!',
+        });
+      }
+    }
+  }, [realtimeEvents, userProfile]);
 
   useEffect(() => {
     const handleGiftCustomEvent = (e: Event) => {
@@ -428,6 +473,7 @@ const BoostHubAppShell: React.FC = () => {
                   setSearchInitialQuery('');
                   setSearchOpen(true);
                 }}
+                onOpenOverseer={() => setOverseerOpen(true)}
               />
             </div>
           )}
@@ -528,6 +574,87 @@ const BoostHubAppShell: React.FC = () => {
         celebration={giftCelebration}
         onDismiss={() => setGiftCelebration(null)}
       />
+
+      {/* CLASSIFIED: Boost Bot Covert Overseer System (Prince Abba Direct Authority) */}
+      <BoostBotOverseerModal
+        isOpen={overseerOpen}
+        onClose={() => setOverseerOpen(false)}
+      />
+
+      {/* Master Creator PIN Verification Modal */}
+      {showMasterPinPrompt && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#0B1021] border-2 border-emerald-500/50 rounded-2xl p-5 space-y-4 shadow-2xl text-center">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400 mx-auto">
+              <span className="text-xl">🛡️</span>
+            </div>
+            <div>
+              <h3 className="font-mono text-sm font-black text-white uppercase tracking-wider">
+                OVERSEER COMMAND VERIFICATION
+              </h3>
+              <p className="text-xs text-emerald-300/80 mt-1">
+                Enter Master Creator PIN to initialize Boost Bot
+              </p>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (
+                  masterPinInput.trim() === MASTER_CREATOR_PIN ||
+                  masterPinInput.trim().toLowerCase() === 'princeabba'
+                ) {
+                  setShowMasterPinPrompt(false);
+                  setMasterPinInput('');
+                  setPinError(false);
+                  try {
+                    sessionStorage.setItem('boosthub_overseer_master_unlocked', 'true');
+                  } catch {}
+                  setOverseerOpen(true);
+                } else {
+                  setPinError(true);
+                }
+              }}
+              className="space-y-3"
+            >
+              <input
+                type="password"
+                value={masterPinInput}
+                onChange={(e) => {
+                  setMasterPinInput(e.target.value);
+                  setPinError(false);
+                }}
+                placeholder="Enter 4-Digit Creator PIN"
+                className="w-full text-center tracking-widest text-lg font-mono py-2.5 px-3 rounded-xl bg-black/60 border border-white/20 text-white focus:outline-none focus:border-emerald-400"
+                autoFocus
+              />
+              {pinError && (
+                <p className="text-xs text-rose-400 font-bold">
+                  Incorrect PIN. Access denied.
+                </p>
+              )}
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMasterPinPrompt(false);
+                    setMasterPinInput('');
+                    setPinError(false);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white/10 text-xs text-slate-300 font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-slate-950 uppercase tracking-wider"
+                >
+                  Authorize
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Non-Blocking Toast Notifications */}
       <div className="fixed bottom-20 lg:bottom-6 right-4 z-50 flex flex-col gap-2 pointer-events-none">

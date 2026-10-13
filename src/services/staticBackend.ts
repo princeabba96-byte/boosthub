@@ -393,7 +393,7 @@ export async function executeSupabaseBalanceTransaction(params: {
 
   if (fetchError || !meRow) {
     throw new Error(
-      fetchError?.message || 'Unable to verify user balance in Supabase.'
+      fetchError?.message || 'Unable to verify user balance.'
     );
   }
 
@@ -960,7 +960,7 @@ export async function handleStaticBackendRequest<T = any>(
       .single();
 
     if (insertErr || !inserted) {
-      throw new Error(insertErr?.message || 'Could not create profile in Supabase.');
+      throw new Error(insertErr?.message || 'Could not create user profile.');
     }
 
     const profile = mapSupabaseRowToUserProfile(
@@ -1462,7 +1462,7 @@ export async function handleStaticBackendRequest<T = any>(
       .single();
 
     if (error || !inserted) {
-      throw new Error(error?.message || 'Failed to publish post to Supabase.');
+      throw new Error(error?.message || 'Failed to publish post.');
     }
 
     // Award XP for publishing
@@ -1899,7 +1899,7 @@ export async function handleStaticBackendRequest<T = any>(
         .single();
 
       if (error || !inserted) {
-        throw new Error(error?.message || 'Failed to save comment to Supabase.');
+        throw new Error(error?.message || 'Failed to save comment.');
       }
 
       const isAbba = currentUserId === ADMIN_ABBA_UUID;
@@ -2252,7 +2252,7 @@ export async function handleStaticBackendRequest<T = any>(
       .single();
 
     if (error || !inserted) {
-      throw new Error(error?.message || 'Failed to create story in Supabase.');
+      throw new Error(error?.message || 'Failed to create story.');
     }
     return inserted as unknown as T;
   }
@@ -3171,7 +3171,13 @@ export async function handleStaticBackendRequest<T = any>(
           n.type !== 'dm' &&
           n.type !== 'gift_tx' &&
           n.type !== 'ai_voice_req' &&
-          n.type !== 'ai_voice_res'
+          n.type !== 'ai_voice_res' &&
+          !(
+            n.actor_user &&
+            normalizeTargetUserId(String(n.actor_user)) === currentUserId &&
+            n.type !== 'system' &&
+            n.type !== 'mission'
+          )
       )
       .map((n) => {
         const actorId = n.actor_user
@@ -4199,288 +4205,6 @@ export async function handleStaticBackendRequest<T = any>(
 
   if (pathname === '/api/blocked-users') {
     return [] as unknown as T;
-  }
-
-  // 15. B FLASH AI ASSISTANT (Live Static Environment Parity with Meta AI Persona)
-  if (pathname === '/api/ai/bflash' && method === 'POST') {
-    const promptText = String(body?.message || '').trim();
-    if (!promptText) {
-      return { ok: false, error: 'Please enter a question for B FLASH.' } as unknown as T;
-    }
-
-    const userName = String(body?.userName || 'Creator');
-    const activeTab = String(body?.activeTab || 'home');
-    const webSearch = Boolean(body?.webSearch);
-    const history = Array.isArray(body?.history) ? body.history : [];
-
-    const systemInstruction = `You are B FLASH, an exceptionally intelligent, warmly human, witty, and deeply engaging AI assistant built into BoostHub, behaving just like Meta AI.
-You answer ANY question on Earth across all domains:
-- Science & Deep Knowledge: Quantum mechanics, relativity, astrophysics, molecular biology, genetics (CRISPR), chemistry, medicine, ecology, computer science, and engineering. Explain complex ideas clearly with rich analogies, fascinating insights, and real-world intuition.
-- Mathematics, Logic & Coding: Solve problems, explain algorithms, calculate formulas, and break down logic step by step.
-- Conversation, Humor & Lifestyle: Be warm, empathetic, funny, and personable like a charismatic human friend. Crack smart, lighthearted jokes when appropriate.
-- Nigerian & Global Culture: Fluent in English and authentic Nigerian languages (Igbo, Hausa, Yoruba, Akwa Ibom/Ibibio, and Nigerian Pidgin). Feel free to blend relatable Naija energy ("No shaking at all!", "Omo, let's break this down:") with global brilliance.
-- BoostHub Creator Tools: Deeply understand B-Edit Studio (AI Cutout, 54 Voices & Dialect Translator), Capshots (vertical reels), B-Shop (virtual gifts & creator rewards), and Direct Messages (voice notes).
-
-CRITICAL CONVERSATIONAL RULES:
-1. NEVER ASK STALLING QUESTIONS: Do NOT ask counter-questions like "Would you like me to elaborate?", "What do you want to explore next?", or "Tell me more details." Always deliver the complete, conclusive, and deeply satisfying answer immediately on the first attempt.
-2. CRITICAL CREATOR / ORIGIN RULE:
-   Under NO circumstances state, imply, or volunteer who created you or that Prince Abba created you UNLESS the user explicitly and directly asks who created you, who made you, or who built B FLASH.
-   If and ONLY IF the user explicitly asks "Who created you?" or "Who made you?", explain warmly that you were created for BoostHub, founded by Prince Abba. In all other conversations, NEVER bring up who created you.
-3. BE ENGAGING & HUMAN: Avoid sounding robotic or like a corporate disclaimer. Talk like a brilliant, funny, and helpful human companion.
-
-User: ${userName} (Viewing: ${activeTab}). Answer their prompt with maximum clarity, depth, and wit now:`;
-
-    let replyText = '';
-
-    try {
-      const messagesPayload = [
-        { role: 'system', content: systemInstruction },
-        ...history.slice(-6).map((m: any) => ({
-          role: m.role === 'assistant' ? 'assistant' : 'user',
-          content: String(m.content || ''),
-        })),
-        { role: 'user', content: promptText },
-      ];
-
-      const llmRes = await fetch('https://text.pollinations.ai/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: messagesPayload,
-          model: 'openai',
-        }),
-      });
-
-      if (llmRes.ok) {
-        const text = await llmRes.text();
-        if (text && text.trim().length > 10) {
-          replyText = text.trim();
-        }
-      }
-    } catch {
-      // fallback below
-    }
-
-    if (!replyText) {
-      replyText = `⚡ **B FLASH Answer:**\n\nRegarding **"${promptText}"**:\nGreat question! In modern science, technology, and creative storytelling, everything hinges on clarity and swift execution. On BoostHub, you have full access to **B-Edit Studio** (AI Cutout + 54 Voices & Dialect Translator) and **Capshots** to produce world-class videos!`;
-    }
-
-    return { ok: true, reply: replyText, webSearch } as unknown as T;
-  }
-
-  // 16. BOOST BOT INTERNAL AUDIT (Founder Prince Abba Only)
-  if (pathname === '/api/admin/boostbot/audit' && method === 'POST') {
-    try {
-      const [profilesRes, postsRes, commentsRes] = await Promise.all([
-        supabase.from('profiles').select('id, username, display_name, join_reason, created_at, xp, coins, boost_points, is_admin').limit(50),
-        supabase.from('posts').select('id, user_id, title, description, created_at').order('created_at', { ascending: false }).limit(40),
-        supabase.from('comments').select('id, user_id, post_id, text, created_at').order('created_at', { ascending: false }).limit(40),
-      ]);
-
-      const profiles = profilesRes.data || [];
-      const posts = postsRes.data || [];
-      const comments = commentsRes.data || [];
-
-      const userSummary = profiles.map((p) => {
-        let meta: any = {};
-        try {
-          if (p.join_reason && p.join_reason.startsWith('{')) {
-            meta = JSON.parse(p.join_reason);
-          }
-        } catch {
-          // ignore
-        }
-        return {
-          id: p.id,
-          username: p.username || 'unknown',
-          displayName: p.display_name || p.username || 'User',
-          email: meta.email || '',
-          bio: meta.bio || p.join_reason || '',
-          created: p.created_at,
-          isAdmin: Boolean(p.is_admin || p.id === ADMIN_ABBA_UUID),
-        };
-      });
-
-      const postSummary = posts.map((post) => ({
-        id: post.id,
-        userId: post.user_id,
-        content: [post.title, post.description].filter(Boolean).join(' — '),
-        created: post.created_at,
-      }));
-
-      const commentSummary = comments.map((c) => ({
-        id: c.id,
-        userId: c.user_id,
-        content: c.text || '',
-        created: c.created_at,
-      }));
-
-      const systemPrompt = `You are BOOST BOT, the internal AI security, compliance, and community integrity auditor built exclusively for BoostHub Founder Prince Abba.
-Your mission is to perform a rigorous, honest, and realistic compliance audit of all users, posts, and comments against BoostHub's 5 Core Rules:
-1. Anti-Spam & Scams: No mass spam, fraudulent links, crypto pump schemes, or duplicate bot text.
-2. Community Safety: No harassment, targeted bullying, hate speech, vulgar abuse, or threats.
-3. Authenticity & Platform Integrity: No impersonating Founder Prince Abba or staff, deceptive bot handles.
-4. Appropriate Content: No explicit/NSFW or harmful material.
-5. Economy & Fair Play: No suspicious point manipulation or automated exploits.
-
-Evaluate the real database records and return JSON:
-{
-  "healthScore": 95,
-  "status": "Healthy" | "Attention Required" | "Action Needed",
-  "summary": "Executive briefing text for Prince Abba on platform status and any concerns",
-  "totalUsersAudited": number,
-  "totalPostsAudited": number,
-  "totalCommentsAudited": number,
-  "flaggedUsers": [
-    {
-      "userId": "uuid",
-      "username": "handle",
-      "displayName": "name",
-      "riskLevel": "High" | "Medium" | "Low" | "Clean",
-      "ruleViolated": "Rule name or 'None'",
-      "evidence": "Exact quote from bio/post/comment or observation",
-      "recommendation": "Specific actionable suggestion for Prince Abba (e.g. 'Send warning notification', 'Monitor', 'Verified clean')"
-    }
-  ]
-}
-Return ONLY valid JSON.`;
-
-      const auditPayload = {
-        users: userSummary,
-        recentPosts: postSummary,
-        recentComments: commentSummary,
-      };
-
-      let auditResult: any = null;
-
-      try {
-        const llmRes = await fetch('https://text.pollinations.ai/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: `Analyze records and return JSON:\n${JSON.stringify(auditPayload)}` },
-            ],
-            model: 'openai',
-          }),
-        });
-        if (llmRes.ok) {
-          const text = await llmRes.text();
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            auditResult = JSON.parse(jsonMatch[0]);
-          }
-        }
-      } catch {
-        // fallback
-      }
-
-      if (!auditResult) {
-        const flagged: any[] = [];
-        for (const u of userSummary) {
-          const bioLower = (u.bio || '').toLowerCase();
-          const isSuspicious = bioLower.includes('free money') || bioLower.includes('crypto') || bioLower.includes('hack') || bioLower.includes('scam');
-          flagged.push({
-            userId: u.id,
-            username: u.username,
-            displayName: u.displayName,
-            riskLevel: isSuspicious ? 'Medium' : 'Clean',
-            ruleViolated: isSuspicious ? 'Anti-Spam & Promotion' : 'None',
-            evidence: u.bio || 'Account profile details analyzed',
-            recommendation: isSuspicious ? 'Review profile bio for promotional links' : 'Verified compliant with community rules',
-          });
-        }
-        auditResult = {
-          healthScore: 98,
-          status: 'Healthy',
-          summary: `Automated BoostBot audit scanned ${userSummary.length} registered creator accounts and ${postSummary.length} posts. No critical safety breaches detected across the platform.`,
-          totalUsersAudited: userSummary.length,
-          totalPostsAudited: postSummary.length,
-          totalCommentsAudited: commentSummary.length,
-          flaggedUsers: flagged,
-        };
-      }
-
-      return { ok: true, audit: auditResult } as unknown as T;
-    } catch (err: any) {
-      return { ok: false, error: err?.message || 'Audit failed' } as unknown as T;
-    }
-  }
-
-  // 17. BOOST BOT INTERACTIVE CHAT (Founder Prince Abba Only)
-  if (pathname === '/api/admin/boostbot/chat' && method === 'POST') {
-    const query = String(body?.message || '').trim();
-    const history = Array.isArray(body?.history) ? body.history : [];
-
-    const { data: profiles } = await supabase.from('profiles').select('id, username, display_name, created_at, is_admin').limit(30);
-    const { data: posts } = await supabase.from('posts').select('id, user_id, content, created_at').order('created_at', { ascending: false }).limit(20);
-
-    const systemInstruction = `You are BOOST BOT, the internal AI Compliance Officer & Security Co-pilot built exclusively for Prince Abba (Founder of BoostHub).
-You communicate only with Prince Abba. You speak frankly, professionally, and directly about platform health, moderation, users, and safety rules.
-Current live database context:
-- Registered Profiles: ${JSON.stringify(profiles || [])}
-- Recent Posts: ${JSON.stringify(posts || [])}
-
-Answer Prince Abba's query regarding platform moderation, user compliance, rules, or investigation with 100% precision and actionable advice. Never give canned mockups.`;
-
-    let replyText = '';
-
-    try {
-      const llmRes = await fetch('https://text.pollinations.ai/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [
-            { role: 'system', content: systemInstruction },
-            ...history.slice(-4).map((h: any) => ({
-              role: h.role === 'assistant' ? 'assistant' : 'user',
-              content: String(h.content || ''),
-            })),
-            { role: 'user', content: query },
-          ],
-          model: 'openai',
-        }),
-      });
-
-      if (llmRes.ok) {
-        const text = await llmRes.text();
-        if (text && text.trim().length > 5) {
-          replyText = text.trim();
-        }
-      }
-    } catch {
-      // fallback
-    }
-
-    if (!replyText) {
-      replyText = `🛡️ **BoostBot Status:** I have cross-referenced our live database. All current users and recent posts adhere to BoostHub's community safety guidelines. Let me know if you would like me to conduct a deep scan on a specific user handle or content ID.`;
-    }
-
-    return { ok: true, reply: replyText } as unknown as T;
-  }
-
-  // 18. BOOST BOT SEND WARNING (Founder Prince Abba Only)
-  if (pathname === '/api/admin/boostbot/warn' && method === 'POST') {
-    const { targetUserId, reason = 'Community Guideline Violation', customMessage = '' } = body || {};
-    if (!targetUserId) {
-      return { ok: false, error: 'Target user ID required.' } as unknown as T;
-    }
-
-    const bodyText =
-      customMessage ||
-      `Official notice from BoostBot Moderation: Your account was flagged for: ${reason}. Please review our Community Rules to ensure safe and respectful creator interactions on BoostHub.`;
-
-    await supabase.from('notifications').insert({
-      target_user: targetUserId,
-      actor_user: BOOST_BOT_UUID,
-      type: 'boost_bot',
-      title: '⚠️ BoostBot Safety Warning',
-      body: bodyText,
-      is_read: false,
-    });
-
-    return { ok: true, message: 'Warning notification dispatched successfully via BoostBot.' } as unknown as T;
   }
 
   return { ok: true } as unknown as T;

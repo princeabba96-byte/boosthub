@@ -168,7 +168,7 @@ export const BoostBotOverseerModal: React.FC<BoostBotOverseerModalProps> = ({
     {
       id: 'init_1',
       sender: 'boostbot',
-      text: '🤖 BOOST BOT OVERSEER ONLINE. Sentinel active. All user uploads, posts, and comments are monitored under Prince Abba direct authority.',
+      text: '🤖 BOOST BOT OVERSEER ONLINE. In-app platform sentinel active. BoostHub public uploads, posts, and comments are monitored under Prince Abba direct authority (community content only; user personal life is strictly private).',
       time: new Date().toLocaleTimeString(),
     },
   ]);
@@ -204,6 +204,29 @@ export const BoostBotOverseerModal: React.FC<BoostBotOverseerModalProps> = ({
             postsCount: u.postsCount ?? 0,
           }))
         );
+
+        if (Array.isArray(res.reports) && res.reports.length > 0) {
+          const realReports: ViolationReport[] = res.reports.map((r: any) => ({
+            id: `rep_${r.id}`,
+            userId: r.userId || 'usr_unknown',
+            userName: r.reportedBy?.displayName || r.userDisplayName || 'Reported Creator',
+            username: r.reportedBy?.username || 'user',
+            userEmail: r.reportedBy?.email || 'creator@boosthub.app',
+            userAvatar: r.reportedBy?.avatarUrl || '',
+            category: r.category || 'inappropriate_content',
+            severity: 'high' as const,
+            confidencePct: 98.5,
+            textProof: r.content || r.reason || 'Reported by community members.',
+            sourceType: (r.targetType as any) || 'post',
+            detectedAt: r.createdAt || new Date().toISOString(),
+            status: 'pending' as const,
+            notes: `Flagged under BoostHub Standards: ${r.reason || 'In-app content review'}. User personal life is strictly private and never tracked.`,
+          }));
+          setViolations((prev) => {
+            const existingIds = new Set(realReports.map((x) => x.id));
+            return [...realReports, ...prev.filter((x) => !existingIds.has(x.id))];
+          });
+        }
       }
     } catch {
       // Fallback to current authenticated user + sample accounts
@@ -490,11 +513,11 @@ export const BoostBotOverseerModal: React.FC<BoostBotOverseerModalProps> = ({
                   BOOST BOT // OVERSEER SYSTEM
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-[9px] font-black tracking-widest uppercase">
-                  COVERT SENTINEL
+                  IN-APP MODERATION
                 </span>
               </div>
               <p className="text-[11px] font-mono text-emerald-400/90 tracking-wide">
-                PRINCE ABBA EXCLUSIVE • COVERT MONITORING • ZERO TRACE
+                BOOSTHUB COMMUNITY MODERATION • MONITORS IN-APP POSTS & CONTENT ONLY • NEVER MONITORS PERSONAL LIFE
               </p>
             </div>
           </div>

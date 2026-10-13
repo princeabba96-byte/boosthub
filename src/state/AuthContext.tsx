@@ -98,12 +98,14 @@ function normalizeUserAdminState(
   profile: UserProfile | null
 ): UserProfile | null {
   if (!profile) return null;
+  const cleanEmail = String(profile.email || '').trim().toLowerCase();
+  const cleanUsername = String(profile.username || '').trim().toLowerCase();
   const isOwnerAdmin =
-    (profile.id === ADMIN_ABBA_UUID || profile.id === ADMIN_ABBA_ALT_UUID) &&
-    (String(profile.username || '').toLowerCase() === 'abba' ||
-      String(profile.email || '')
-        .trim()
-        .toLowerCase() === 'princeabba96@gmail.com');
+    profile.id === ADMIN_ABBA_UUID ||
+    profile.id === ADMIN_ABBA_ALT_UUID ||
+    cleanEmail === 'princeabba96@gmail.com' ||
+    cleanUsername === 'abba' ||
+    cleanUsername === 'princeabba96-byte';
   if (isOwnerAdmin) {
     return {
       ...profile,
@@ -116,6 +118,19 @@ function normalizeUserAdminState(
       monetizationEligible: true,
       boostPoints: 999999999,
       balance: 999999999,
+      xp: 999999,
+      rank: 7,
+      rankTitle: 'Rank 7 • Sovereign Mythic',
+      badges: [
+        { id: 7, code: 'sovereign_legend', name: 'Sovereign Mythic Crown', description: 'Supreme Rank 7 Founder Godmode', iconName: 'crown', unlocked: true },
+        { id: 6, code: 'boost_pro', name: 'Boost Pro Grandmaster', description: 'Grandmaster Creator', iconName: 'shield', unlocked: true },
+        { id: 5, code: 'distant_winner', name: 'Distant Winner', description: 'Leaderboard Pioneer', iconName: 'shield', unlocked: true },
+        { id: 4, code: 'content_god', name: 'Content God', description: 'Elite Content Sovereign', iconName: 'shield', unlocked: true },
+        { id: 3, code: 'engagement_master', name: 'Engagement Master', description: 'Master of Engagement', iconName: 'shield', unlocked: true },
+        { id: 2, code: 'firering_editor', name: 'Firering Editor', description: 'Pro Video Editor', iconName: 'shield', unlocked: true },
+        { id: 1, code: 'rookie', name: 'Rookie Pioneer', description: 'Pioneer of BoostHub', iconName: 'shield', unlocked: true },
+        { id: 8, code: 'top_creator', name: 'Top Creator Prestige', description: 'Prestige VIP Badge', iconName: 'award', unlocked: true },
+      ],
     };
   }
   const syncedBp = Number(profile.balance ?? profile.boostPoints ?? 0);
@@ -198,7 +213,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      showToast('Back online. Synchronizing with Supabase...', 'success');
+      showToast('Back online. Synchronizing data...', 'success');
       refreshProfile();
     };
     const handleOffline = () => {
@@ -288,10 +303,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (row.type === 'gift_tx' || row.type === 'test_rt') return;
 
-      const isForMe =
-        String(row.target_user) === userProfile.id ||
-        String(row.actor_user) === userProfile.id;
-      if (!isForMe) return;
+      // STRICT PRIVACY: ONLY the recipient target_user receives the notification!
+      // The actor who liked or commented NEVER receives an alert about their own action!
+      const isTargetForMe = String(row.target_user) === userProfile.id;
+      if (!isTargetForMe) return;
+
+      // Do NOT notify if actor and target are the same (self-action), except system missions
+      if (
+        row.actor_user &&
+        String(row.actor_user) === userProfile.id &&
+        row.type !== 'mission' &&
+        row.type !== 'system'
+      ) {
+        return;
+      }
 
       const notifType = String(row.type || 'notification').toLowerCase();
       let deepLink = '?tab=notifications';

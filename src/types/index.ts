@@ -186,6 +186,8 @@ export interface UserProfile {
   friendshipStatus?: 'none' | 'friends' | 'pending_sent' | 'pending_received';
   friendshipId?: any;
   badges?: UserBadge[];
+  rank?: number;
+  rankTitle?: string;
   createdAt?: string;
 }
 
