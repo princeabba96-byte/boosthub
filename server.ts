@@ -1570,10 +1570,9 @@ BoostHub Ecosystem:
 
       let replyText = '';
       const bflashModels = [
-        'gemini-2.5-flash',
-        'gemini-3.1-flash-lite',
         'gemini-3.8-flash',
         'gemini-flash-latest',
+        'gemini-3.1-flash-lite',
       ];
 
       for (const modelName of bflashModels) {
@@ -2399,10 +2398,9 @@ Output ONLY valid JSON.`;
         };
 
         const models = [
-          'gemini-2.5-flash',
-          'gemini-3.1-flash-lite',
           'gemini-3.8-flash',
           'gemini-flash-latest',
+          'gemini-3.1-flash-lite',
         ];
         for (const model of models) {
           try {
