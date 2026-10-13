@@ -38,20 +38,9 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
 
   return (
     <header className="sticky top-0 z-30 h-14 bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md">
-      {/* Left: BoostHub logo with blue B circle + "BoostHub" text (with secret 5-tap creator gesture) */}
+      {/* Left: BoostHub logo with blue B circle + "BoostHub" text */}
       <button
-        onClick={(e) => {
-          onChangeTab('home');
-          const now = Date.now();
-          const lastTap = (window as any).__boosthub_last_logo_tap || 0;
-          const tapCount = now - lastTap < 2500 ? ((window as any).__boosthub_logo_taps || 0) + 1 : 1;
-          (window as any).__boosthub_last_logo_tap = now;
-          (window as any).__boosthub_logo_taps = tapCount;
-          if (tapCount >= 5) {
-            (window as any).__boosthub_logo_taps = 0;
-            window.dispatchEvent(new CustomEvent('boosthub:secret-overseer-trigger'));
-          }
-        }}
+        onClick={() => onChangeTab('home')}
         className="flex items-center gap-2.5 font-display text-xl font-extrabold tracking-tight text-white whitespace-nowrap group"
       >
         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#4A90E2] to-[#2563EB] flex items-center justify-center text-white font-display font-black text-lg shadow-[0_0_14px_rgba(74,144,226,0.5)] group-hover:scale-105 transition-transform">
