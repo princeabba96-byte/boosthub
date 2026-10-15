@@ -29,8 +29,6 @@ import {
   MasterPadlockIcon,
 } from './BadgeShieldIcons';
 
-import { isPlatformFounder } from '../utils/creatorAdmin';
-
 interface UserBadgesProgressModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -51,31 +49,21 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
 
   if (!isOpen) return null;
 
-  const isFounder = isPlatformFounder(profile);
-  const userXp = isFounder ? 99999 : profile.xp || 0;
-  const maxTrackXp = 7500;
-  const progressPct = isFounder
-    ? 100
-    : Math.min(100, Math.round((userXp / maxTrackXp) * 100));
-  const xpToNext = isFounder ? 0 : Math.max(0, maxTrackXp - userXp);
+  const userXp = profile.xp || 0;
+  const maxTrackXp = 3000;
+  const progressPct = Math.min(100, Math.round((userXp / maxTrackXp) * 100));
+  const xpToNext = Math.max(0, maxTrackXp - userXp);
 
   // Check which badges user has unlocked
-  const earnedCodeSet = new Set(
-    isFounder
-      ? USER_BADGES_CATALOG.map((b) => b.code)
-      : (profile.badges || []).map((b) => b.code)
-  );
+  const earnedCodeSet = new Set((profile.badges || []).map((b) => b.code));
 
   // Determine current badge level
-  let currentLevel = isFounder ? 7 : 1;
-  if (!isFounder) {
-    if (userXp >= 7500 && earnedCodeSet.has('boost_pro')) currentLevel = 7;
-    else if (userXp >= 3500 && earnedCodeSet.has('distant_winner')) currentLevel = 6;
-    else if (userXp >= 1500 && earnedCodeSet.has('content_god')) currentLevel = 5;
-    else if (userXp >= 900 && earnedCodeSet.has('engagement_master')) currentLevel = 4;
-    else if (userXp >= 500 && earnedCodeSet.has('firering_editor')) currentLevel = 3;
-    else if (userXp >= 250 && earnedCodeSet.has('rookie')) currentLevel = 2;
-  }
+  let currentLevel = 1;
+  if (userXp >= 3000) currentLevel = 6;
+  else if (userXp >= 2000) currentLevel = 5;
+  else if (userXp >= 1200) currentLevel = 4;
+  else if (userXp >= 600) currentLevel = 3;
+  else if (userXp >= 200) currentLevel = 2;
 
   const handleClaimRewards = () => {
     try {
@@ -243,28 +231,11 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
               </span>
             </div>
 
-            {isFounder && (
-              <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-500/25 via-yellow-500/15 to-amber-500/25 border-2 border-amber-400/60 flex items-center gap-3 shadow-lg shadow-amber-500/20">
-                <Crown className="w-7 h-7 text-amber-300 animate-pulse shrink-0" />
-                <div>
-                  <p className="text-xs font-black text-amber-300 uppercase tracking-wider flex items-center gap-1.5">
-                    <span>👑 FOUNDER SUPREME GODMODE</span>
-                    <span className="px-1.5 py-0.2 rounded bg-amber-400 text-slate-950 text-[9px] font-black">ALL BADGES ACTIVE</span>
-                  </p>
-                  <p className="text-[10px] text-amber-100/90 mt-0.5">
-                    Sovereign Creator status confirmed. All 7 Rank Shields and Prestige Honors are permanently unlocked for Prince Abba.
-                  </p>
-                </div>
-              </div>
-            )}
-
             {/* Vertical Milestone Pathway */}
             <div className="relative pl-6 space-y-4 before:absolute before:top-4 before:bottom-4 before:left-3.5 before:w-1 before:bg-gradient-to-b before:from-orange-500 before:via-cyan-400 before:to-slate-700 before:rounded-full">
               {USER_BADGES_CATALOG.filter((b) => b.category === 'progression').map((badge) => {
-                const isPreviousEarned = isFounder || !badge.requiredPreviousBadgeCode || earnedCodeSet.has(badge.requiredPreviousBadgeCode);
-                const isEarned = isFounder || (isPreviousEarned && earnedCodeSet.has(badge.code));
+                const isEarned = earnedCodeSet.has(badge.code) || userXp >= badge.requirementCount;
                 const isSelected = selectedBadge?.code === badge.code;
-                const isLockedBySequence = !isFounder && !isPreviousEarned;
 
                 return (
                   <div
@@ -303,16 +274,10 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                             className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
                               isEarned
                                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                : isLockedBySequence
-                                  ? 'bg-rose-950/60 text-rose-300 border-rose-500/40'
-                                  : 'bg-slate-800 text-slate-400 border-slate-700'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
                             }`}
                           >
-                            {isEarned
-                              ? `CLAIMED • +${badge.xpReward} XP`
-                              : isLockedBySequence
-                                ? `LOCKED • COMPLETE RANK ${badge.level - 1} FIRST`
-                                : `MISSION ACTIVE • ${badge.requirementCount} XP`}
+                            {isEarned ? `CLAIMED • +${badge.xpReward} XP` : `LOCKED • ${badge.requirementCount} XP`}
                           </span>
                         </div>
 
@@ -327,11 +292,6 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                           {isEarned && (
                             <span className="text-emerald-400 flex items-center gap-0.5">
                               <CheckCircle2 className="w-3 h-3" /> Unlocked
-                            </span>
-                          )}
-                          {isLockedBySequence && (
-                            <span className="text-rose-400 flex items-center gap-0.5">
-                              <Lock className="w-3 h-3" /> 1 Rank At A Time
                             </span>
                           )}
                         </div>

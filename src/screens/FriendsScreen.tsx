@@ -112,9 +112,6 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
       clean === 'eaada352-5704-4566-a7a7-88df80853ada' ||
       clean === 'abba' ||
       clean === 'princeabba' ||
-      clean === 'princeabba96-byte' ||
-      clean === 'pchukwuka114@gmail.com' ||
-      clean === 'princeabba96@gmail.com' ||
       clean === 'bh_5c82dc8e3aa243a28413'
     ) {
       return 'eaada352-5704-4566-a7a7-88df80853ada';
@@ -396,127 +393,20 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
 
   const handleCreateCommunityPost = async (e: React.FormEvent) => {
     e.preventDefault();
-    const content = commPostText.trim();
-    const mediaUrl = commPostMediaUrl;
-    const mediaType = commPostMediaType || (mediaUrl ? 'image' : 'post');
-    if (!content && !mediaUrl) return;
+    if (!commPostText.trim() && !commPostMediaUrl) return;
     if (!activeCommunity?.id) return;
-
-    // Reset input fields immediately for instantaneous upload feel
-    setCommPostText('');
-    setCommPostMediaUrl('');
-    setCommPostMediaType(null);
-    showToast('Posted to community!', 'success');
-
-    // Instant optimistic post in active community feed
-    const tempPostId = `opt_${Date.now()}`;
-    const optimisticPost = {
-      id: tempPostId,
-      communityId: activeCommunity.id,
-      userId: userProfile?.id || 'me',
-      content,
-      mediaUrl,
-      mediaType,
-      isPinned: false,
-      likesCount: 0,
-      createdAt: new Date().toISOString(),
-      author: {
-        id: userProfile?.id || 'me',
-        displayName: userProfile?.displayName || userProfile?.username || 'Creator',
-        username: userProfile?.username || 'creator',
-        avatarUrl: userProfile?.avatarUrl || '',
-      },
-      reactions: {},
-      myReaction: null,
-    };
-
-    setActiveCommunity((prev: any) =>
-      prev
-        ? {
-            ...prev,
-            posts: [optimisticPost, ...(prev.posts || [])],
-            postsCount: (prev.postsCount || 0) + 1,
-          }
-        : prev
-    );
-
     try {
-      const res: any = await apiFetch(`/api/communities/${activeCommunity.id}/action`, {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'post',
-          payload: { content, mediaUrl, mediaType },
-        }),
+      await handleCommunityAction(activeCommunity.id, 'post', {
+        content: commPostText.trim(),
+        mediaUrl: commPostMediaUrl,
+        mediaType: commPostMediaType || (commPostMediaUrl ? 'image' : 'post'),
       });
-      if (res && res.id) {
-        setActiveCommunity((prev: any) =>
-          prev
-            ? {
-                ...prev,
-                posts: (prev.posts || []).map((p: any) =>
-                  p.id === tempPostId ? { ...p, id: res.id } : p
-                ),
-              }
-            : prev
-        );
-      }
-      loadCommunities().catch(() => {});
+      setCommPostText('');
+      setCommPostMediaUrl('');
+      setCommPostMediaType(null);
+      showToast('Posted to community!', 'success');
     } catch (err: any) {
-      console.warn('Background community post sync:', err?.message);
-    }
-  };
-
-  const handleReactCommunityPost = async (postId: any, emoji: string) => {
-    if (!activeCommunity?.id) return;
-    const currentPost = (activeCommunity.posts || []).find((p: any) => p.id === postId);
-    if (!currentPost) return;
-
-    const isCurrent = currentPost.myReaction === emoji;
-    const isRemoving = isCurrent;
-    const prevEmoji = currentPost.myReaction;
-
-    // Optimistically update reactions immediately
-    setActiveCommunity((prev: any) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        posts: (prev.posts || []).map((p: any) => {
-          if (p.id !== postId) return p;
-          const nextReactions = { ...(p.reactions || {}) };
-          if (prevEmoji && nextReactions[prevEmoji]) {
-            nextReactions[prevEmoji] = Math.max(0, nextReactions[prevEmoji] - 1);
-          }
-          if (!isRemoving) {
-            nextReactions[emoji] = (nextReactions[emoji] || 0) + 1;
-          }
-          const nextLikes = Math.max(
-            0,
-            (p.likesCount || 0) + (isRemoving ? -1 : (prevEmoji ? 0 : 1))
-          );
-          return {
-            ...p,
-            myReaction: isRemoving ? null : emoji,
-            reactions: nextReactions,
-            likesCount: nextLikes,
-          };
-        }),
-      };
-    });
-
-    if (!isRemoving) {
-      showToast(`You reacted with ${emoji}`, 'success');
-    }
-
-    try {
-      await apiFetch(`/api/communities/${activeCommunity.id}/action`, {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'react_post',
-          payload: { postId, emoji, isRemove: isRemoving },
-        }),
-      });
-    } catch (err: any) {
-      console.warn('Background reaction error:', err?.message);
+      showToast(err?.message || 'Failed to post.', 'error');
     }
   };
 
@@ -1623,7 +1513,7 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
                             )}
 
                             {/* Reactions Bar (Members can react with emoji) */}
-                            <div className="pt-2.5 border-t border-white/5 flex items-center justify-between flex-wrap gap-2">
+                            <div className="pt-2 border-t border-white/5 flex items-center justify-between flex-wrap gap-2">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 {reactionEmojis.map((emoji) => {
                                   const count = p.reactions?.[emoji] || 0;
@@ -1631,37 +1521,28 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
                                   return (
                                     <button
                                       key={emoji}
-                                      type="button"
-                                      onClick={() => handleReactCommunityPost(p.id, emoji)}
-                                      className={`px-2.5 py-1 rounded-xl text-xs flex items-center gap-1.5 border transition-all active:scale-95 ${
+                                      onClick={() =>
+                                        handleCommunityAction(activeCommunity.id, 'react_post', {
+                                          postId: p.id,
+                                          emoji,
+                                        })
+                                      }
+                                      className={`px-2 py-1 rounded-xl text-xs flex items-center gap-1 border transition-all ${
                                         isSelected
-                                          ? 'bg-blue-600/25 border-blue-500 text-white font-bold ring-1 ring-blue-500/50 shadow-sm'
+                                          ? 'bg-blue-600/20 border-blue-500 text-white font-bold'
                                           : 'bg-white/5 border-white/5 text-slate-300 hover:bg-white/10'
                                       }`}
-                                      title={isSelected ? 'You reacted (click to remove)' : `React with ${emoji}`}
                                     >
-                                      <span className="text-sm">{emoji}</span>
-                                      {count > 0 && <span className="text-[10px] tabular-nums font-semibold">{count}</span>}
-                                      {isSelected && (
-                                        <span className="text-[9px] text-blue-300 font-bold ml-0.5">
-                                          Reacted
-                                        </span>
-                                      )}
+                                      <span>{emoji}</span>
+                                      {count > 0 && <span className="text-[10px] tabular-nums">{count}</span>}
                                     </button>
                                   );
                                 })}
                               </div>
 
-                              <div className="flex items-center gap-2">
-                                {p.myReaction && (
-                                  <span className="text-[10px] text-blue-300 font-medium bg-blue-500/10 px-2 py-0.5 rounded-full border border-blue-500/20">
-                                    You reacted {p.myReaction}
-                                  </span>
-                                )}
-                                <span className="text-[11px] text-slate-400">
-                                  {p.likesCount || 0} {p.likesCount === 1 ? 'reaction' : 'reactions'}
-                                </span>
-                              </div>
+                              <span className="text-[11px] text-slate-400">
+                                {p.likesCount || 0} reactions
+                              </span>
                             </div>
                           </div>
                         );

@@ -42,6 +42,7 @@ interface AuthContextValue {
   realtimeEvents: Array<{ type: string; payload: any; timestamp: number }>;
   toasts: ToastMessage[];
   showToast: (message: string, type?: 'info' | 'success' | 'error') => void;
+  setUserProfile: (profile: UserProfile | null) => void;
   refreshProfile: () => Promise<void>;
   refreshBadgesCount: () => Promise<void>;
   purchaseBShopItem: (
@@ -98,14 +99,12 @@ function normalizeUserAdminState(
   profile: UserProfile | null
 ): UserProfile | null {
   if (!profile) return null;
-  const cleanEmail = String(profile.email || '').trim().toLowerCase();
-  const cleanUsername = String(profile.username || '').trim().toLowerCase();
   const isOwnerAdmin =
-    profile.id === ADMIN_ABBA_UUID ||
-    profile.id === ADMIN_ABBA_ALT_UUID ||
-    cleanEmail === 'princeabba96@gmail.com' ||
-    cleanUsername === 'abba' ||
-    cleanUsername === 'princeabba96-byte';
+    (profile.id === ADMIN_ABBA_UUID || profile.id === ADMIN_ABBA_ALT_UUID) &&
+    (String(profile.username || '').toLowerCase() === 'abba' ||
+      String(profile.email || '')
+        .trim()
+        .toLowerCase() === 'princeabba96@gmail.com');
   if (isOwnerAdmin) {
     return {
       ...profile,
@@ -118,19 +117,6 @@ function normalizeUserAdminState(
       monetizationEligible: true,
       boostPoints: 999999999,
       balance: 999999999,
-      xp: 999999,
-      rank: 7,
-      rankTitle: 'Rank 7 • Sovereign Mythic',
-      badges: [
-        { id: 7, code: 'sovereign_legend', name: 'Sovereign Mythic Crown', description: 'Supreme Rank 7 Founder Godmode', iconName: 'crown', unlocked: true },
-        { id: 6, code: 'boost_pro', name: 'Boost Pro Grandmaster', description: 'Grandmaster Creator', iconName: 'shield', unlocked: true },
-        { id: 5, code: 'distant_winner', name: 'Distant Winner', description: 'Leaderboard Pioneer', iconName: 'shield', unlocked: true },
-        { id: 4, code: 'content_god', name: 'Content God', description: 'Elite Content Sovereign', iconName: 'shield', unlocked: true },
-        { id: 3, code: 'engagement_master', name: 'Engagement Master', description: 'Master of Engagement', iconName: 'shield', unlocked: true },
-        { id: 2, code: 'firering_editor', name: 'Firering Editor', description: 'Pro Video Editor', iconName: 'shield', unlocked: true },
-        { id: 1, code: 'rookie', name: 'Rookie Pioneer', description: 'Pioneer of BoostHub', iconName: 'shield', unlocked: true },
-        { id: 8, code: 'top_creator', name: 'Top Creator Prestige', description: 'Prestige VIP Badge', iconName: 'award', unlocked: true },
-      ],
     };
   }
   const syncedBp = Number(profile.balance ?? profile.boostPoints ?? 0);
@@ -213,7 +199,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      showToast('Back online. Synchronizing data...', 'success');
+      showToast('Back online. Synchronizing with Supabase...', 'success');
       refreshProfile();
     };
     const handleOffline = () => {
@@ -301,22 +287,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       if (seenNotifIds.has(rowId)) return;
       seenNotifIds.add(rowId);
 
-      if (row.type === 'gift_tx' || row.type === 'test_rt') return;
+      if (row.type === 'test_rt') return;
 
-      // STRICT PRIVACY: ONLY the recipient target_user receives the notification!
-      // The actor who liked or commented NEVER receives an alert about their own action!
-      const isTargetForMe = String(row.target_user) === userProfile.id;
-      if (!isTargetForMe) return;
-
-      // Do NOT notify if actor and target are the same (self-action), except system missions
-      if (
-        row.actor_user &&
-        String(row.actor_user) === userProfile.id &&
-        row.type !== 'mission' &&
-        row.type !== 'system'
-      ) {
-        return;
-      }
+      const isForMe =
+        String(row.target_user) === userProfile.id ||
+        String(row.actor_user) === userProfile.id;
+      if (!isForMe) return;
 
       const notifType = String(row.type || 'notification').toLowerCase();
       let deepLink = '?tab=notifications';
@@ -338,7 +314,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         deepLink = row.actor_user
           ? `?messages=${encodeURIComponent(String(row.actor_user))}`
           : '?tab=friends';
-      } else if (notifType === 'gift' || notifType === 'badge') {
+      } else if (notifType === 'gift' || notifType === 'gift_tx' || notifType === 'badge') {
         deepLink = '?tab=me&mode=gifts';
       }
 
@@ -349,21 +325,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           showToast(`${row.title || 'Alert'}: ${row.body || ''}`, 'info');
         }
 
-        // Trigger Gift Celebration animation exclusively on the RECEIVER's screen
-        if (notifType === 'gift' || notifType === 'badge' || row.type === 'gift_tx') {
+        // Trigger Gift Celebration animation immediately on the RECEIVER's screen
+        const isGiftNotif =
+          notifType === 'gift' ||
+          notifType === 'gift_tx' ||
+          (notifType === 'badge' && String(row.title || '').toLowerCase().includes('sent you'));
+
+        if (isGiftNotif) {
+          const rawTitle = String(row.title || '');
+          let detectedSender = 'A Supporter';
+          if (rawTitle.includes(' from ')) {
+            detectedSender = rawTitle.split(' from ')[1]?.trim() || detectedSender;
+          } else if (rawTitle.includes(' sent you ')) {
+            detectedSender = rawTitle.split(' sent you ')[0]?.replace(/^[^\w]+/, '').trim() || detectedSender;
+          }
+
+          let resolvedItemCode = row.subscription?.itemCode;
+          if (!resolvedItemCode) {
+            const lower = rawTitle.toLowerCase();
+            if (lower.includes('crown')) resolvedItemCode = 'crown';
+            else if (lower.includes('diamond')) resolvedItemCode = 'diamond';
+            else if (lower.includes('rocket')) resolvedItemCode = 'rocket';
+            else if (lower.includes('trophy')) resolvedItemCode = 'trophy';
+            else if (lower.includes('rose')) resolvedItemCode = 'rose';
+            else if (lower.includes('heart')) resolvedItemCode = 'heart';
+            else if (lower.includes('lion')) resolvedItemCode = 'lion';
+            else if (lower.includes('galaxy')) resolvedItemCode = 'galaxy';
+            else resolvedItemCode = 'gift_box';
+          }
+
           window.dispatchEvent(
             new CustomEvent('boosthub:gift-celebration', {
               detail: {
                 id: `gift_recv_${rowId}_${Date.now()}`,
-                senderName: row.title || 'A Supporter',
-                receiverName: userProfile.displayName || 'You',
-                itemCode: row.subscription?.itemCode || 'gift_box',
+                senderName: detectedSender,
+                receiverName: userProfile.displayName || userProfile.username || 'You',
+                itemCode: resolvedItemCode,
                 quantity: row.subscription?.quantity || 1,
-                message: row.body || 'You received a virtual gift!',
-                badgeUnlocked: 'Gift Received! +XP & Recognition',
+                message: row.body || 'You received a virtual gift! Check your gift collection.',
+                badgeUnlocked: '🎁 Gift Received! Boost Points & Recognition Added!',
               },
             })
           );
+
+          // Immediately refresh receiver's profile so balance & gifts reflect without reload
+          void refreshProfile().catch(() => {});
         }
       }
 
@@ -677,20 +683,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const snapshotProfile = userProfile;
       const isOwnerAdmin =
         snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
-      const currentBalance = isOwnerAdmin
-        ? 999999999
-        : Number(
-            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
-          );
+      const currentBalance = Number(
+        snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? (isOwnerAdmin ? 999999999 : 0)
+      );
 
-      if (!isOwnerAdmin && currentBalance < totalCost) {
+      if (currentBalance < totalCost) {
         throw new Error(
           `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
         );
       }
 
       // Optimistic balance decrement in central state prior to Supabase transaction commit
-      if (snapshotProfile && !isOwnerAdmin) {
+      if (snapshotProfile) {
         const optimisticBalance = Math.max(0, currentBalance - totalCost);
         setUserProfile({
           ...snapshotProfile,
@@ -716,14 +720,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           body: JSON.stringify({ itemCode: item.code, quantity: cleanQty }),
         });
 
-        const committedBalance = isOwnerAdmin
-          ? 999999999
-          : Number(
-              res.newBalance ??
-                res.state?.balance ??
-                res.state?.boostPoints ??
-                Math.max(0, currentBalance - totalCost)
-            );
+        const committedBalance = Number(
+          res.newBalance ??
+            res.state?.balance ??
+            res.state?.boostPoints ??
+            Math.max(0, currentBalance - totalCost)
+        );
 
         if (snapshotProfile) {
           setUserProfile({
@@ -779,25 +781,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const snapshotProfile = userProfile;
       const isOwnerAdmin =
         snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
-      const currentBalance = isOwnerAdmin
-        ? 999999999
-        : Number(
-            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
-          );
+      const currentBalance = Number(
+        snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? (isOwnerAdmin ? 999999999 : 0)
+      );
 
       const owned = Math.max(0, Number(params.ownedCount || 0));
-      const fromInv =
-        !isOwnerAdmin && params.useInventory ? Math.min(owned, cleanQty) : 0;
+      const fromInv = params.useInventory ? Math.min(owned, cleanQty) : 0;
       const toBuyQty = Math.max(0, cleanQty - fromInv);
-      const bpCost = isOwnerAdmin ? 0 : item.costBp * toBuyQty;
+      const bpCost = item.costBp * toBuyQty;
 
-      if (!isOwnerAdmin && currentBalance < bpCost) {
+      if (currentBalance < bpCost) {
         throw new Error(
           `Not enough Boost Points! Sending ${item.icon} ${item.name} ×${cleanQty} requires ${bpCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
         );
       }
 
-      if (snapshotProfile && !isOwnerAdmin && bpCost > 0) {
+      if (snapshotProfile && bpCost > 0) {
         const optimisticBalance = Math.max(0, currentBalance - bpCost);
         setUserProfile({
           ...snapshotProfile,
@@ -822,14 +821,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           }),
         });
 
-        const committedBalance = isOwnerAdmin
-          ? 999999999
-          : Number(
-              res.newBalance ??
-                res.state?.balance ??
-                res.state?.boostPoints ??
-                Math.max(0, currentBalance - bpCost)
-            );
+        const committedBalance = Number(
+          res.newBalance ??
+            res.state?.balance ??
+            res.state?.boostPoints ??
+            Math.max(0, currentBalance - bpCost)
+        );
 
         if (snapshotProfile) {
           setUserProfile({
@@ -840,6 +837,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           });
         }
         void refreshProfile().catch(() => {});
+
+        // Trigger gift celebration animation on sender screen as confirmation!
+        window.dispatchEvent(
+          new CustomEvent('boosthub:gift-celebration', {
+            detail: {
+              id: `gift_sent_${Date.now()}`,
+              senderName: 'You',
+              receiverName: 'Creator',
+              itemCode: item.code,
+              quantity: cleanQty,
+              message: params.message || `Sent ${item.icon} ${item.name}!`,
+              badgeUnlocked: `-${bpCost.toLocaleString()} BP · +${20 * cleanQty} XP Earned!`,
+            },
+          })
+        );
 
         return {
           state: {
@@ -887,6 +899,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         realtimeEvents,
         toasts,
         showToast,
+        setUserProfile,
         refreshProfile,
         refreshBadgesCount,
         purchaseBShopItem,

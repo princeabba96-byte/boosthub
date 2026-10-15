@@ -182,7 +182,7 @@ async function uploadBlobToSupabaseStorage(
 
   if (uploadRes.error) {
     throw new Error(
-      `Cloud storage upload failed: ${uploadRes.error.message}`
+      `Supabase storage upload failed: ${uploadRes.error.message}`
     );
   }
 

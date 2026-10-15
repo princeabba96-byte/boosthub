@@ -2125,12 +2125,8 @@ export async function getUserNotifications(userId: string) {
       .orderBy(desc(notifications.createdAt))
       .limit(60);
 
-    const filteredRows = rows.filter(
-      (r) => !(r.actorId && r.actorId === userId && r.type !== 'system' && r.type !== 'mission')
-    );
-
     const actorIds = Array.from(
-      new Set(filteredRows.map((r) => r.actorId).filter(Boolean) as string[])
+      new Set(rows.map((r) => r.actorId).filter(Boolean) as string[])
     );
     const actors =
       actorIds.length > 0
@@ -2138,7 +2134,7 @@ export async function getUserNotifications(userId: string) {
         : [];
     const actorMap = new Map(actors.map((a) => [a.id, a]));
 
-    return filteredRows.map((n) => ({
+    return rows.map((n) => ({
       ...n,
       actor: n.actorId ? actorMap.get(n.actorId) || null : null,
     }));
@@ -2314,7 +2310,6 @@ export async function handleCommunityAction(
     | 'pin_post'
     | 'delete_post'
     | 'like_post'
-    | 'react_post'
     | 'set_role'
     | 'remove_member'
     | 'update_rules',
@@ -2383,23 +2378,6 @@ export async function handleCommunityAction(
           .where(eq(communityPosts.id, Number(payload.postId)));
       }
       return { ok: true };
-    }
-
-    if (action === 'react_post' && payload?.postId) {
-      const targetRows = await db
-        .select()
-        .from(communityPosts)
-        .where(eq(communityPosts.id, Number(payload.postId)));
-      if (targetRows.length > 0) {
-        const isRemove = Boolean(payload?.isRemove);
-        const nextLikes = Math.max(0, (targetRows[0].likesCount || 0) + (isRemove ? -1 : 1));
-        await db
-          .update(communityPosts)
-          .set({ likesCount: nextLikes })
-          .where(eq(communityPosts.id, Number(payload.postId)));
-        return { ok: true, likesCount: nextLikes, emoji: payload?.emoji };
-      }
-      return { ok: true, emoji: payload?.emoji };
     }
 
     const myRole = existingMember[0]?.role;
@@ -3971,6 +3949,7 @@ export async function purchaseBShopItem(
   const updatedState = await getBShopAndUserGiftsState(userId);
   return {
     state: updatedState,
+    newBalance: updatedState.boostPoints,
     unboxedReward,
     message: unboxedReward
       ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
@@ -4167,6 +4146,7 @@ export async function sendGiftToCreator(
   const updatedState = await getBShopAndUserGiftsState(senderId);
   return {
     state: updatedState,
+    newBalance: updatedState.boostPoints,
     message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
   };
 }

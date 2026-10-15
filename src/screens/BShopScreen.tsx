@@ -238,6 +238,7 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
     try {
       const res = await purchaseBShopItem(item.code, qty);
       setShopState(res.state);
+      await refreshProfile();
       if (res.unboxedReward) {
         setUnboxedResult(res.unboxedReward);
       } else {
@@ -277,6 +278,7 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
         ownedCount: getOwnedCount(selectedGiftModalItem.code),
       });
       setShopState(res.state);
+      await refreshProfile();
       showToast(res.message, 'success');
       setSelectedGiftModalItem(null);
     } catch (err: any) {

@@ -31,6 +31,16 @@ interface FlaggedUser {
   recommendation: string;
 }
 
+export interface NewUserRecord {
+  userId: string;
+  username: string;
+  displayName: string;
+  email?: string;
+  joined: string;
+  lastSeen?: string;
+  status?: string;
+}
+
 interface AuditData {
   healthScore: number;
   status: 'Healthy' | 'Attention Required' | 'Action Needed';
@@ -38,6 +48,7 @@ interface AuditData {
   totalUsersAudited: number;
   totalPostsAudited: number;
   totalCommentsAudited: number;
+  newUsers?: NewUserRecord[];
   flaggedUsers: FlaggedUser[];
 }
 
@@ -412,6 +423,62 @@ I monitor all registered users, recent posts, comments, and community channels a
                 </div>
               </div>
 
+              {/* NEW SIGNED-IN USERS INTEL (Live Surveillance) */}
+              {audit?.newUsers && audit.newUsers.length > 0 && (
+                <div className="p-4 rounded-2xl bg-[#090D1C] border border-cyan-500/20 space-y-3 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                      <h4 className="text-xs font-black text-white uppercase tracking-wider">
+                        New Signed-In Creators ({audit.newUsers.length} Tracked)
+                      </h4>
+                    </div>
+                    <span className="text-[10px] text-cyan-400 font-mono">
+                      Confidential to Founder
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {audit.newUsers.slice(0, 6).map((nu) => (
+                      <div
+                        key={nu.userId}
+                        className="p-2.5 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-white truncate">
+                              {nu.displayName}
+                            </span>
+                            <span className="text-[10px] text-cyan-300 font-mono truncate">
+                              @{nu.username}
+                            </span>
+                          </div>
+                          {nu.email && (
+                            <p className="text-[10px] text-slate-400 font-mono truncate">
+                              {nu.email}
+                            </p>
+                          )}
+                          <p className="text-[9px] text-slate-400 mt-0.5">
+                            Joined: {new Date(nu.joined).toLocaleDateString()} · {nu.status || 'Active'}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveTab('chat');
+                            handleSendChatMessage(`Audit new signed in user @${nu.username} for compliance and activity.`);
+                          }}
+                          className="px-2 py-1 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 text-[10px] font-bold shrink-0 transition-colors"
+                        >
+                          Scan User
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Filter Pills */}
               <div className="flex items-center justify-between gap-2 pt-2">
                 <div className="flex items-center gap-1.5">
@@ -628,9 +695,10 @@ I monitor all registered users, recent posts, comments, and community channels a
               {/* Quick Founder Questions */}
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-2">
                 {[
+                  'Give me information on new signed in user',
+                  'Who is the newest signed in user?',
+                  'Report on any rule violations',
                   'Are there any suspicious new accounts?',
-                  'Check if any user posted spam or crypto links',
-                  'Audit user @junior for compliance',
                   'Summarize platform safety status today',
                 ].map((prompt, idx) => (
                   <button
