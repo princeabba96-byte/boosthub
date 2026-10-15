@@ -2490,23 +2490,23 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <span>Install PWA App</span>
                 </button>
                 <a
-                  href="https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk"
+                  href="https://princeabba96-byte.github.io/boosthub/BoostHub.apk"
                   download="BoostHub.apk"
                   className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <span>⬇ Download APK (v1.0.1)</span>
+                  <span>⬇ Download APK (Direct Link)</span>
                 </a>
                 <button
                   type="button"
                   onClick={() => {
                     navigator.clipboard?.writeText(
-                      'https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk'
+                      'https://princeabba96-byte.github.io/boosthub/BoostHub.apk'
                     );
-                    showToast('GitHub Release APK download link copied!', 'success');
+                    showToast('Permanent APK download link copied!', 'success');
                   }}
                   className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
                 >
-                  Copy Release Link
+                  Copy Direct APK Link
                 </button>
               </div>
             </div>
