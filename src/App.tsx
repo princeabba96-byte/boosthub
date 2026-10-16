@@ -527,6 +527,10 @@ const BoostHubAppShell: React.FC = () => {
       <GiftCelebrationOverlay
         celebration={giftCelebration}
         onDismiss={() => setGiftCelebration(null)}
+        onOpenChatWithSender={(senderId) => {
+          setMessagePartner({ id: senderId } as any);
+          setMessagesOpen(true);
+        }}
       />
 
       {/* Non-Blocking Toast Notifications */}

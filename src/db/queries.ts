@@ -3513,10 +3513,88 @@ export async function executeAdminModerationAction(
       return { ok: true };
     }
 
+    if (action === 'send_boost_bot_message') {
+      const content = String(payload.content || '').trim();
+      const targetUserId = String(payload.targetUserId || 'all').trim();
+      const createdMessages: any[] = [];
+
+      if (content) {
+        if (targetUserId === 'all') {
+          const allUsers = await db.select().from(profiles);
+          for (const u of allUsers) {
+            if (u.id === BOOST_BOT_UID) continue;
+            await db.insert(notifications).values({
+              userId: u.id,
+              actorId: BOOST_BOT_UID,
+              type: 'boost_bot',
+              title: 'BOOST BOT',
+              body: content,
+            });
+            createdMessages.push({
+              id: `bot_msg_${u.id}_${Date.now()}`,
+              senderId: BOOST_BOT_UID,
+              receiverId: u.id,
+              content,
+              createdAt: new Date().toISOString(),
+            });
+          }
+        } else {
+          await db.insert(notifications).values({
+            userId: targetUserId,
+            actorId: BOOST_BOT_UID,
+            type: 'boost_bot',
+            title: 'BOOST BOT',
+            body: content,
+          });
+          createdMessages.push({
+            id: `bot_msg_${targetUserId}_${Date.now()}`,
+            senderId: BOOST_BOT_UID,
+            receiverId: targetUserId,
+            content,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      return {
+        ok: true,
+        sentCount: createdMessages.length,
+        messages: createdMessages,
+      };
+    }
+
     return { ok: true };
   } catch (error) {
     console.error('Database query failed in executeAdminModerationAction:', error);
     throw new Error('Moderation action failed.', { cause: error });
+  }
+}
+
+export async function deleteNotificationForUser(
+  userId: string,
+  notificationId?: string
+) {
+  try {
+    if (
+      notificationId &&
+      notificationId !== 'all' &&
+      notificationId !== 'clear-all'
+    ) {
+      await db
+        .delete(notifications)
+        .where(
+          and(
+            eq(notifications.id, Number(notificationId)),
+            eq(notifications.userId, userId)
+          )
+        );
+    } else {
+      await db.delete(notifications).where(eq(notifications.userId, userId));
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error('Database query failed in deleteNotificationForUser:', error);
+    throw new Error('Failed to delete notification.', { cause: error });
   }
 }
 
@@ -3949,7 +4027,6 @@ export async function purchaseBShopItem(
   const updatedState = await getBShopAndUserGiftsState(userId);
   return {
     state: updatedState,
-    newBalance: updatedState.boostPoints,
     unboxedReward,
     message: unboxedReward
       ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
@@ -4118,7 +4195,8 @@ export async function sendGiftToCreator(
         ? 'Trophies'
         : `${giftItem.name}s`
       : giftItem.name;
-  const notifTitle = `${giftItem.icon} ${sender.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
+  const senderHandle = sender.username ? sender.username.replace(/^@/, '') : sender.displayName;
+  const notifTitle = `${giftItem.icon} @${senderHandle} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
   const notifBody = message.trim()
     ? `"${message.trim()}" · You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
     : `You earned ${giftItem.icon} ${giftItem.name} ×${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
@@ -4126,10 +4204,10 @@ export async function sendGiftToCreator(
   await db.insert(notifications).values({
     userId: receiverId,
     actorId: senderId,
-    type: 'badge',
+    type: 'gift',
     title: notifTitle,
     body: notifBody,
-    entityId: senderId,
+    entityId: giftItem.code,
   });
 
   await sendPushNotificationToUser(receiverId, {
@@ -4146,7 +4224,6 @@ export async function sendGiftToCreator(
   const updatedState = await getBShopAndUserGiftsState(senderId);
   return {
     state: updatedState,
-    newBalance: updatedState.boostPoints,
     message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
   };
 }

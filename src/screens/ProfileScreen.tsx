@@ -51,7 +51,7 @@ import {
   getFrameRingClasses,
   getNameStyleClasses,
 } from '../data/bshopCatalog';
-import { apiFetch } from '../services/api';
+import { apiFetch, clearAllFeedCaches, clearAllUserCaches } from '../services/api';
 import {
   getBrowserPushPermissionState,
   enableBackgroundPushNotifications,
@@ -605,13 +605,68 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   const handleAdminAction = async (action: string, payload: any) => {
     try {
-      await apiFetch('/api/admin/action', {
+      const res = await apiFetch<any>('/api/admin/action', {
         method: 'POST',
         body: JSON.stringify({ action, payload }),
       });
+      clearAllUserCaches();
+      clearAllFeedCaches();
+
+      const targetUserId = payload?.userId;
+      const isVerifyAction =
+        action === 'verify_user' ||
+        action === 'unverify_user' ||
+        action === 'toggle_verify_user' ||
+        action === 'toggle_verify';
+      const targetVerified =
+        action === 'verify_user'
+          ? true
+          : action === 'unverify_user'
+            ? false
+            : res?.isVerified;
+
+      if (isVerifyAction && targetUserId) {
+        setAdminData((prev: any) => {
+          if (!prev?.users) return prev;
+          return {
+            ...prev,
+            users: prev.users.map((u: any) =>
+              u.id === targetUserId
+                ? {
+                    ...u,
+                    isVerified:
+                      targetVerified !== undefined ? targetVerified : !u.isVerified,
+                  }
+                : u
+            ),
+          };
+        });
+
+        if (profile && profile.id === targetUserId) {
+          setProfile((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  isVerified:
+                    targetVerified !== undefined ? targetVerified : !prev.isVerified,
+                }
+              : prev
+          );
+        }
+      }
+
       const refreshed = await apiFetch('/api/admin/overview');
-      setAdminData(refreshed);
-      showToast('Moderation action applied.', 'success');
+      if (refreshed) {
+        setAdminData(refreshed);
+      }
+      showToast(
+        isVerifyAction
+          ? targetVerified
+            ? 'User verified successfully! ✓'
+            : 'User verification removed.'
+          : 'Moderation action applied.',
+        'success'
+      );
     } catch {
       showToast('Admin action failed.', 'error');
     }
@@ -2455,7 +2510,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                     </span>
                   </p>
                   <p className="text-xs text-slate-400">
-                    Install BoostHub directly onto your phone or desktop home screen as a standalone full-screen app (no ARCore required).
+                    Install BoostHub directly onto your phone or desktop as a standalone app, or download the verified Android APK (Uptodown, Palm Store & direct APK install).
                   </p>
                 </div>
               </div>
@@ -2490,23 +2545,29 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
                   <span>Install PWA App</span>
                 </button>
                 <a
-                  href="https://princeabba96-byte.github.io/boosthub/BoostHub.apk"
+                  href="/download.html"
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-extrabold inline-flex items-center gap-1.5 cursor-pointer shadow-md"
+                >
+                  <span>⬇ Uptodown / APK Portal</span>
+                </a>
+                <a
+                  href="https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk"
                   download="BoostHub.apk"
                   className="px-3.5 py-2 rounded-xl bg-[#0A84FF]/20 hover:bg-[#0A84FF]/30 border border-[#00E5FF]/40 text-[#00E5FF] text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                 >
-                  <span>⬇ Download APK (Direct Link)</span>
+                  <span>Direct APK (v1.0.1)</span>
                 </a>
                 <button
                   type="button"
                   onClick={() => {
                     navigator.clipboard?.writeText(
-                      'https://princeabba96-byte.github.io/boosthub/BoostHub.apk'
+                      'https://github.com/princeabba96-byte/boosthub/releases/download/v1.0.1/BoostHub.apk'
                     );
-                    showToast('Permanent APK download link copied!', 'success');
+                    showToast('Uptodown & GitHub Release APK download link copied!', 'success');
                   }}
                   className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-slate-200 text-xs font-semibold cursor-pointer"
                 >
-                  Copy Direct APK Link
+                  Copy Link
                 </button>
               </div>
             </div>

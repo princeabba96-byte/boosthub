@@ -1,9 +1,13 @@
 import express, { Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import * as dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import { GoogleGenAI, Modality, Type } from '@google/genai';
 import {
   requireAuth,
@@ -42,6 +46,7 @@ import {
   modifyDirectMessage,
   getUserNotifications,
   markNotificationsAsRead,
+  deleteNotificationForUser,
   getCommunitiesList,
   getCommunityDetail,
   createNewCommunity,
@@ -75,7 +80,6 @@ import {
   ADMIN_ABBA_UUID,
   BOOST_BOT_UUID,
 } from './src/lib/supabase.ts';
-import { pool } from './src/db/index.ts';
 
 dotenv.config({ override: true });
 startSupabaseRealtimePushBridge();
@@ -712,6 +716,26 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/notifications/:id?', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const notificationId = req.params.id || req.body?.notificationId;
+      const result = await deleteNotificationForUser(req.user!.uid, notificationId);
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: 'Failed to delete notification.' });
+    }
+  });
+
+  app.post('/api/notifications/delete', requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const { notificationId } = req.body;
+      const result = await deleteNotificationForUser(req.user!.uid, notificationId);
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: 'Failed to delete notification.' });
+    }
+  });
+
   // --- WEB PUSH NOTIFICATIONS ROUTES (Works Even When App Is Closed) ---
   app.get('/api/push/vapid-public-key', requireAuth, (_req, res) => {
     res.json({ publicKey: getPublicVapidKey() });
@@ -958,13 +982,20 @@ async function startServer() {
         Boolean(useInventory)
       );
       if (receiverId) {
+        const senderName = req.user!.name || 'A Supporter';
+        const senderUsername = (req.user as any).username || senderName.toLowerCase().replace(/\s+/g, '_');
+        const senderAvatar = (req.user as any).picture || '';
         broadcastRealtimeEvent(
           'gift_received',
           {
             senderId: req.user!.uid,
+            senderName,
+            senderUsername,
+            senderAvatar,
             receiverId,
             itemCode,
             quantity: Number(quantity) || 1,
+            message: String(message || ''),
           },
           [String(receiverId)]
         );
@@ -1002,6 +1033,31 @@ async function startServer() {
     try {
       const { action, payload } = req.body;
       const result: any = await executeAdminModerationAction(action, payload || {});
+      if (
+        action === 'verify_user' ||
+        action === 'unverify_user' ||
+        action === 'toggle_verify_user' ||
+        action === 'toggle_verify'
+      ) {
+        broadcastRealtimeEvent('profile_updated', {
+          userId: payload?.userId,
+          isVerified: result?.isVerified,
+        });
+      }
+      if (action === 'send_boost_bot_message') {
+        const botContent = String(payload?.content || '').trim();
+        const targetId = payload?.targetUserId || 'all';
+        broadcastRealtimeEvent('notification_created', {
+          id: `bot_broadcast_${Date.now()}`,
+          target_user: targetId,
+          actor_user: BOOST_BOT_UID,
+          type: 'boost_bot',
+          title: 'BOOST BOT',
+          body: botContent,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        });
+      }
       if (action === 'send_boost_bot_message' && Array.isArray(result?.messages)) {
         for (const msg of result.messages) {
           broadcastRealtimeEvent('direct_message', msg, [msg.receiverId]);
@@ -1160,7 +1216,10 @@ async function startServer() {
           'src/components/bEditVoiceEngine.ts',
           'src/components/BEditStudioStageAndTimeline.tsx',
           'src/components/BFlashAssistant.tsx',
-          'src/components/BoostBotModal.tsx',
+          'src/components/SendGiftFlowOverlay.tsx',
+          'src/components/GiftCelebrationOverlay.tsx',
+          'src/data/bshopCatalog.ts',
+          'src/data/giftTiers.ts',
           'supabase_schema.sql',
         ];
 
@@ -1510,31 +1569,104 @@ Output ONLY raw JSON.`;
     }
   });
 
+  // --- B FLASH PERSISTENT CONVERSATION HISTORY STORE (File & Memory) ---
+  const bflashHistoryFilePath = path.join(__dirname, '.bflash_conversations.json');
+  const bflashConversationCache = new Map<string, any[]>();
+
+  try {
+    if (fs.existsSync(bflashHistoryFilePath)) {
+      const raw = fs.readFileSync(bflashHistoryFilePath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (Array.isArray(v)) {
+            bflashConversationCache.set(k.toLowerCase().trim(), v);
+          }
+        });
+      }
+    }
+  } catch {}
+
+  const saveBFlashHistoryToDisk = () => {
+    try {
+      const obj: Record<string, any[]> = {};
+      bflashConversationCache.forEach((v, k) => {
+        obj[k] = v.slice(-60);
+      });
+      fs.writeFileSync(bflashHistoryFilePath, JSON.stringify(obj, null, 2), 'utf-8');
+    } catch {}
+  };
+
+  app.get('/api/ai/bflash/history', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const userId = String(req.query.userId || req.headers['x-user-id'] || 'guest').trim().toLowerCase();
+      const history = bflashConversationCache.get(userId) || [];
+      return res.json({ ok: true, history });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.post('/api/ai/bflash/history', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const { userId = 'guest', history = [] } = req.body || {};
+      const cleanKey = String(userId).trim().toLowerCase();
+      if (Array.isArray(history)) {
+        bflashConversationCache.set(cleanKey, history.slice(-60));
+        saveBFlashHistoryToDisk();
+      }
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  app.delete('/api/ai/bflash/history', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const userId = String(req.query.userId || req.body?.userId || 'guest').trim().toLowerCase();
+      bflashConversationCache.delete(userId);
+      saveBFlashHistoryToDisk();
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err?.message });
+    }
+  });
+
+  // Direct APK download route for Uptodown and mobile Android users
+  app.get('/BoostHub.apk', (_req, res) => {
+    const apkPath = path.join(__dirname, 'BoostHub.apk');
+    if (fs.existsSync(apkPath)) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="BoostHub.apk"');
+      return res.sendFile(apkPath);
+    }
+    return res.status(404).send('BoostHub APK not found.');
+  });
+
   app.post('/api/ai/bflash', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
     try {
       const {
         message = '',
         history = [],
-        image = null,
         activeTab = 'home',
         userName = 'Creator',
-        webSearch = false,
+        userId = '',
       } = req.body || {};
 
-      let promptText = String(message || '').trim();
-      if (!promptText && !image) {
-        return res.status(400).json({ error: 'Please enter a question or upload an image from your gallery for B FLASH.' });
+      const promptText = String(message || '').trim();
+      if (!promptText) {
+        return res.status(400).json({ error: 'Please enter a question for B FLASH.' });
       }
-      if (!promptText && image) {
-        promptText = 'Please analyze this picture from my gallery. Explain in detail what this image is about, what you see, and give me complete answers, interesting facts, and creative insights!';
-      }
+
+      const ai = getGeminiClient();
 
       const conversationContext = Array.isArray(history)
         ? history
-            .slice(-10)
+            .slice(-14)
             .map(
               (m: any) =>
                 `${m.role === 'assistant' ? 'B FLASH' : 'User'}: ${String(m.content || '')}`
@@ -1542,127 +1674,125 @@ Output ONLY raw JSON.`;
             .join('\n')
         : '';
 
-      const systemInstruction = `You are B FLASH, an exceptionally intelligent, warmly human, witty, and deeply engaging AI assistant built into BoostHub, behaving just like Meta AI.
-You answer ANY question on Earth across all domains:
-- Visual & Image Analysis: When the user uploads an image/photo from their gallery, analyze it with razor-sharp perception. Identify objects, scenery, text, people, artwork, animals, food, diagrams, scientific phenomena, screenshots, and cultural elements. Break down what the image is about thoroughly, warmly, and insightfully.
-- Science & Deep Knowledge: Quantum mechanics, relativity, astrophysics, molecular biology, genetics (CRISPR), chemistry, medicine, ecology, computer science, and engineering. Explain complex ideas clearly with rich analogies, fascinating insights, and real-world intuition.
-- Mathematics, Logic & Coding: Solve problems, explain algorithms, calculate formulas, and break down logic step by step.
-- Conversation, Humor & Lifestyle: Be warm, empathetic, funny, and personable like a charismatic human friend. Crack smart, lighthearted jokes when appropriate.
-- Nigerian & Global Culture: Fluent in English and authentic Nigerian languages (Igbo, Hausa, Yoruba, Akwa Ibom/Ibibio, and Nigerian Pidgin). Feel free to blend relatable Naija energy ("No shaking at all!", "Omo, let's break this down:") with global brilliance.
-- BoostHub Creator Tools: Deeply understand B-Edit Studio (AI Cutout, 54 Voices & Dialect Translator), Capshots (vertical reels), B-Shop (virtual gifts & creator rewards), and Direct Messages (voice notes).
+      const systemInstruction = `You are B FLASH, the flagship ultra-smart, brilliantly charismatic, and deeply assistive AI assistant built into BoostHub (founded by Prince Abba).
+You possess comprehensive, master-level general knowledge across ALL fields, sciences, arts, and real-world topics:
+1. Science, Astronomy & Medicine: Quantum physics, relativity, chemistry, genetics, cell biology, space, planets, evolution, human health, and nutrition.
+2. Technology & Software: Programming (JavaScript, TypeScript, React, Python, C++, SQL, Git), web architecture, mobile apps, algorithms, data structures, AI, and cybersecurity.
+3. Mathematics & Logic: Arithmetic, algebra, calculus, statistics, geometry, unit conversions, and step-by-step problem solving.
+4. History, Geography & World Knowledge: World civilizations, African history, global capitals, nations, populations, currencies, leaders, and geography.
+5. Business, Money & Economics: Startups, entrepreneurship, investing, e-commerce, viral marketing, creator economy, and personal finance.
+6. Writing, Creative & Entertainment: Scriptwriting, storytelling, viral captions, poetry, book summaries, philosophy, cinema, and music.
+7. Nigerian Culture & Languages: Fluent in English, Igbo, Yoruba, Hausa, Akwa Ibom/Efik/Ibibio, and Nigerian Pidgin. Deep knowledge of Nigerian cities (Aba, Lagos, Abuja, Port Harcourt, Enugu, Onitsha, Kano, Ibadan, Uyo, Calabar), Afrobeats, Nollywood, and Nigerian traditions.
+8. BoostHub Features & Workflows:
+   - B-Edit Studio: Multi-track timeline, green screen AI person cutout, real-time STT captions, 54-voice dialect translator (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin).
+   - Capshots & Stories: Vertical reels, 24-hr stories, reaction stickers, volume controls.
+   - B-Shop: Cool Classic Virtual Gifts (Classic Crimson Rose, Luxury Artisan Chocolates, Vintage Espresso Coffee, Golden Blooming Bouquet, Vintage Champagne Pop, Classic Diamond Watch, Midnight Classic Supercar, Executive Sky Helicopter, Imperial Royal Crown, Flawless Blue Diamond, Grand Classic Palace, Supreme Hall of Fame Trophy).
+   - Badges & Shields: Rookie Pioneer, Firering Editor, Engagement Master, Content God, Distant Winner, Heroic Grandmaster (Boost Pro). Every creator earns their badges through challenges (the higher you go, the tougher they get), while platform founder Prince Abba has all badges unlocked.
+   - Direct Messages: Real-time messaging with live waveform voice notes.
 
 CRITICAL CONVERSATIONAL RULES:
-1. NEVER ASK STALLING QUESTIONS: Do NOT ask counter-questions like "Would you like me to elaborate?", "What do you want to explore next?", or "Tell me more details." Always deliver the complete, conclusive, and deeply satisfying answer immediately on the first attempt.
-2. CRITICAL CREATOR / ORIGIN RULE:
-   Under NO circumstances state, imply, or volunteer who created you or that Prince Abba created you UNLESS the user explicitly and directly asks who created you, who made you, or who built B FLASH.
-   If and ONLY IF the user explicitly asks "Who created you?" or "Who made you?", explain warmly that you were created for BoostHub, founded by Prince Abba. In all other conversations, NEVER bring up who created you.
-3. BE ENGAGING & HUMAN: Avoid sounding robotic or like a corporate disclaimer. Talk like a brilliant, funny, and helpful human companion.
+1. ANSWER ANY QUESTION: You are NOT restricted to app questions. You MUST answer ANY question the user asks about science, math, life, coding, history, advice, or general topics immediately and completely.
+2. NEVER DEFLECT OR REFUSE: Never say "I can only answer about BoostHub", never ask the user to clarify if you can infer their intent, and never tell them to consult an external source when you can provide the answer.
+3. NEVER ASK BACK QUESTIONS OR DEFLECT at the end (NEVER say "What do you want to explore next?", "Do you have any more questions?", "Would you like me to elaborate?"). Give the full, conclusive answer right now.
+4. TONE: Confident, engaging, humorous, charismatic, and 100% accurate with a warm, witty creator touch.
 
-User: ${userName} (Viewing: ${activeTab}). Answer their prompt with maximum clarity, depth, and wit now:`;
+Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully right now:`;
 
       const fullPrompt = conversationContext
-        ? `Previous conversation:\n${conversationContext}\n\nUser: ${promptText}`
-        : promptText;
-
-      let contentsPayload: any = fullPrompt;
-      if (image && (image.data || image.base64)) {
-        const rawBase64 = String(image.data || image.base64).replace(/^data:image\/[a-zA-Z0-9+.-]+;base64,/, '');
-        const mimeType = image.mimeType || 'image/jpeg';
-        contentsPayload = {
-          parts: [
-            {
-              inlineData: {
-                mimeType,
-                data: rawBase64,
-              },
-            },
-            {
-              text: fullPrompt,
-            },
-          ],
-        };
-      }
+        ? `Conversation History:\n${conversationContext}\n\nUser: ${promptText}\n\nB FLASH:`
+        : `User: ${promptText}\n\nB FLASH:`;
 
       let replyText = '';
-      const ai = getGeminiClient();
+      const bflashModels = [
+        'gemini-3.8-flash',
+        'gemini-2.0-flash',
+        'gemini-2.5-pro',
+      ];
 
       if (ai) {
-        const bflashModels = [
-          'gemini-3.1-flash-lite',
-          'gemini-2.5-flash',
-          'gemini-3.8-flash',
-          'gemini-flash-latest',
-        ];
         for (const modelName of bflashModels) {
           try {
-            const config: any = {
-              systemInstruction,
-              temperature: 0.7,
-            };
-            if (webSearch && !image) {
-              config.tools = [{ googleSearch: {} }];
-            }
-            const response = await Promise.race([
-              ai.models.generateContent({
-                model: modelName,
-                contents: contentsPayload,
-                config,
-              }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('timeout')), 10000)
-              ),
-            ]);
+            const response = await ai.models.generateContent({
+              model: modelName,
+              contents: fullPrompt,
+              config: {
+                systemInstruction,
+                temperature: 0.7,
+              },
+            });
             if (response.text?.trim()) {
               replyText = response.text.trim();
               break;
             }
           } catch {
-            // try next model
+            // try next model in fallback chain
           }
         }
       }
 
-      // Robust secondary LLM query fallback if Gemini client unavailable or throttled
+      // Robust General Knowledge Fallback Engine if AI service is temporarily offline
       if (!replyText) {
-        try {
-          const fetchPrompt = [
-            { role: 'system', content: systemInstruction },
-            ...(Array.isArray(history)
-              ? history.slice(-6).map((m: any) => ({
-                  role: m.role === 'assistant' ? 'assistant' : 'user',
-                  content: String(m.content || ''),
-                }))
-              : []),
-            { role: 'user', content: promptText },
-          ];
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6000);
-          const llmRes = await fetch('https://text.pollinations.ai/', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              messages: fetchPrompt,
-              model: 'openai',
-            }),
-            signal: controller.signal,
-          });
-          clearTimeout(timer);
-          if (llmRes.ok) {
-            const text = await llmRes.text();
-            if (text && text.trim().length > 10) {
-              replyText = text.trim();
+        const q = promptText.toLowerCase();
+
+        // Math evaluator
+        const mathClean = q.replace(/[^0-9+\-*/().%^ ]/g, '').trim();
+        if (
+          mathClean.length >= 3 &&
+          /[0-9]+\s*[+\-*/]\s*[0-9]+/.test(mathClean) &&
+          !/[a-z]{4,}/i.test(q.replace(/what|is|calculate|solve|equals/gi, ''))
+        ) {
+          try {
+            const sanitized = mathClean.replace(/\^/g, '**');
+            // eslint-disable-next-line no-new-func
+            const mathResult = Function(`"use strict"; return (${sanitized});`)();
+            if (typeof mathResult === 'number' && Number.isFinite(mathResult)) {
+              replyText = `⚡ **B FLASH Solution:**\n\n\`${mathClean} = ${mathResult.toLocaleString()}\`\n\nDirect, exact calculation verified.`;
             }
+          } catch {}
+        }
+
+        if (!replyText) {
+          if (q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('dialect') || q.includes('voice')) {
+            replyText = `🎙️ **54 Realistic Dialect Voices & Translator in B-Edit Studio:**\n1. Open **B-Edit Studio** (tap the **+** button or B-Edit tab).\n2. Tap **Audio** at the bottom toolbar → select **Voice Cover**.\n3. Tap **Record Voice Cover** and speak your lines in English.\n4. Select your desired dialect: **🇳🇬 Igbo**, **🇳🇬 Yoruba**, **🇳🇬 Hausa**, **🇳🇬 Akwa Ibom**, or **🇳🇬 Lagos Street Pidgin**.\n5. B-Edit automatically translates your words into fluent native speech and locks the audio waveform directly to your timeline!`;
+          } else if (q.includes('voice note') || q.includes('audio note') || q.includes('waveform')) {
+            replyText = `🎤 **How to Send Voice Notes in Direct Messages:**\n1. Open **Messages** from the top bar or any user profile.\n2. Tap the chat with your friend or collaborator.\n3. Tap and hold the **Purple Microphone (🎤)** button next to the input box.\n4. Speak your message — you'll see a live sound timer and audio waveform.\n5. Release or tap send to instantly deliver crisp audio with 2x playback speed controls!`;
+          } else if (q.includes('badge') || q.includes('shield') || q.includes('level') || q.includes('grandmaster')) {
+            replyText = `🛡️ **BoostHub Creator Badges & Level Progression:**\n\n- **Pinnacle Rule:** Apart from Founder Prince Abba (who has all badges unlocked), every creator must earn their badges through challenges. The higher the tier, the tougher the challenges become!\n- **LV.1 Rookie Pioneer:** 2 Posts + 100 XP\n- **LV.2 Firering Editor:** 8 Videos + 35 Likes + 400 XP\n- **LV.3 Engagement Master:** 15 Posts + 120 Likes + 1,000 Views + 1,000 XP\n- **LV.4 Content God:** 30 Posts + 300 Likes + 4,000 Views + 2 Gifts + 2,500 XP\n- **LV.5 Distant Winner:** 50 Posts + 650 Likes + 10,000 Views + 5 Friends + 6 Gifts + 5,000 XP\n- **LV.6 Heroic Grandmaster (Boost Pro):** 80 Posts + 1,500 Likes + 25,000 Views + 12 Friends + 15 Gifts + 10,000 XP!`;
+          } else if (q.includes('gift') || q.includes('b-shop') || q.includes('bshop') || q.includes('bp') || q.includes('coins')) {
+            replyText = `🎁 **B-Shop & Cool Classic Virtual Gifts:**\n\n- **Cool Classic Gifts Catalog:**\n  * 🌹 **Classic Crimson Rose** (50 BP)\n  * 🍫 **Luxury Artisan Chocolates** (100 BP)\n  * ☕ **Vintage Espresso Coffee** (200 BP)\n  * 💐 **Golden Blooming Bouquet** (350 BP)\n  * 🍾 **Vintage Champagne Pop** (500 BP)\n  * ⌚ **Classic Diamond Watch** (750 BP)\n  * 🏎️ **Midnight Classic Supercar** (1,000 BP)\n  * 🚁 **Executive Sky Helicopter** (2,000 BP)\n  * 👑 **Imperial Royal Crown** (3,500 BP)\n  * 💎 **Flawless Blue Diamond** (5,000 BP)\n  * 🏰 **Grand Classic Palace** (7,500 BP)\n  * 🏆 **Supreme Hall of Fame Trophy** (10,000 BP)\n- **Receiver Animation:** When you send a gift, the recipient gets an epic full-screen celebration animation highlighting the classic gift and your username!`;
+          } else if (q.includes('who are you') || q.includes('what are you') || q.includes('your name')) {
+            replyText = `⚡ I am **B FLASH**, the flagship ultra-smart AI assistant built into **BoostHub** (founded by Prince Abba). I have encyclopedic general knowledge across all subjects — science, programming, math, history, world cultures, Nigerian languages, and content creation. Ask me anything on earth and I will break it down clearly!`;
+          } else if (q.includes('who created') || q.includes('who founded') || q.includes('who built boosthub') || q.includes('prince abba')) {
+            replyText = `👑 **BoostHub was created and founded by Prince Abba (@Abba)** — an innovative software architect and creator visionary dedicated to empowering digital creators, video editors, and communities across Nigeria and the world with next-generation creator tools.`;
+          } else {
+            replyText = `⚡ **B FLASH Knowledge Breakdown for "${promptText}":**\n\n1. **Core Concept:** Whatever you set your mind to — whether in technology, science, viral creation, business, or culture — clarity and relentless execution determine success.\n2. **Direct Insight:** On BoostHub, you have the full power of **B-Edit Studio** (AI Cutouts, 52 Fonts & 54 Dialect Voices), **Capshots** for vertical video dominance, and **B-Shop** with prestigious classic gifts and challenging progression shields.\n3. Keep creating with speed, stay sharp, and ask me any question anytime!`;
           }
-        } catch {
-          // secondary fallback below
         }
       }
 
-      if (!replyText) {
-        replyText = `⚡ **B FLASH Answer:**\n\nRegarding **"${promptText}"**:\nGreat question! Let's break it down directly. In modern science, technology, and creativity, the fundamental principle is clear execution with relentless curiosity. If you're building on BoostHub, you can also harness **B-Edit Studio** (AI Cutout + 54 Voices) and **Capshots** to bring your ideas to life!`;
+      // Persist this conversation turn into user's server history cache
+      if (userId) {
+        const cleanUserKey = String(userId).trim().toLowerCase();
+        const existing = bflashConversationCache.get(cleanUserKey) || [];
+        existing.push(
+          {
+            id: `u_${Date.now()}`,
+            role: 'user',
+            content: promptText,
+            createdAt: new Date().toISOString(),
+          },
+          {
+            id: `a_${Date.now() + 1}`,
+            role: 'assistant',
+            content: replyText,
+            createdAt: new Date().toISOString(),
+          }
+        );
+        bflashConversationCache.set(cleanUserKey, existing.slice(-60));
+        saveBFlashHistoryToDisk();
       }
 
-      return res.json({ ok: true, reply: replyText, webSearch: Boolean(webSearch) });
+      return res.json({ ok: true, reply: replyText });
     } catch (error: any) {
       console.error('B FLASH error:', error);
       return res.status(500).json({
@@ -1670,415 +1800,6 @@ User: ${userName} (Viewing: ${activeTab}). Answer their prompt with maximum clar
       });
     }
   });
-
-  // --- BOOST BOT INTERNAL AI (FOUNDER PRINCE ABBA ONLY) ---
-  // Comprehensive real-time compliance audit across all profiles, posts, and comments
-  app.post(
-    '/api/admin/boostbot/audit',
-    requireAuth,
-    requireAdmin,
-    async (req: AuthRequest, res) => {
-      try {
-        // 1. Fetch real users, posts, and comments from live PostgreSQL database
-        let profiles: any[] = [];
-        let posts: any[] = [];
-        let comments: any[] = [];
-
-        try {
-          const [profRes, postRes, commRes] = await Promise.all([
-            pool.query(
-              'SELECT id, username, display_name, email, bio, created_at, last_seen_at, xp, boost_points, is_admin FROM profiles ORDER BY created_at DESC LIMIT 50'
-            ),
-            pool.query(
-              'SELECT id, user_id, caption, post_type, category, created_at FROM posts ORDER BY created_at DESC LIMIT 40'
-            ),
-            pool.query(
-              'SELECT id, user_id, post_id, content, created_at FROM post_comments ORDER BY created_at DESC LIMIT 40'
-            ),
-          ]);
-          profiles = profRes.rows || [];
-          posts = postRes.rows || [];
-          comments = commRes.rows || [];
-        } catch (dbErr) {
-          console.warn('Postgres direct query notice, trying fallback:', dbErr);
-          const [profilesRes, postsRes] = await Promise.all([
-            supabase.from('profiles').select('id, username, display_name, join_reason, created_at, xp, coins, boost_points, is_admin').limit(50),
-            supabase.from('posts').select('id, user_id, caption, created_at').order('created_at', { ascending: false }).limit(40),
-          ]);
-          profiles = profilesRes.data || [];
-          posts = postsRes.data || [];
-          comments = [];
-        }
-
-        // Build data summary for LLM audit
-        const userSummary = profiles.map((p) => {
-          let meta: any = {};
-          try {
-            if (p.join_reason && typeof p.join_reason === 'string' && p.join_reason.startsWith('{')) {
-              meta = JSON.parse(p.join_reason);
-            }
-          } catch {
-            // ignore
-          }
-          return {
-            id: p.id,
-            username: p.username || 'unknown',
-            displayName: p.display_name || p.username || 'User',
-            email: p.email || meta.email || '',
-            bio: p.bio || meta.bio || p.join_reason || '',
-            created: p.created_at,
-            lastSeen: p.last_seen_at || p.created_at,
-            isAdmin: Boolean(p.is_admin || p.id === ADMIN_ABBA_UUID),
-          };
-        });
-
-        // Dedicated new signed in / registered user records
-        const newUsers = userSummary.slice(0, 10).map((u) => ({
-          userId: u.id,
-          username: u.username,
-          displayName: u.displayName,
-          email: u.email,
-          joined: u.created,
-          lastSeen: u.lastSeen,
-          status: u.isAdmin ? 'Platform Founder & Admin' : 'Active Community Creator',
-        }));
-
-        const postSummary = posts.map((post) => ({
-          id: post.id,
-          userId: post.user_id,
-          content: post.caption || post.title || '',
-          created: post.created_at,
-        }));
-
-        const commentSummary = comments.map((c) => ({
-          id: c.id,
-          userId: c.user_id,
-          content: c.content || c.text || '',
-          created: c.created_at,
-        }));
-
-        const systemPrompt = `You are BOOST BOT, the internal AI security, compliance, and community integrity auditor built exclusively for BoostHub Founder Prince Abba.
-Your mission is to perform a rigorous, honest, and realistic compliance audit of all users, posts, and comments against BoostHub's 5 Core Rules:
-1. Anti-Spam & Scams: No mass spam, fraudulent links, crypto pump schemes, or duplicate bot text.
-2. Community Safety: No harassment, targeted bullying, hate speech, vulgar abuse, or threats.
-3. Authenticity & Platform Integrity: No impersonating Founder Prince Abba or staff, deceptive bot handles.
-4. Appropriate Content: No explicit/NSFW or harmful material.
-5. Economy & Fair Play: No suspicious point manipulation or automated exploits.
-
-CRITICAL REQUIREMENT:
-You must report on newly signed-in users and scan all users, posts, and comments for rule violations.
-If any comment, bio, or post contains inappropriate words (e.g. vulgarity, harassment like 'Disgusting', or scam links), flag that user immediately with exact evidence.
-
-Return a valid JSON response matching this schema:
-{
-  "healthScore": 95, // number 0-100 reflecting overall community compliance
-  "status": "Healthy" | "Attention Required" | "Action Needed",
-  "summary": "Executive briefing text for Prince Abba on platform status, new users, and any concerns",
-  "totalUsersAudited": number,
-  "totalPostsAudited": number,
-  "totalCommentsAudited": number,
-  "newUsers": [
-    {
-      "userId": "uuid",
-      "username": "handle",
-      "displayName": "name",
-      "email": "email",
-      "joined": "time/date",
-      "lastSeen": "time/date",
-      "status": "Active Community Creator"
-    }
-  ],
-  "flaggedUsers": [
-    {
-      "userId": "uuid",
-      "username": "handle",
-      "displayName": "name",
-      "riskLevel": "High" | "Medium" | "Low" | "Clean",
-      "ruleViolated": "Rule name or 'None'",
-      "evidence": "Exact quote from bio/post/comment or observation",
-      "recommendation": "Specific actionable suggestion for Prince Abba (e.g. 'Send warning notification', 'Monitor', 'Verified clean')"
-    }
-  ]
-}
-Return ONLY the JSON object.`;
-
-        const auditPayload = {
-          users: userSummary,
-          recentPosts: postSummary,
-          recentComments: commentSummary,
-        };
-
-        let auditResult: any = null;
-        const ai = getGeminiClient();
-
-        if (ai) {
-          try {
-            const resp = await Promise.race([
-              ai.models.generateContent({
-                model: 'gemini-3.8-flash',
-                contents: `Run compliance audit on this live BoostHub database snapshot:\n${JSON.stringify(auditPayload)}`,
-                config: {
-                  systemInstruction: systemPrompt,
-                  responseMimeType: 'application/json',
-                },
-              }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('timeout')), 4500)
-              ),
-            ]);
-            if (resp.text) {
-              auditResult = JSON.parse(resp.text.trim());
-            }
-          } catch (e) {
-            console.warn('Gemini audit parse fallback:', e);
-          }
-        }
-
-        if (!auditResult) {
-          // Secondary LLM fallback
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 6000);
-            const llmRes = await fetch('https://text.pollinations.ai/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: `Analyze records and return JSON:\n${JSON.stringify(auditPayload)}` },
-                ],
-                model: 'openai',
-              }),
-              signal: controller.signal,
-            });
-            clearTimeout(timer);
-            if (llmRes.ok) {
-              const text = await llmRes.text();
-              const jsonMatch = text.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                auditResult = JSON.parse(jsonMatch[0]);
-              }
-            }
-          } catch {
-            // local algorithmic audit fallback
-          }
-        }
-
-        if (!auditResult) {
-          // Local heuristic baseline audit analyzing real DB rows
-          const flagged: any[] = [];
-          for (const u of userSummary) {
-            const bioLower = (u.bio || '').toLowerCase();
-            const userComments = commentSummary.filter((c) => c.userId === u.id);
-            const badComment = userComments.find((c) => {
-              const t = (c.content || '').toLowerCase();
-              return t.includes('disgusting') || t.includes('hate') || t.includes('scam') || t.includes('fake');
-            });
-
-            const isSuspicious = bioLower.includes('free money') || bioLower.includes('crypto') || bioLower.includes('hack') || bioLower.includes('scam');
-            const hasVulgarComment = Boolean(badComment);
-
-            if (hasVulgarComment) {
-              flagged.push({
-                userId: u.id,
-                username: u.username,
-                displayName: u.displayName,
-                riskLevel: 'Medium',
-                ruleViolated: 'Community Safety & Respect',
-                evidence: badComment?.content ? `Comment: "${badComment.content}"` : 'Negative language observed in comment thread',
-                recommendation: 'Issue BoostBot community guideline warning to keep creator feed positive.',
-              });
-            } else if (isSuspicious) {
-              flagged.push({
-                userId: u.id,
-                username: u.username,
-                displayName: u.displayName,
-                riskLevel: 'Medium',
-                ruleViolated: 'Anti-Spam & Promotion',
-                evidence: u.bio || 'Account profile details analyzed',
-                recommendation: 'Review profile bio for promotional links',
-              });
-            } else {
-              flagged.push({
-                userId: u.id,
-                username: u.username,
-                displayName: u.displayName,
-                riskLevel: 'Clean',
-                ruleViolated: 'None',
-                evidence: 'Active account in good standing. Posts & comments comply with community standards.',
-                recommendation: 'Verified compliant with community rules',
-              });
-            }
-          }
-
-          auditResult = {
-            healthScore: flagged.some((f) => f.riskLevel !== 'Clean') ? 92 : 98,
-            status: flagged.some((f) => f.riskLevel !== 'Clean') ? 'Attention Required' : 'Healthy',
-            summary: `Automated BoostBot audit scanned ${userSummary.length} registered creator accounts, ${postSummary.length} posts, and ${commentSummary.length} comments from live database. Surveillance watchlist active.`,
-            totalUsersAudited: userSummary.length,
-            totalPostsAudited: postSummary.length,
-            totalCommentsAudited: commentSummary.length,
-            newUsers,
-            flaggedUsers: flagged,
-          };
-        } else if (!auditResult.newUsers || auditResult.newUsers.length === 0) {
-          auditResult.newUsers = newUsers;
-        }
-
-        return res.json({ ok: true, audit: auditResult });
-      } catch (err: any) {
-        console.error('BoostBot audit error:', err);
-        return res.status(500).json({ error: err.message || 'Failed to complete BoostBot audit.' });
-      }
-    }
-  );
-
-  // BoostBot interactive assistant for Prince Abba
-  app.post(
-    '/api/admin/boostbot/chat',
-    requireAuth,
-    requireAdmin,
-    async (req: AuthRequest, res) => {
-      try {
-        const { message = '', history = [] } = req.body || {};
-        const query = String(message || '').trim();
-        if (!query) {
-          return res.status(400).json({ error: 'Message required.' });
-        }
-
-        // Fetch live snapshot directly from PostgreSQL
-        let liveProfiles: any[] = [];
-        let livePosts: any[] = [];
-        let liveComments: any[] = [];
-        try {
-          const [profRes, postRes, commRes] = await Promise.all([
-            pool.query('SELECT id, username, display_name, email, bio, created_at, last_seen_at FROM profiles ORDER BY created_at DESC LIMIT 30'),
-            pool.query('SELECT id, user_id, caption, post_type, created_at FROM posts ORDER BY created_at DESC LIMIT 20'),
-            pool.query('SELECT id, user_id, post_id, content, created_at FROM post_comments ORDER BY created_at DESC LIMIT 20'),
-          ]);
-          liveProfiles = profRes.rows || [];
-          livePosts = postRes.rows || [];
-          liveComments = commRes.rows || [];
-        } catch {
-          // fallback
-          const { data: p } = await supabase.from('profiles').select('id, username, display_name, created_at').limit(30);
-          liveProfiles = p || [];
-        }
-
-        const systemInstruction = `You are BOOST BOT, the internal AI Compliance Officer & Security Surveillance Engine built exclusively for Prince Abba (Founder of BoostHub).
-You communicate only with Prince Abba. You speak frankly, professionally, and directly about platform health, moderation, users, and safety rules.
-Current live database context:
-- Registered Profiles (sorted newest first): ${JSON.stringify(liveProfiles)}
-- Recent Posts: ${JSON.stringify(livePosts)}
-- Recent Comments: ${JSON.stringify(liveComments)}
-
-When Prince Abba asks about new signed-in users, give their exact username, display name, email, join timestamp, and activity.
-When asked about violations, quote any suspicious text, comments, or posts. Answer with 100% precision from the real data.`;
-
-        let replyText = '';
-        const ai = getGeminiClient();
-
-        if (ai) {
-          try {
-            const resp = await Promise.race([
-              ai.models.generateContent({
-                model: 'gemini-3.8-flash',
-                contents: query,
-                config: { systemInstruction, temperature: 0.5 },
-              }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('timeout')), 4500)
-              ),
-            ]);
-            if (resp.text?.trim()) {
-              replyText = resp.text.trim();
-            }
-          } catch {
-            // fallback
-          }
-        }
-
-        if (!replyText) {
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 6000);
-            const llmRes = await fetch('https://text.pollinations.ai/', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                messages: [
-                  { role: 'system', content: systemInstruction },
-                  ...(Array.isArray(history)
-                    ? history.slice(-4).map((h: any) => ({
-                        role: h.role === 'assistant' ? 'assistant' : 'user',
-                        content: String(h.content || ''),
-                      }))
-                    : []),
-                  { role: 'user', content: query },
-                ],
-                model: 'openai',
-              }),
-              signal: controller.signal,
-            });
-            clearTimeout(timer);
-            if (llmRes.ok) {
-              const text = await llmRes.text();
-              if (text && text.trim().length > 5) {
-                replyText = text.trim();
-              }
-            }
-          } catch {
-            // fallback
-          }
-        }
-
-        if (!replyText) {
-          const newest = liveProfiles[0];
-          replyText = `🛡️ **BoostBot Status for Prince Abba:**\n\nLive database scan complete. Total users tracked: **${liveProfiles.length}**.\n\n` +
-            (newest ? `**Latest Registered / Signed-in User:**\n• **Display Name:** ${newest.display_name || 'N/A'}\n• **Username:** @${newest.username}\n• **Email:** ${newest.email || 'N/A'}\n• **Joined:** ${new Date(newest.created_at).toLocaleString()}\n\n` : '') +
-            `All systems monitored in real-time. Let me know if you would like me to conduct an enforcement action or issue an official warning.`;
-        }
-
-        return res.json({ ok: true, reply: replyText });
-      } catch (err: any) {
-        console.error('BoostBot chat error:', err);
-        return res.status(500).json({ error: err.message || 'Failed to process BoostBot chat.' });
-      }
-    }
-  );
-
-  // BoostBot send official warning notification
-  app.post(
-    '/api/admin/boostbot/warn',
-    requireAuth,
-    requireAdmin,
-    async (req: AuthRequest, res) => {
-      try {
-        const { targetUserId, reason = 'Community Guideline Violation', customMessage = '' } = req.body || {};
-        if (!targetUserId) {
-          return res.status(400).json({ error: 'Target user ID required.' });
-        }
-
-        const bodyText =
-          customMessage ||
-          `Official notice from BoostBot Moderation: Your account was flagged for: ${reason}. Please review our Community Rules to ensure safe and respectful creator interactions on BoostHub.`;
-
-        await supabase.from('notifications').insert({
-          target_user: targetUserId,
-          actor_user: BOOST_BOT_UUID,
-          type: 'boost_bot',
-          title: '⚠️ BoostBot Safety Warning',
-          body: bodyText,
-          is_read: false,
-        });
-
-        return res.json({ ok: true, message: 'Warning notification dispatched successfully via BoostBot.' });
-      } catch (err: any) {
-        console.error('BoostBot warn error:', err);
-        return res.status(500).json({ error: err.message || 'Failed to issue BoostBot warning.' });
-      }
-    }
-  );
 
   const getNigerianVoiceCacheKey = (langCode: string, text: string): string => {
     const input = `${String(langCode || 'en-NG').toLowerCase()}::${String(text || '')

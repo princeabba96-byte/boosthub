@@ -24,6 +24,6 @@ export const createPool = () => {
   return global._postgresPool;
 };
 
-export const pool = createPool();
+const pool = createPool();
 
 export const db = drizzle(pool, { schema });

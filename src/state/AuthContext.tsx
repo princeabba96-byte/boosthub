@@ -42,7 +42,6 @@ interface AuthContextValue {
   realtimeEvents: Array<{ type: string; payload: any; timestamp: number }>;
   toasts: ToastMessage[];
   showToast: (message: string, type?: 'info' | 'success' | 'error') => void;
-  setUserProfile: (profile: UserProfile | null) => void;
   refreshProfile: () => Promise<void>;
   refreshBadgesCount: () => Promise<void>;
   purchaseBShopItem: (
@@ -233,6 +232,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         if (isMounted && profile && profile.id) {
           setUserProfile(profile);
           refreshBadgesCount();
+
+          // Check if receiver has any pending gift animations to display upon opening app!
+          try {
+            apiFetch<any[]>('/api/notifications')
+              .then((notifs) => {
+                if (!Array.isArray(notifs)) return;
+                const giftNotif = notifs.find(
+                  (n) =>
+                    (n.type === 'gift' ||
+                      n.type === 'gift_tx' ||
+                      (n.type === 'badge' && n.title?.includes('sent you'))) &&
+                    !localStorage.getItem(`boosthub_celebrated_gift_${profile.id}_${n.id}`)
+                );
+                if (giftNotif) {
+                  const celebratedStorageKey = `boosthub_celebrated_gift_${profile.id}_${giftNotif.id}`;
+                  localStorage.setItem(celebratedStorageKey, 'true');
+
+                  const sub = (giftNotif as any).subscription || {};
+                  const isSelfGift = String(giftNotif.actorId || giftNotif.actor_user || '') === profile.id;
+                  let senderUsername = isSelfGift
+                    ? (profile.username || 'You')
+                    : sub.senderUsername || giftNotif.actor?.username || '';
+                  let senderDisplayName = isSelfGift
+                    ? (profile.displayName || 'You')
+                    : sub.senderDisplayName || giftNotif.actor?.displayName || '';
+                  let senderAvatar = isSelfGift
+                    ? profile.avatarUrl
+                    : sub.senderAvatar || giftNotif.actor?.avatarUrl || '';
+                  let giftCode = sub.itemCode || giftNotif.entityId || '';
+                  let giftQty = Number(sub.quantity || 1);
+
+                  if (!senderUsername && giftNotif.title && !isSelfGift) {
+                    const match = giftNotif.title.match(
+                      /(?:^|[^\w@])@?([a-zA-Z0-9_.-]+)\s+sent\s+you/i
+                    );
+                    if (match) senderUsername = match[1];
+                  }
+
+                  if (!giftCode) {
+                    const combined = `${giftNotif.title || ''} ${giftNotif.body || ''}`.toLowerCase();
+                    if (combined.includes('neon star') || combined.includes('neon_star')) giftCode = 'neon_star';
+                    else if (combined.includes('wobbly duck') || combined.includes('wobbly_duck') || combined.includes('duck')) giftCode = 'wobbly_duck';
+                    else if (combined.includes('pizza slice') || combined.includes('pizza_slice') || combined.includes('pizza')) giftCode = 'pizza_slice';
+                    else if (combined.includes('lucky dice') || combined.includes('lucky_dice') || combined.includes('dice')) giftCode = 'lucky_dice';
+                    else if (combined.includes('lightning') || combined.includes('lightning_bolt')) giftCode = 'lightning_bolt';
+                    else if (combined.includes('golden rose') || combined.includes('golden_rose') || combined.includes('rose')) giftCode = 'golden_rose';
+                    else if (combined.includes('crystal crown') || combined.includes('crystal_crown_mini')) giftCode = 'crystal_crown_mini';
+                    else if (combined.includes('serpent ring') || combined.includes('serpent_ring')) giftCode = 'serpent_ring';
+                    else if (combined.includes('dragon egg') || combined.includes('dragon_egg')) giftCode = 'dragon_egg';
+                    else if (combined.includes('angel wings') || combined.includes('angel_wings')) giftCode = 'angel_wings';
+                    else if (combined.includes('demon horns') || combined.includes('demon_horns')) giftCode = 'demon_horns';
+                    else if (combined.includes('galaxy sword') || combined.includes('galaxy_sword')) giftCode = 'galaxy_sword';
+                    else if (combined.includes('star serpent crown') || combined.includes('star_serpent_crown')) giftCode = 'star_serpent_crown';
+                    else if (combined.includes('frost phoenix') || combined.includes('frost_phoenix_pet') || combined.includes('phoenix')) giftCode = 'frost_phoenix_pet';
+                    else if (combined.includes('void eye') || combined.includes('void_eye')) giftCode = 'void_eye';
+                    else if (combined.includes('titan gauntlet') || combined.includes('titan_gauntlet') || combined.includes('gauntlet')) giftCode = 'titan_gauntlet';
+                    else if (combined.includes('celestial throne') || combined.includes('celestial_throne') || combined.includes('throne')) giftCode = 'celestial_throne';
+                    else if (combined.includes('star serpent pet') || combined.includes('star_serpent_pet')) giftCode = 'star_serpent_pet';
+                    else if (combined.includes('crown of infinite stars') || combined.includes('crown_of_infinite_stars')) giftCode = 'crown_of_infinite_stars';
+                    else if (combined.includes('star serpent emperor') || combined.includes('star_serpent_emperor') || combined.includes('emperor')) giftCode = 'star_serpent_emperor';
+                    else giftCode = 'neon_star';
+                  }
+
+                  setTimeout(() => {
+                    window.dispatchEvent(
+                      new CustomEvent('boosthub:gift-celebration', {
+                        detail: {
+                          id: `app_open_gift_${giftNotif.id}`,
+                          senderName: senderDisplayName || senderUsername || 'A Supporter',
+                          senderUsername:
+                            senderUsername ||
+                            (senderDisplayName
+                              ? senderDisplayName.toLowerCase().replace(/\s+/g, '_')
+                              : 'supporter'),
+                          senderAvatar,
+                          senderId: giftNotif.actorId || '',
+                          receiverName: profile.displayName || profile.username || 'You',
+                          itemCode: giftCode,
+                          quantity: giftQty,
+                          message: giftNotif.body || 'You received a classic virtual gift!',
+                          badgeUnlocked: 'Virtual Gift Received! +XP & Recognition',
+                          isSelfGift,
+                        },
+                      })
+                    );
+                  }, 800);
+                }
+              })
+              .catch(() => {});
+          } catch {}
         } else if (isMounted) {
           setAuthToken(null);
           setUserProfile(null);
@@ -289,9 +378,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
       if (row.type === 'test_rt') return;
 
+      // Never receive notification for an action you performed yourself!
+      const actorClean = String(row.actor_user || row.actorId || '').trim().toLowerCase();
+      const myCleanId = String(userProfile.id || '').trim().toLowerCase();
+      const myCleanUsername = String(userProfile.username || '').trim().toLowerCase();
+      if (
+        actorClean &&
+        (actorClean === myCleanId || actorClean === myCleanUsername) &&
+        row.type !== 'boost_bot' &&
+        row.type !== 'badge'
+      ) {
+        return;
+      }
+
       const isForMe =
         String(row.target_user) === userProfile.id ||
-        String(row.actor_user) === userProfile.id;
+        row.target_user === 'all';
       if (!isForMe) return;
 
       const notifType = String(row.type || 'notification').toLowerCase();
@@ -314,7 +416,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         deepLink = row.actor_user
           ? `?messages=${encodeURIComponent(String(row.actor_user))}`
           : '?tab=friends';
-      } else if (notifType === 'gift' || notifType === 'gift_tx' || notifType === 'badge') {
+      } else if (notifType === 'gift' || notifType === 'badge') {
         deepLink = '?tab=me&mode=gifts';
       }
 
@@ -325,51 +427,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           showToast(`${row.title || 'Alert'}: ${row.body || ''}`, 'info');
         }
 
-        // Trigger Gift Celebration animation immediately on the RECEIVER's screen
-        const isGiftNotif =
+        // Trigger Cool Gift Celebration animation exclusively on the RECEIVER's screen
+        const isGiftNotification =
           notifType === 'gift' ||
-          notifType === 'gift_tx' ||
-          (notifType === 'badge' && String(row.title || '').toLowerCase().includes('sent you'));
+          row.type === 'gift_tx' ||
+          (notifType === 'badge' &&
+            (row.title?.includes('sent you') ||
+              row.body?.includes('earned the gift') ||
+              row.body?.includes('virtual gift')));
 
-        if (isGiftNotif) {
-          const rawTitle = String(row.title || '');
-          let detectedSender = 'A Supporter';
-          if (rawTitle.includes(' from ')) {
-            detectedSender = rawTitle.split(' from ')[1]?.trim() || detectedSender;
-          } else if (rawTitle.includes(' sent you ')) {
-            detectedSender = rawTitle.split(' sent you ')[0]?.replace(/^[^\w]+/, '').trim() || detectedSender;
+        if (isGiftNotification) {
+          let senderUsername = row.subscription?.senderUsername || '';
+          let senderDisplayName = row.subscription?.senderDisplayName || '';
+          let senderAvatar = row.subscription?.senderAvatar || '';
+          let giftCode = row.subscription?.itemCode || row.entityId || '';
+          let giftQty = Number(row.subscription?.quantity) || 1;
+
+          if (!senderUsername && row.title) {
+            const match = row.title.match(/(?:^|[^\w@])@?([a-zA-Z0-9_.-]+)\s+sent\s+you/i);
+            if (match) {
+              senderUsername = match[1];
+            } else {
+              const parts = row.title.replace(/^[^a-zA-Z0-9@]+/, '').split(' sent you');
+              if (parts[0]) senderDisplayName = parts[0].trim();
+            }
           }
 
-          let resolvedItemCode = row.subscription?.itemCode;
-          if (!resolvedItemCode) {
-            const lower = rawTitle.toLowerCase();
-            if (lower.includes('crown')) resolvedItemCode = 'crown';
-            else if (lower.includes('diamond')) resolvedItemCode = 'diamond';
-            else if (lower.includes('rocket')) resolvedItemCode = 'rocket';
-            else if (lower.includes('trophy')) resolvedItemCode = 'trophy';
-            else if (lower.includes('rose')) resolvedItemCode = 'rose';
-            else if (lower.includes('heart')) resolvedItemCode = 'heart';
-            else if (lower.includes('lion')) resolvedItemCode = 'lion';
-            else if (lower.includes('galaxy')) resolvedItemCode = 'galaxy';
-            else resolvedItemCode = 'gift_box';
+          if (!giftCode) {
+            const combinedText = `${row.title || ''} ${row.body || ''}`.toLowerCase();
+            if (combinedText.includes('rose')) giftCode = 'rose';
+            else if (combinedText.includes('choc') || combinedText.includes('palm_wine')) giftCode = 'chocolate';
+            else if (combinedText.includes('coffee') || combinedText.includes('chief_cap')) giftCode = 'coffee';
+            else if (combinedText.includes('bouquet') || combinedText.includes('aba_shoes')) giftCode = 'bouquet';
+            else if (combinedText.includes('champagne') || combinedText.includes('fire')) giftCode = 'champagne';
+            else if (combinedText.includes('watch') || combinedText.includes('gold_chain')) giftCode = 'watch';
+            else if (combinedText.includes('supercar') || combinedText.includes('rocket')) giftCode = 'supercar';
+            else if (combinedText.includes('helicopter') || combinedText.includes('golden_eagle')) giftCode = 'helicopter';
+            else if (combinedText.includes('crown')) giftCode = 'crown';
+            else if (combinedText.includes('diamond')) giftCode = 'diamond';
+            else if (combinedText.includes('palace')) giftCode = 'palace';
+            else if (combinedText.includes('trophy')) giftCode = 'trophy';
+            else giftCode = 'rose';
           }
 
           window.dispatchEvent(
             new CustomEvent('boosthub:gift-celebration', {
               detail: {
                 id: `gift_recv_${rowId}_${Date.now()}`,
-                senderName: detectedSender,
+                senderName: senderDisplayName || senderUsername || 'A Supporter',
+                senderUsername:
+                  senderUsername ||
+                  (senderDisplayName
+                    ? senderDisplayName.toLowerCase().replace(/\s+/g, '_')
+                    : 'supporter'),
+                senderAvatar,
+                senderId: row.actor_user || '',
                 receiverName: userProfile.displayName || userProfile.username || 'You',
-                itemCode: resolvedItemCode,
-                quantity: row.subscription?.quantity || 1,
-                message: row.body || 'You received a virtual gift! Check your gift collection.',
-                badgeUnlocked: '🎁 Gift Received! Boost Points & Recognition Added!',
+                itemCode: giftCode,
+                quantity: giftQty,
+                message: row.body || 'You received a classic virtual gift!',
+                badgeUnlocked: 'Virtual Gift Received! +XP & Recognition',
               },
             })
           );
-
-          // Immediately refresh receiver's profile so balance & gifts reflect without reload
-          void refreshProfile().catch(() => {});
         }
       }
 
@@ -474,6 +594,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
               : prev
           );
           pushEvent('balance_updated', data);
+        } else if (data.type === 'profile_updated') {
+          if (
+            data.userId &&
+            userProfile &&
+            (data.userId === userProfile.id ||
+              data.userId === userProfile.username)
+          ) {
+            setUserProfileState((prev) =>
+              prev ? { ...prev, isVerified: Boolean(data.isVerified) } : prev
+            );
+          }
+          refreshProfile();
+          pushEvent('profile_updated', data);
         }
       })
       .on(
@@ -683,18 +816,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const snapshotProfile = userProfile;
       const isOwnerAdmin =
         snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
-      const currentBalance = Number(
-        snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? (isOwnerAdmin ? 999999999 : 0)
-      );
+      const currentBalance = isOwnerAdmin
+        ? 999999999
+        : Number(
+            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
+          );
 
-      if (currentBalance < totalCost) {
+      if (!isOwnerAdmin && currentBalance < totalCost) {
         throw new Error(
           `Not enough Boost Points! You need ${totalCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
         );
       }
 
       // Optimistic balance decrement in central state prior to Supabase transaction commit
-      if (snapshotProfile) {
+      if (snapshotProfile && !isOwnerAdmin) {
         const optimisticBalance = Math.max(0, currentBalance - totalCost);
         setUserProfile({
           ...snapshotProfile,
@@ -720,12 +855,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           body: JSON.stringify({ itemCode: item.code, quantity: cleanQty }),
         });
 
-        const committedBalance = Number(
-          res.newBalance ??
-            res.state?.balance ??
-            res.state?.boostPoints ??
-            Math.max(0, currentBalance - totalCost)
-        );
+        const committedBalance = isOwnerAdmin
+          ? 999999999
+          : Number(
+              res.newBalance ??
+                res.state?.balance ??
+                res.state?.boostPoints ??
+                Math.max(0, currentBalance - totalCost)
+            );
 
         if (snapshotProfile) {
           setUserProfile({
@@ -781,22 +918,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
       const snapshotProfile = userProfile;
       const isOwnerAdmin =
         snapshotProfile?.email?.trim().toLowerCase() === 'princeabba96@gmail.com';
-      const currentBalance = Number(
-        snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? (isOwnerAdmin ? 999999999 : 0)
-      );
+      const currentBalance = isOwnerAdmin
+        ? 999999999
+        : Number(
+            snapshotProfile?.balance ?? snapshotProfile?.boostPoints ?? 0
+          );
 
       const owned = Math.max(0, Number(params.ownedCount || 0));
-      const fromInv = params.useInventory ? Math.min(owned, cleanQty) : 0;
+      const fromInv =
+        !isOwnerAdmin && params.useInventory ? Math.min(owned, cleanQty) : 0;
       const toBuyQty = Math.max(0, cleanQty - fromInv);
-      const bpCost = item.costBp * toBuyQty;
+      const bpCost = isOwnerAdmin ? 0 : item.costBp * toBuyQty;
 
-      if (currentBalance < bpCost) {
+      if (!isOwnerAdmin && currentBalance < bpCost) {
         throw new Error(
           `Not enough Boost Points! Sending ${item.icon} ${item.name} ×${cleanQty} requires ${bpCost.toLocaleString()} BP (you have ${currentBalance.toLocaleString()} BP).`
         );
       }
 
-      if (snapshotProfile && bpCost > 0) {
+      if (snapshotProfile && !isOwnerAdmin && bpCost > 0) {
         const optimisticBalance = Math.max(0, currentBalance - bpCost);
         setUserProfile({
           ...snapshotProfile,
@@ -821,12 +961,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           }),
         });
 
-        const committedBalance = Number(
-          res.newBalance ??
-            res.state?.balance ??
-            res.state?.boostPoints ??
-            Math.max(0, currentBalance - bpCost)
-        );
+        const committedBalance = isOwnerAdmin
+          ? 999999999
+          : Number(
+              res.newBalance ??
+                res.state?.balance ??
+                res.state?.boostPoints ??
+                Math.max(0, currentBalance - bpCost)
+            );
 
         if (snapshotProfile) {
           setUserProfile({
@@ -837,21 +979,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
           });
         }
         void refreshProfile().catch(() => {});
-
-        // Trigger gift celebration animation on sender screen as confirmation!
-        window.dispatchEvent(
-          new CustomEvent('boosthub:gift-celebration', {
-            detail: {
-              id: `gift_sent_${Date.now()}`,
-              senderName: 'You',
-              receiverName: 'Creator',
-              itemCode: item.code,
-              quantity: cleanQty,
-              message: params.message || `Sent ${item.icon} ${item.name}!`,
-              badgeUnlocked: `-${bpCost.toLocaleString()} BP · +${20 * cleanQty} XP Earned!`,
-            },
-          })
-        );
 
         return {
           state: {
@@ -899,7 +1026,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         realtimeEvents,
         toasts,
         showToast,
-        setUserProfile,
         refreshProfile,
         refreshBadgesCount,
         purchaseBShopItem,

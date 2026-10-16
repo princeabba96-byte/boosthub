@@ -425,17 +425,8 @@ export async function exportBEditProjectToVideoFile(
       (window as unknown as { webkitAudioContext: typeof AudioContext })
         .webkitAudioContext;
     if (AudioCtx) {
-      exportAudioCtx = new AudioCtx({ sampleRate: 44100 });
+      exportAudioCtx = new AudioCtx();
       const dest = exportAudioCtx.createMediaStreamDestination();
-
-      // Master compressor + limiter to prevent audio clipping/cracking
-      const compressor = exportAudioCtx.createDynamicsCompressor();
-      compressor.threshold.setValueAtTime(-12, exportAudioCtx.currentTime);
-      compressor.knee.setValueAtTime(30, exportAudioCtx.currentTime);
-      compressor.ratio.setValueAtTime(12, exportAudioCtx.currentTime);
-      compressor.attack.setValueAtTime(0.003, exportAudioCtx.currentTime);
-      compressor.release.setValueAtTime(0.25, exportAudioCtx.currentTime);
-      compressor.connect(dest);
 
       const scheduleAudioUrl = async (
         url: string | undefined,
@@ -452,9 +443,9 @@ export async function exportBEditProjectToVideoFile(
           srcNode.buffer = buf;
           srcNode.loop = loop;
           const gainNode = exportAudioCtx!.createGain();
-          gainNode.gain.value = Math.max(0, Math.min(1.0, volPct / 100));
+          gainNode.gain.value = Math.max(0, Math.min(1.5, volPct / 100));
           srcNode.connect(gainNode);
-          gainNode.connect(compressor);
+          gainNode.connect(dest);
           srcNode.start(0, Math.max(0, Math.min(buf.duration - 0.1, trimStart)));
           activeSources.push(srcNode);
         } catch {
@@ -485,14 +476,11 @@ export async function exportBEditProjectToVideoFile(
     // fallback to video-only stream if AudioContext blocked
   }
 
-  // Universal codec prioritization: prefer MP4/H.264 so videos play smoothly on iOS, Android, and Desktop
   const mimeTypes = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4',
-    'video/webm;codecs=h264',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
     'video/webm',
+    'video/mp4',
   ];
   const selectedMime =
     mimeTypes.find((m) =>

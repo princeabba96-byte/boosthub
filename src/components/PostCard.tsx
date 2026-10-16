@@ -71,8 +71,6 @@ export const PostCard: React.FC<PostCardProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const voiceoverAudioRef = useRef<HTMLAudioElement | null>(null);
   const likeBusyRef = useRef(false);
-  const lastTimeUpdateRef = useRef<number>(0);
-  const seekingLockRef = useRef<boolean>(false);
 
   useEffect(() => {
     return subscribeToGlobalAudio((muted) => {
@@ -441,33 +439,25 @@ export const PostCard: React.FC<PostCardProps> = ({
                   data-post-id={post.id}
                   src={cleanMediaSrc}
                   poster={post.thumbnailUrl || undefined}
-                  muted={isMuted || Boolean(studioMeta?.muteAudio) || Boolean(attachedAudioUrl)}
+                  muted={isMuted || Boolean(studioMeta?.muteAudio)}
                   playsInline
                   loop
-                  preload="metadata"
-                  crossOrigin="anonymous"
-                  // @ts-ignore
-                  webkit-playsinline="true"
-                  x5-playsinline="true"
-                  disablePictureInPicture
+                  preload="auto"
                   onClick={(e) => {
                     const vid = e.currentTarget;
                     if (vid.paused) {
                       vid.volume = volumeLevel;
-                      vid.muted = isMuted || Boolean(studioMeta?.muteAudio) || Boolean(attachedAudioUrl);
+                      vid.muted = isMuted || Boolean(studioMeta?.muteAudio);
                       vid.play().catch(() => {});
                       if (voiceoverAudioRef.current && !isMuted) {
-                        const diff = Math.abs((voiceoverAudioRef.current.currentTime || 0) - (vid.currentTime || 0));
-                        if (diff > 0.35) {
-                          voiceoverAudioRef.current.currentTime = vid.currentTime || 0;
-                        }
+                        voiceoverAudioRef.current.currentTime = vid.currentTime || 0;
                         voiceoverAudioRef.current.play().catch(() => {});
                       }
                     } else if (isMuted) {
                       // Tap playing video to unmute
                       setIsMuted(false);
                       setGlobalVideoMuted(false);
-                      vid.muted = Boolean(attachedAudioUrl) || Boolean(studioMeta?.muteAudio);
+                      vid.muted = false;
                       vid.volume = volumeLevel;
                       if (voiceoverAudioRef.current) {
                         voiceoverAudioRef.current.muted = false;
@@ -495,15 +485,12 @@ export const PostCard: React.FC<PostCardProps> = ({
                   style={
                     studioMeta
                       ? {
-                          willChange: 'transform',
-                          transform: `translateZ(0) rotate(${studioMeta.rotation || 0}deg) scale(${
+                          filter: buildCssFilterString(studioMeta),
+                          transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
                             (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
                           }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
-                          filter: buildCssFilterString(studioMeta),
-                          WebkitBackfaceVisibility: 'hidden',
-                          backfaceVisibility: 'hidden',
                         }
-                      : { willChange: 'transform', transform: 'translateZ(0)', WebkitBackfaceVisibility: 'hidden', backfaceVisibility: 'hidden' }
+                      : undefined
                   }
                   onLoadedMetadata={(e) => {
                     const vid = e.currentTarget;
@@ -518,6 +505,12 @@ export const PostCard: React.FC<PostCardProps> = ({
                     }
                     if (studioMeta?.trimStart && studioMeta.trimStart > 0) {
                       vid.currentTime = studioMeta.trimStart;
+                    } else if (!post.thumbnailUrl && vid.currentTime === 0) {
+                      try {
+                        vid.currentTime = 0.05;
+                      } catch {
+                        // ignore
+                      }
                     }
                   }}
                   onCanPlay={(e) => {
@@ -532,34 +525,22 @@ export const PostCard: React.FC<PostCardProps> = ({
                   }}
                   onTimeUpdate={(e) => {
                     const vid = e.currentTarget;
-                    const nowMs = performance.now();
-                    if (nowMs - lastTimeUpdateRef.current >= 250) {
-                      lastTimeUpdateRef.current = nowMs;
-                      setVideoCurrentTime(vid.currentTime || 0);
-                    }
+                    setVideoCurrentTime(vid.currentTime || 0);
                     if (vid.duration && Number.isFinite(vid.duration)) {
                       setVideoDuration(vid.duration);
                     }
                     if (
-                      !seekingLockRef.current &&
                       studioMeta?.trimEnd &&
                       studioMeta.trimEnd > 0 &&
                       vid.currentTime >= studioMeta.trimEnd
                     ) {
-                      seekingLockRef.current = true;
                       vid.currentTime = studioMeta.trimStart || 0;
                       if (voiceoverAudioRef.current) {
                         voiceoverAudioRef.current.currentTime = 0;
                       }
-                      setTimeout(() => {
-                        seekingLockRef.current = false;
-                      }, 300);
                     }
                   }}
-                  onError={() => {
-                    console.warn('Video playback notice for post', post.id);
-                  }}
-                  className="w-full h-full object-cover cursor-pointer will-change-transform transform-gpu"
+                  className="w-full h-full object-cover cursor-pointer"
                 />
 
                 {/* Paused Play Indicator Overlay */}
