@@ -22,6 +22,7 @@ import {
   GiftTier,
   UnboxAnimationType,
 } from '../data/giftTiers';
+import { getGiftImageUrl } from '../data/giftImagesData';
 
 export interface GiftCelebrationPayload {
   id: string;
@@ -594,7 +595,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
 
             {/* Genuine Transparent PNG Icon */}
             <img
-              src={item.iconPng}
+              src={item.iconPng || getGiftImageUrl(item.code)}
               alt={item.name}
               className="relative w-28 h-28 object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.8)] select-none transform hover:scale-115 transition-transform duration-300"
             />

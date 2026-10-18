@@ -7,6 +7,3 @@ coverage/
 .env*
 !.env.example
 .vapid-keys.json
-node-compile-cache/
-*.hm
-.*.hm

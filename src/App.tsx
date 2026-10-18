@@ -220,6 +220,21 @@ const BoostHubAppShell: React.FC = () => {
   );
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === '/' &&
+        !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)
+      ) {
+        e.preventDefault();
+        setSearchInitialQuery('');
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     openDeepLinkDestination({ url: window.location.search });
 
     if ('serviceWorker' in navigator && window.self === window.top) {
@@ -527,10 +542,6 @@ const BoostHubAppShell: React.FC = () => {
       <GiftCelebrationOverlay
         celebration={giftCelebration}
         onDismiss={() => setGiftCelebration(null)}
-        onOpenChatWithSender={(senderId) => {
-          setMessagePartner({ id: senderId } as any);
-          setMessagesOpen(true);
-        }}
       />
 
       {/* Non-Blocking Toast Notifications */}
