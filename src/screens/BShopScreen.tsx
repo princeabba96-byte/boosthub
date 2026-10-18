@@ -12,12 +12,21 @@ import {
   Search,
   CheckCircle2,
   X,
+  Lock,
+  Sparkles,
 } from 'lucide-react';
 import {
   BSHOP_CATALOG,
   BShopCatalogItem,
   getBShopItemByCode,
 } from '../data/bshopCatalog';
+import {
+  GIFT_TIER_CONFIGS,
+  GiftTier,
+  isGiftRecipeUnlocked,
+  resolveGiftAssetUrl,
+} from '../data/giftTiers';
+import { SendGiftFlowOverlay } from '../components/SendGiftFlowOverlay';
 import { BShopUserState, UserProfile } from '../types';
 import { apiFetch } from '../services/api';
 import { useAuth } from '../state/AuthContext';
@@ -57,6 +66,17 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<ShopFilterTab>('all');
 
+  const [completedMissionsCount, setCompletedMissionsCount] = useState<number>(0);
+  const [sendTargetMode, setSendTargetMode] = useState<'others' | 'self'>('others');
+  const [sendFlowPayload, setSendFlowPayload] = useState<{
+    item: BShopCatalogItem;
+    quantity: number;
+    recipientName: string;
+    recipientUsername?: string;
+    recipientAvatar?: string;
+    isSelfGift?: boolean;
+  } | null>(null);
+
   // Modal state for buying or sending a gift
   const [selectedGiftModalItem, setSelectedGiftModalItem] =
     useState<BShopCatalogItem | null>(null);
@@ -84,7 +104,7 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
   const loadShopData = useCallback(async () => {
     try {
-      const [stateRes, friendsRes, directoryRes] = await Promise.all([
+      const [stateRes, friendsRes, directoryRes, missionsRes] = await Promise.all([
         apiFetch<BShopUserState>('/api/bshop/state'),
         apiFetch<{
           friends?: Array<UserProfile | { friendshipId?: number; profile?: UserProfile }>;
@@ -94,8 +114,18 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
           people?: UserProfile[];
           users?: UserProfile[];
         }>('/api/search?q=').catch(() => ({ people: [], users: [] })),
+        apiFetch<{
+          missions?: Array<{ claimed?: boolean; progress?: number; target?: number }>;
+        }>('/api/missions').catch(() => ({ missions: [] })),
       ]);
       setShopState(stateRes);
+
+      if (missionsRes?.missions) {
+        const completed = missionsRes.missions.filter(
+          (m) => m.claimed || (m.progress && m.target && m.progress >= m.target)
+        ).length;
+        setCompletedMissionsCount(completed);
+      }
 
       const map = new Map<string, UserProfile>();
       if (initialRecipient && initialRecipient.id !== userProfile?.id) {
@@ -238,7 +268,6 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
     try {
       const res = await purchaseBShopItem(item.code, qty);
       setShopState(res.state);
-      await refreshProfile();
       if (res.unboxedReward) {
         setUnboxedResult(res.unboxedReward);
       } else {
@@ -262,15 +291,23 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
       return;
     }
 
-    if (!selectedRecipientId) {
+    const isSelf = sendTargetMode === 'self';
+    const effectiveRecipientId = isSelf ? (userProfile?.id || '') : selectedRecipientId;
+
+    if (!effectiveRecipientId) {
       showToast('Please select a creator to receive this gift.', 'error');
       return;
     }
 
     setSubmittingAction(true);
     try {
+      const targetUser = isSelf
+        ? userProfile
+        : creators.find((c) => c.id === effectiveRecipientId) ||
+          searchedUsers.find((u) => u.id === effectiveRecipientId);
+
       const res = await sendBShopGift({
-        receiverId: selectedRecipientId,
+        receiverId: effectiveRecipientId,
         itemCode: selectedGiftModalItem.code,
         quantity: giftQuantity,
         message: giftMessage,
@@ -278,9 +315,20 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
         ownedCount: getOwnedCount(selectedGiftModalItem.code),
       });
       setShopState(res.state);
-      await refreshProfile();
-      showToast(res.message, 'success');
+
+      const currentGift = selectedGiftModalItem;
+      const currentQty = giftQuantity;
       setSelectedGiftModalItem(null);
+
+      // Launch Send Flow animation: Gift -> Put into gift box based on tier -> Swoosh away!
+      setSendFlowPayload({
+        item: currentGift,
+        quantity: currentQty,
+        recipientName: isSelf ? 'Yourself' : (targetUser?.displayName || targetUser?.username || 'Creator'),
+        recipientUsername: targetUser?.username,
+        recipientAvatar: targetUser?.avatarUrl,
+        isSelfGift: isSelf,
+      });
     } catch (err: any) {
       showToast(err.message || 'Could not send gift.', 'error');
     } finally {
@@ -330,8 +378,12 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
         item.category === 'name_style'
       );
     if (activeFilter === 'inventory') return getOwnedCount(item.code) > 0;
-    return true;
-  }).sort((a, b) => a.costBp - b.costBp);
+  }).sort((a, b) => {
+    const rankA = a.rankOrder || a.costBp;
+    const rankB = b.rankOrder || b.costBp;
+    if (rankA !== rankB) return rankA - rankB;
+    return a.costBp - b.costBp;
+  });
 
   if (loading) {
     return (
@@ -483,6 +535,14 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
             const ownedCount = getOwnedCount(item.code);
             const equipped = isCosmeticEquipped(item);
             const canAfford = currentBp >= item.costBp;
+            const isRecipeUnlocked =
+              item.category !== 'gift' ||
+              isGiftRecipeUnlocked(
+                item.tier || 'Random',
+                userProfile?.xp || 0,
+                completedMissionsCount,
+                isOwnerAdmin
+              );
 
             return (
               <div
@@ -535,15 +595,22 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
 
                   {/* Icon & Item Name */}
                   <div className="flex items-center gap-4 pt-1">
-                    <div className="w-16 h-16 rounded-2xl bg-[#070B17] border border-white/10 flex items-center justify-center text-3xl select-none shrink-0 overflow-hidden">
+                    <div className="w-16 h-16 rounded-2xl bg-[#070B17] border border-white/10 flex items-center justify-center select-none shrink-0 p-1.5 relative overflow-hidden group">
                       {item.iconPng ? (
                         <img
-                          src={item.iconPng}
+                          src={resolveGiftAssetUrl(item.iconPng)}
                           alt={item.name}
-                          className="w-12 h-12 object-contain drop-shadow-md"
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            const currentSrc = target.src;
+                            if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
+                              target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
+                            }
+                          }}
+                          className="w-12 h-12 object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] transform group-hover:scale-110 transition-transform duration-200"
                         />
                       ) : (
-                        item.icon
+                        <span className="text-3xl">{item.icon}</span>
                       )}
                     </div>
                     <div className="min-w-0">
@@ -569,32 +636,75 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
                   <p className="text-xs text-slate-300 leading-relaxed">
                     {item.description}
                   </p>
+
+                  {/* Mission Recipe Unlock Status */}
+                  {item.category === 'gift' && (
+                    <div className="pt-1">
+                      {isRecipeUnlocked ? (
+                        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/25 text-[10px] font-semibold text-emerald-300">
+                          <Check className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <span className="truncate">{item.recipeRequirement || 'Recipe Unlocked'}</span>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-[10px] space-y-1">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                            <Lock className="w-3 h-3 text-amber-400 shrink-0" />
+                            <span>Recipe Locked</span>
+                          </div>
+                          <p className="text-amber-200/80 text-[10px] leading-tight">
+                            {item.recipeRequirement || 'Complete mission recipe to unlock'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Buttons */}
                 <div className="pt-2 space-y-2">
                   {item.category === 'gift' && (
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenGiftModal(item, 'send')}
-                        className="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
-                      >
-                        <Send className="w-3.5 h-3.5" />
-                        <span>
-                          {ownedCount > 0 ? 'Send Gift' : 'Buy & Send'}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleOpenGiftModal(item, 'buy')}
-                        disabled={!canAfford}
-                        className="py-2.5 px-3 rounded-xl bg-white/10 hover:bg-white/15 disabled:opacity-40 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors"
-                      >
-                        <ShoppingBag className="w-3.5 h-3.5" />
-                        <span>Buy to Bag</span>
-                      </button>
-                    </div>
+                    <>
+                      {isRecipeUnlocked ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSendTargetMode('others');
+                              handleOpenGiftModal(item, 'send');
+                            }}
+                            className="py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Send Gift</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSendTargetMode('self');
+                              handleOpenGiftModal(item, 'send');
+                            }}
+                            className="py-2.5 px-3 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Gift className="w-3.5 h-3.5" />
+                            <span>Gift to Self</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            showToast(
+                              `Recipe Locked: ${item.recipeRequirement}. Complete daily missions or gain XP to unlock!`,
+                              'info'
+                            )
+                          }
+                          className="w-full py-2.5 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-400 text-xs font-semibold inline-flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Lock className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Locked Recipe</span>
+                        </button>
+                      )}
+                    </>
                   )}
 
                   {item.category === 'mystery_box' && (
@@ -662,17 +772,24 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
           <div className="w-full max-w-md bg-[#0B1021] border border-white/15 rounded-3xl p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                {selectedGiftModalItem.iconPng ? (
-                  <div className="w-12 h-12 rounded-xl bg-[#070B17] border border-white/10 flex items-center justify-center p-1 shrink-0 overflow-hidden">
+                <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center p-1.5 shrink-0">
+                  {selectedGiftModalItem.iconPng ? (
                     <img
-                      src={selectedGiftModalItem.iconPng}
+                      src={resolveGiftAssetUrl(selectedGiftModalItem.iconPng)}
                       alt={selectedGiftModalItem.name}
-                      className="w-10 h-10 object-contain drop-shadow-md"
+                      onError={(e) => {
+                        const target = e.currentTarget;
+                        const currentSrc = target.src;
+                        if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
+                          target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
+                        }
+                      }}
+                      className="w-11 h-11 object-contain drop-shadow-md"
                     />
-                  </div>
-                ) : (
-                  <span className="text-3xl">{selectedGiftModalItem.icon}</span>
-                )}
+                  ) : (
+                    <span className="text-3xl">{selectedGiftModalItem.icon}</span>
+                  )}
+                </div>
                 <div>
                   <h3 className="font-display text-lg font-bold text-white">
                     {selectedGiftModalItem.name}
@@ -685,7 +802,7 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
               </div>
               <button
                 onClick={() => setSelectedGiftModalItem(null)}
-                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white"
+                className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -696,40 +813,92 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
               <button
                 type="button"
                 onClick={() => setGiftActionMode('send')}
-                className={`py-2 rounded-lg text-xs font-semibold transition-colors ${
+                className={`py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                   giftActionMode === 'send'
                     ? 'bg-blue-600 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Send to a Creator
+                Send as Gift
               </button>
               <button
                 type="button"
                 onClick={() => setGiftActionMode('buy')}
-                className={`py-2 rounded-lg text-xs font-semibold transition-colors ${
+                className={`py-2 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                   giftActionMode === 'buy'
                     ? 'bg-blue-600 text-white'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Buy to My Inventory
+                Buy to Inventory
               </button>
             </div>
 
             <form onSubmit={handleConfirmSendGift} className="space-y-4">
               {giftActionMode === 'send' && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-medium text-slate-300">
-                      Search & Select Recipient User
-                    </label>
-                    {searchingUsers && (
-                      <span className="text-[11px] text-blue-400">
-                        Searching users...
-                      </span>
-                    )}
+                <div className="space-y-3">
+                  {/* Recipient Destination Switcher: Myself vs Others */}
+                  <div className="grid grid-cols-2 p-1 bg-white/5 border border-white/10 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setSendTargetMode('self')}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        sendTargetMode === 'self'
+                          ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Gift className="w-3.5 h-3.5" />
+                      <span>Gift to Myself</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSendTargetMode('others')}
+                      className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        sendTargetMode === 'others'
+                          ? 'bg-blue-600 text-white shadow-md'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Gift to Others</span>
+                    </button>
                   </div>
+
+                  {sendTargetMode === 'self' ? (
+                    <div className="p-3.5 rounded-2xl bg-gradient-to-br from-pink-950/40 via-purple-950/30 to-slate-900/60 border border-pink-500/30 space-y-2">
+                      <div className="flex items-center gap-3">
+                        <Avatar
+                          src={userProfile?.avatarUrl}
+                          name={userProfile?.displayName || 'You'}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span>{userProfile?.displayName || 'Your Profile'}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                              Recipient: You
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-pink-300">@{userProfile?.username || 'you'}</p>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        Send this gift to yourself! Once sent, you can immediately unbox the gift box in Boost Hub and claim your +Boost Points reward.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-xs font-medium text-slate-300">
+                          Search & Select Recipient User
+                        </label>
+                        {searchingUsers && (
+                          <span className="text-[11px] text-blue-400">
+                            Searching users...
+                          </span>
+                        )}
+                      </div>
 
                   {/* Search Input */}
                   <div className="relative">
@@ -888,6 +1057,8 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
                   </div>
                 </div>
               )}
+            </div>
+          )}
 
               {/* Quantity Selector */}
               <div>
@@ -1010,6 +1181,52 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
             </button>
           </div>
         </div>
+      )}
+
+      {/* Send Gift Flow: Gift -> Put into gift box based on tier -> Swoosh away! */}
+      {sendFlowPayload && (
+        <SendGiftFlowOverlay
+          item={sendFlowPayload.item}
+          quantity={sendFlowPayload.quantity}
+          recipientName={sendFlowPayload.recipientName}
+          recipientUsername={sendFlowPayload.recipientUsername}
+          recipientAvatar={sendFlowPayload.recipientAvatar}
+          isSelfGift={sendFlowPayload.isSelfGift}
+          onComplete={() => {
+            const isSelf = sendFlowPayload.isSelfGift;
+            const sentItem = sendFlowPayload.item;
+            const sentQty = sendFlowPayload.quantity;
+            setSendFlowPayload(null);
+            showToast(
+              isSelf
+                ? `Gift delivered to your Boost Hub! Open it now!`
+                : `Sent ${sentItem.icon} ${sentItem.name} ×${sentQty}!`,
+              'success'
+            );
+            if (isSelf && userProfile) {
+              window.dispatchEvent(
+                new CustomEvent('boosthub:gift-celebration', {
+                  detail: {
+                    id: `self_gift_${Date.now()}`,
+                    senderName:
+                      userProfile.displayName || userProfile.username || 'You',
+                    senderUsername: userProfile.username,
+                    senderAvatar: userProfile.avatarUrl,
+                    senderId: userProfile.id,
+                    receiverName:
+                      userProfile.displayName || userProfile.username || 'You',
+                    itemCode: sentItem.code,
+                    quantity: sentQty,
+                    message:
+                      giftMessage ||
+                      'You treated yourself to a fantastic gift!',
+                    isSelfGift: true,
+                  },
+                })
+              );
+            }
+          }}
+        />
       )}
     </div>
   );

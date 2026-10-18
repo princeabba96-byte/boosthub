@@ -68,11 +68,7 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
     Array<{ profile: UserProfile; mutualFriendsCount: number }>
   >([]);
   const [loadingFriends, setLoadingFriends] = useState<boolean>(true);
-
-  // Search Friends & Creators State
-  const [searchQuery, setSearchQuery] = useState('');
-  const [globalSearchResults, setGlobalSearchResults] = useState<UserProfile[]>([]);
-  const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
+  const [friendSearchQuery, setFriendSearchQuery] = useState<string>('');
 
   const [communities, setCommunities] = useState<CommunityItem[]>([]);
   const [activeCommunity, setActiveCommunity] = useState<CommunityItem | null>(null);
@@ -441,83 +437,6 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
   const safeSuggestions = Array.isArray(suggestions) ? suggestions : [];
   const safeCommunities = Array.isArray(communities) ? communities : [];
 
-  // Live search across platform when typing in the search bar
-  useEffect(() => {
-    const q = searchQuery.trim().toLowerCase().replace(/^[@#]+/, '');
-    if (!q || q.length < 2) {
-      setGlobalSearchResults([]);
-      setIsSearchingGlobal(false);
-      return;
-    }
-    const timer = setTimeout(async () => {
-      setIsSearchingGlobal(true);
-      try {
-        const res = await apiFetch<{ people?: UserProfile[]; users?: UserProfile[] }>(
-          `/api/search?q=${encodeURIComponent(q)}`
-        );
-        const list = Array.isArray(res?.people)
-          ? res.people
-          : Array.isArray(res?.users)
-            ? res.users
-            : [];
-        const myId = userProfile?.id;
-        const friendIds = new Set(safeFriends.map((f) => f.profile?.id));
-        setGlobalSearchResults(
-          list.filter((u) => u.id && u.id !== myId && !friendIds.has(u.id))
-        );
-      } catch {
-        setGlobalSearchResults([]);
-      } finally {
-        setIsSearchingGlobal(false);
-      }
-    }, 280);
-    return () => clearTimeout(timer);
-  }, [searchQuery, userProfile?.id, safeFriends]);
-
-  const cleanQ = searchQuery.trim().toLowerCase().replace(/^[@#]+/, '');
-
-  const filteredFriends = cleanQ
-    ? safeFriends.filter(
-        (f) =>
-          f.profile?.username?.toLowerCase().includes(cleanQ) ||
-          f.profile?.displayName?.toLowerCase().includes(cleanQ) ||
-          (f.profile?.bio || '').toLowerCase().includes(cleanQ)
-      )
-    : safeFriends;
-
-  const filteredPendingReceived = cleanQ
-    ? safePendingReceived.filter(
-        (f) =>
-          f.profile?.username?.toLowerCase().includes(cleanQ) ||
-          f.profile?.displayName?.toLowerCase().includes(cleanQ)
-      )
-    : safePendingReceived;
-
-  const filteredPendingSent = cleanQ
-    ? safePendingSent.filter(
-        (f) =>
-          f.profile?.username?.toLowerCase().includes(cleanQ) ||
-          f.profile?.displayName?.toLowerCase().includes(cleanQ)
-      )
-    : safePendingSent;
-
-  const filteredSuggestions = cleanQ
-    ? safeSuggestions.filter(
-        (s) =>
-          s.profile?.username?.toLowerCase().includes(cleanQ) ||
-          s.profile?.displayName?.toLowerCase().includes(cleanQ)
-      )
-    : safeSuggestions;
-
-  const filteredCommunities = cleanQ
-    ? safeCommunities.filter(
-        (c) =>
-          c.name?.toLowerCase().includes(cleanQ) ||
-          c.description?.toLowerCase().includes(cleanQ) ||
-          c.category?.toLowerCase().includes(cleanQ)
-      )
-    : safeCommunities;
-
   if (loadingFriends || !friends) {
     return (
       <div className="max-w-5xl mx-auto px-4 sm:px-6 py-16 flex flex-col items-center justify-center gap-3">
@@ -597,71 +516,93 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
           </div>
         </div>
 
-        {/* Dedicated Friends & Creators Search Bar */}
-        <div className="bg-[#0B1021] border border-white/10 rounded-2xl p-2.5 sm:p-3 shadow-lg">
-          <div className="relative flex items-center">
-            <Search className="absolute left-3.5 w-4 h-4 text-blue-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search your friends by name or @username, or find creators..."
-              className="w-full h-10 sm:h-11 pl-10 pr-10 rounded-xl bg-white/[0.04] border border-white/10 focus:border-blue-500 focus:bg-white/[0.07] text-xs sm:text-sm text-white placeholder-slate-400 outline-none transition-all"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 p-1 rounded-full text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
-                title="Clear search"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-          {searchQuery && (
-            <div className="flex items-center justify-between px-2 pt-2 text-[11px] text-slate-400">
-              <span>
-                Results for <strong className="text-white">"{searchQuery}"</strong>
-              </span>
-              <span className="text-blue-400 font-semibold">
-                {section === 'friends' && `${filteredFriends.length} matching friends`}
-                {section === 'requests' && `${filteredPendingReceived.length + filteredPendingSent.length} matching requests`}
-                {section === 'suggestions' && `${filteredSuggestions.length} matching suggestions`}
-                {section === 'communities' && `${filteredCommunities.length} matching communities`}
-              </span>
-            </div>
-          )}
-        </div>
-
         {/* SECTION 1: FRIENDS LIST */}
-        {section === 'friends' && (
-          <div className="space-y-4">
+        {/* SECTION 1: FRIENDS LIST */}
+        {section === 'friends' && (() => {
+          const filteredFriends = (safeFriends || []).filter(({ profile }) => {
+            if (!profile) return false;
+            const q = friendSearchQuery.trim().toLowerCase();
+            if (!q) return true;
+            return (
+              (profile.displayName && profile.displayName.toLowerCase().includes(q)) ||
+              (profile.username && profile.username.toLowerCase().includes(q)) ||
+              (profile.bio && profile.bio.toLowerCase().includes(q))
+            );
+          });
+
+          return (
             <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-white">
-                  {searchQuery ? `Matching Friends (${filteredFriends.length})` : `Your Friends (${safeFriends.length})`}
-                </h2>
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="text-xs text-blue-400 hover:underline"
-                  >
-                    View All
-                  </button>
-                )}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-white/5">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    Your Friends ({(safeFriends || []).length})
+                  </h2>
+                  <p className="text-xs text-slate-400">
+                    Search and chat with your connected creator friends
+                  </p>
+                </div>
+
+                {/* Working Live Search Bar for Friends */}
+                <div className="relative w-full sm:w-72">
+                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={friendSearchQuery}
+                    onChange={(e) => setFriendSearchQuery(e.target.value)}
+                    placeholder="Search friends by name or @username..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                  {friendSearchQuery && (
+                    <button
+                      onClick={() => setFriendSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+                      title="Clear search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-              {filteredFriends.length === 0 ? (
-                <div className="py-8 text-center space-y-2">
+
+              {(safeFriends || []).length === 0 ? (
+                <div className="py-10 text-center space-y-3">
                   <Users className="w-8 h-8 text-slate-500 mx-auto" />
                   <p className="text-sm font-semibold text-white">
-                    {searchQuery ? `No friends found matching "${searchQuery}"` : 'No friends yet'}
+                    No friends yet
                   </p>
-                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                    {searchQuery
-                      ? 'Check out the creator discovery section below to add new friends!'
-                      : "You haven't connected with friends yet. Explore suggestions or find creators below!"}
+                  <p className="text-xs text-slate-400">
+                    You haven't connected with friends yet.
                   </p>
+                  <button
+                    onClick={() => setSection('suggestions')}
+                    className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold"
+                  >
+                    Explore Friend Suggestions
+                  </button>
+                </div>
+              ) : filteredFriends.length === 0 ? (
+                <div className="py-10 text-center space-y-3">
+                  <Search className="w-8 h-8 text-slate-500 mx-auto" />
+                  <p className="text-sm font-semibold text-white">
+                    No friends match "{friendSearchQuery}"
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    Try searching a different name, or find new creator friends in Suggestions.
+                  </p>
+                  <div className="flex items-center justify-center gap-2 pt-1">
+                    <button
+                      onClick={() => setFriendSearchQuery('')}
+                      className="px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-medium"
+                    >
+                      Clear Search
+                    </button>
+                    <button
+                      onClick={() => setSection('suggestions')}
+                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium"
+                    >
+                      Find New Friends
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -714,90 +655,23 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
                 </div>
               )}
             </div>
-
-            {/* LIVE DISCOVERY SECTION: FIND NEW CREATORS ACROSS BOOSTHUB */}
-            {searchQuery && (
-              <div className="bg-[#0B1021] border border-blue-500/30 rounded-3xl p-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-blue-400" />
-                    <h3 className="text-sm font-bold text-white">
-                      Find New Friends Across BoostHub
-                    </h3>
-                  </div>
-                  {isSearchingGlobal && (
-                    <span className="text-xs text-blue-400 animate-pulse">
-                      Searching...
-                    </span>
-                  )}
-                </div>
-
-                {globalSearchResults.length === 0 && !isSearchingGlobal ? (
-                  <p className="text-xs text-slate-400 text-center py-4">
-                    No new creators found for "{searchQuery}". Try searching by another username or interest!
-                  </p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {globalSearchResults.map((creator) => (
-                      <div
-                        key={creator.id}
-                        className="p-3.5 rounded-2xl bg-white/[0.04] border border-white/10 hover:border-blue-500/40 flex items-center justify-between gap-3 transition-colors"
-                      >
-                        <div
-                          onClick={() => onSelectUser(creator.id)}
-                          className="flex items-center gap-3 min-w-0 cursor-pointer"
-                        >
-                          <Avatar
-                            src={creator.avatarUrl}
-                            name={creator.displayName}
-                            size="md"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-white truncate">
-                              {creator.displayName}
-                            </p>
-                            <p className="text-xs text-slate-400 truncate">
-                              @{creator.username}
-                            </p>
-                            {creator.bio && (
-                              <p className="text-[11px] text-slate-400 truncate mt-0.5">
-                                {creator.bio}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={() => handleFriendAction(creator.id, 'request')}
-                            className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 shadow-md shadow-blue-600/30 transition-colors"
-                          >
-                            <UserPlus className="w-3.5 h-3.5" /> Add Friend
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })()}
 
         {/* SECTION 2: PENDING & SENT REQUESTS */}
         {section === 'requests' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
               <h2 className="text-sm font-semibold text-white">
-                Received Friend Requests ({filteredPendingReceived.length})
+                Received Friend Requests ({(safePendingReceived || []).length})
               </h2>
-              {filteredPendingReceived.length === 0 ? (
+              {(safePendingReceived || []).length === 0 ? (
                 <p className="text-xs text-slate-500 py-6 text-center">
-                  {searchQuery ? `No incoming requests matching "${searchQuery}".` : 'No pending incoming requests.'}
+                  No pending incoming requests.
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {filteredPendingReceived.map(({ profile }, idx) => {
+                  {(safePendingReceived || []).map(({ profile }, idx) => {
                     if (!profile) return null;
                     return (
                       <div
@@ -849,15 +723,15 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
 
             <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
               <h2 className="text-sm font-semibold text-white">
-                Sent Requests ({filteredPendingSent.length})
+                Sent Requests ({(safePendingSent || []).length})
               </h2>
-              {filteredPendingSent.length === 0 ? (
+              {(safePendingSent || []).length === 0 ? (
                 <p className="text-xs text-slate-500 py-6 text-center">
-                  {searchQuery ? `No outgoing requests matching "${searchQuery}".` : 'No outgoing friend requests.'}
+                  No outgoing friend requests.
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {filteredPendingSent.map(({ profile }, idx) => {
+                  {(safePendingSent || []).map(({ profile }, idx) => {
                     if (!profile) return null;
                     return (
                       <div
@@ -903,15 +777,15 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
         {section === 'suggestions' && (
           <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
             <h2 className="text-sm font-semibold text-white">
-              Suggested Creators ({filteredSuggestions.length})
+              Suggested Creators
             </h2>
-            {filteredSuggestions.length === 0 ? (
+            {(safeSuggestions || []).length === 0 ? (
               <p className="text-xs text-slate-500 py-8 text-center">
-                {searchQuery ? `No suggested creators matching "${searchQuery}".` : 'No additional user suggestions right now.'}
+                No additional user suggestions right now.
               </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {filteredSuggestions.map((item, idx) => {
+                {(safeSuggestions || []).map((item, idx) => {
                   const profile = item?.profile || (item as any);
                   if (!profile || !profile.id) return null;
                   const mutualFriendsCount = item?.mutualFriendsCount ?? 0;

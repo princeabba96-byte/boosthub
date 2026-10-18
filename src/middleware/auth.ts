@@ -101,12 +101,12 @@ export const requireAuth = async (
       userPayload.name,
       userPayload.picture
     );
+    req.user = userPayload;
+    next();
   } catch (error) {
-    console.warn('DB user sync warning (non-fatal):', error);
+    console.error('Error syncing authenticated user:', error);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
-
-  req.user = userPayload;
-  next();
 };
 
 export const requireAdmin = async (
@@ -117,23 +117,18 @@ export const requireAdmin = async (
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
-  const isOwnerEmail =
-    String(req.user.email || '').trim().toLowerCase() === 'princeabba96@gmail.com' ||
-    req.user.uid === 'eaada352-5704-4566-a7a7-88df80853ada';
-
-  if (isOwnerEmail) {
-    return next();
-  }
-
   try {
     const profile = await getProfileById(req.user.uid);
-    if (!profile || (!profile.isAdmin && profile.role !== 'admin')) {
+    const isOwnerEmail =
+      String(profile?.email || req.user.email || '')
+        .trim()
+        .toLowerCase() === 'princeabba96@gmail.com';
+    if (!profile || !isOwnerEmail || (!profile.isAdmin && profile.role !== 'admin')) {
       return res.status(403).json({ error: 'Forbidden: Administrator access required' });
     }
     next();
   } catch (error) {
-    console.warn('Admin check fallback warning:', error);
-    return res.status(403).json({ error: 'Forbidden: Administrator access required' });
+    console.error('Admin verification failed:', error);
+    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
 };

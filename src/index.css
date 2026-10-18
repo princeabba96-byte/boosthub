@@ -7,6 +7,12 @@
     --font-mono: 'JetBrains Mono', monospace;
   }
 
+  html {
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    scrollbar-gutter: stable;
+  }
+
   body {
     background-color: #060813;
     color: #f8fafc;
@@ -14,12 +20,27 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overflow-x: hidden;
+    position: relative;
+    min-height: 100dvh;
+  }
+
+  nav button,
+  button {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
 
   h1, h2, .font-display {
     font-family: var(--font-display);
     text-wrap: balance;
   }
+}
+
+.main-content-container {
+  min-height: 100dvh;
+  padding-top: 56px;
+  padding-bottom: 84px;
+  overscroll-behavior: contain;
 }
 
 .no-scrollbar::-webkit-scrollbar {

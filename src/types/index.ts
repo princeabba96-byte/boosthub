@@ -36,7 +36,7 @@ export interface GiftCollectionCardItem {
   code: string;
   name: string;
   icon: string;
-  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic' | 'Grand' | string;
+  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic';
   costBp: number;
   receivedCount: number;
   ownedInInventoryCount: number;
@@ -186,8 +186,6 @@ export interface UserProfile {
   friendshipStatus?: 'none' | 'friends' | 'pending_sent' | 'pending_received';
   friendshipId?: any;
   badges?: UserBadge[];
-  completedMissions?: string[];
-  unlockedBadges?: string[];
   createdAt?: string;
 }
 
@@ -289,6 +287,7 @@ export interface NotificationItem {
   title: string;
   body: string;
   entityId: string;
+  postId?: string;
   isRead: boolean;
   createdAt: string;
   actor?: UserProfile | null;

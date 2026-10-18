@@ -2064,64 +2064,6 @@ export async function sendDirectMessage(
           url: `/?messages=${senderId}`,
         });
       }
-
-      // If user sent a photo or visual media to BOOST BOT, automatically analyze it and reply back!
-      if (payload.mediaUrl || payload.mediaType === 'photo') {
-        try {
-          const prompt = payload.content || 'Please analyze this picture and explain what it is about and what you see.';
-          let analysisText = '';
-          const apiKey = process.env.GEMINI_API_KEY;
-          if (apiKey && payload.mediaUrl) {
-            try {
-              const { GoogleGenAI } = await import('@google/genai');
-              const ai = new GoogleGenAI({ apiKey });
-              let base64Data = '';
-              let mimeType = 'image/jpeg';
-              if (payload.mediaUrl.startsWith('data:')) {
-                const match = payload.mediaUrl.match(/^data:([^;]+);base64,(.+)$/);
-                if (match) {
-                  mimeType = match[1];
-                  base64Data = match[2];
-                }
-              } else if (payload.mediaUrl.startsWith('http')) {
-                const imgRes = await fetch(payload.mediaUrl);
-                const buf = await imgRes.arrayBuffer();
-                base64Data = Buffer.from(buf).toString('base64');
-                mimeType = imgRes.headers.get('content-type') || 'image/jpeg';
-              }
-              if (base64Data) {
-                const response = await ai.models.generateContent({
-                  model: 'gemini-3.8-flash',
-                  contents: [
-                    { inlineData: { mimeType, data: base64Data } },
-                    prompt,
-                  ],
-                });
-                if (response.text?.trim()) {
-                  analysisText = response.text.trim();
-                }
-              }
-            } catch (vErr) {
-              console.warn('Gemini DM vision error:', vErr);
-            }
-          }
-
-          if (!analysisText) {
-            analysisText = `I have received and analyzed your picture! The image features crisp focus and vibrant colors, making it great visual media for BoostHub Capshots or further creative styling in B-Edit Studio!`;
-          }
-
-          await db.insert(messages).values({
-            senderId: 'boost_bot_official',
-            receiverId: senderId,
-            content: `🤖 [BOOST BOT Visual Analysis]: ${analysisText}`,
-            mediaUrl: '',
-            mediaType: 'text',
-            replyToId: inserted[0]?.id || null,
-          });
-        } catch (botErr) {
-          console.warn('BOOST BOT auto-reply error:', botErr);
-        }
-      }
     }
 
     return {
@@ -3578,6 +3520,34 @@ export async function executeAdminModerationAction(
   }
 }
 
+export async function deleteNotificationForUser(
+  userId: string,
+  notificationId?: string
+) {
+  try {
+    if (
+      notificationId &&
+      notificationId !== 'all' &&
+      notificationId !== 'clear-all'
+    ) {
+      await db
+        .delete(notifications)
+        .where(
+          and(
+            eq(notifications.id, Number(notificationId)),
+            eq(notifications.userId, userId)
+          )
+        );
+    } else {
+      await db.delete(notifications).where(eq(notifications.userId, userId));
+    }
+    return { ok: true };
+  } catch (error) {
+    console.error('Database query failed in deleteNotificationForUser:', error);
+    throw new Error('Failed to delete notification.', { cause: error });
+  }
+}
+
 async function ensureAdminUnlimitedGiftsOnly(userId: string) {
   const userRow = await db.select().from(profiles).where(eq(profiles.id, userId));
   if (userRow.length === 0) return;
@@ -4007,7 +3977,6 @@ export async function purchaseBShopItem(
   const updatedState = await getBShopAndUserGiftsState(userId);
   return {
     state: updatedState,
-    newBalance: updatedState.boostPoints,
     unboxedReward,
     message: unboxedReward
       ? `Mystery Box opened! You unlocked ${unboxedReward.icon} ${unboxedReward.name} ×${unboxedReward.quantity}!`
@@ -4176,7 +4145,8 @@ export async function sendGiftToCreator(
         ? 'Trophies'
         : `${giftItem.name}s`
       : giftItem.name;
-  const notifTitle = `${giftItem.icon} ${sender.displayName} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
+  const senderHandle = sender.username ? sender.username.replace(/^@/, '') : sender.displayName;
+  const notifTitle = `${giftItem.icon} @${senderHandle} sent you ${quantity > 1 ? `${quantity} ${pluralName}` : `a ${giftItem.name}`} (+${totalBpCost.toLocaleString()} BP!)`;
   const notifBody = message.trim()
     ? `"${message.trim()}" · You earned the gift + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`
     : `You earned ${giftItem.icon} ${giftItem.name} ×${quantity} + ${totalBpCost.toLocaleString()} Boost Points & +${creatorXpEarned} XP!`;
@@ -4184,10 +4154,10 @@ export async function sendGiftToCreator(
   await db.insert(notifications).values({
     userId: receiverId,
     actorId: senderId,
-    type: 'badge',
+    type: 'gift',
     title: notifTitle,
     body: notifBody,
-    entityId: senderId,
+    entityId: giftItem.code,
   });
 
   await sendPushNotificationToUser(receiverId, {
@@ -4204,7 +4174,6 @@ export async function sendGiftToCreator(
   const updatedState = await getBShopAndUserGiftsState(senderId);
   return {
     state: updatedState,
-    newBalance: updatedState.boostPoints,
     message: `Sent ${giftItem.icon} ${giftItem.name} ×${quantity} to ${receiver.displayName}!`,
   };
 }

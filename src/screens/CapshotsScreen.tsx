@@ -58,8 +58,6 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   const watchStartRef = useRef<number>(Date.now());
   const touchStartYRef = useRef<number | null>(null);
   const likeBusyRef = useRef(false);
-  const capshotLastTimeRef = useRef<number>(0);
-  const seekingLockRef = useRef<boolean>(false);
 
   // Sync with global volume changes
   useEffect(() => {
@@ -369,7 +367,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
 
   if (loading) {
     return (
-      <div className="h-[calc(100vh-7.5rem)] flex items-center justify-center">
+      <div className="h-[calc(100dvh-140px)] flex items-center justify-center">
         <div className="text-center space-y-2">
           <div className="w-10 h-10 rounded-full border-2 border-blue-500 border-t-transparent animate-spin mx-auto" />
           <p className="text-xs text-slate-400">Loading Capshots...</p>
@@ -402,7 +400,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   }
 
   return (
-    <div className="h-[calc(100vh-7.2rem)] lg:h-[calc(100vh-3.5rem)] flex items-center justify-center bg-black/95 p-0 sm:p-4 select-none">
+    <div className="h-[calc(100dvh-140px)] flex items-center justify-center bg-black/95 p-0 sm:p-4 select-none">
       {/* Preload Next Video in Background */}
       {nextVideo?.mediaUrl && (
         <video
@@ -450,32 +448,23 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                 autoPlay
                 loop
                 playsInline
-                // @ts-ignore
-                webkit-playsinline="true"
-                x5-playsinline="true"
-                disablePictureInPicture
                 preload="auto"
                 muted={muted || Boolean(attachedAudioUrl) || Boolean(studioMeta?.muteAudio)}
                 style={
                   studioMeta
                     ? {
-                        willChange: 'transform',
-                        transform: `translateZ(0) rotate(${studioMeta.rotation || 0}deg) scale(${
+                        filter: buildCssFilterString(studioMeta),
+                        transform: `rotate(${studioMeta.rotation || 0}deg) scale(${
                           (studioMeta.zoom || 1) * (studioMeta.flipH ? -1 : 1)
                         }, ${(studioMeta.zoom || 1) * (studioMeta.flipV ? -1 : 1)})`,
-                        filter: buildCssFilterString(studioMeta),
                       }
-                    : { willChange: 'transform', transform: 'translateZ(0)' }
+                    : undefined
                 }
                 onPlay={() => {
                   setPaused(false);
                   if (voiceoverAudioRef.current) {
                     voiceoverAudioRef.current.muted = muted;
                     if (!muted) {
-                      const diff = Math.abs((voiceoverAudioRef.current.currentTime || 0) - (videoRef.current?.currentTime || 0));
-                      if (diff > 0.35) {
-                        voiceoverAudioRef.current.currentTime = videoRef.current?.currentTime || 0;
-                      }
                       voiceoverAudioRef.current.play().catch(() => {});
                     }
                   }
@@ -492,36 +481,23 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
                     vid.currentTime = studioMeta.trimStart;
                   }
                 }}
-                crossOrigin="anonymous"
                 onTimeUpdate={(e) => {
                   const vid = e.currentTarget;
-                  const nowMs = performance.now();
-                  if (nowMs - capshotLastTimeRef.current >= 200) {
-                    capshotLastTimeRef.current = nowMs;
-                    setCapshotTime(vid.currentTime || 0);
-                  }
+                  setCapshotTime(vid.currentTime || 0);
                   if (
-                    !seekingLockRef.current &&
                     studioMeta?.trimEnd &&
                     studioMeta.trimEnd > 0 &&
                     vid.currentTime >= studioMeta.trimEnd
                   ) {
-                    seekingLockRef.current = true;
                     vid.currentTime = studioMeta.trimStart || 0;
                     if (voiceoverAudioRef.current) {
                       voiceoverAudioRef.current.currentTime = 0;
                     }
-                    setTimeout(() => {
-                      seekingLockRef.current = false;
-                    }, 300);
                   }
-                }}
-                onError={() => {
-                  console.warn('Capshot video playback notice for', currentVideo.id);
                 }}
                 onClick={togglePlayPause}
                 onEnded={() => flushWatchMetrics(currentVideo, false)}
-                className="w-full h-full object-cover cursor-pointer will-change-transform transform-gpu"
+                className="w-full h-full object-cover cursor-pointer"
               />
               {studioMeta && (
                 <StudioFloatingOverlays

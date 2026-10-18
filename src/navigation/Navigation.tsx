@@ -37,34 +37,31 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
   const { unreadNotifications, unreadMessages } = useAuth();
 
   return (
-    <header className="sticky top-0 z-30 h-14 bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md">
+    <header
+      style={{
+        position: 'sticky',
+        top: 0,
+        zIndex: 9998,
+        height: '56px',
+      }}
+      className="w-full bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md select-none shrink-0"
+    >
       {/* Left: BoostHub logo with blue B circle + "BoostHub" text */}
       <button
+        type="button"
         onClick={() => onChangeTab('home')}
-        className="flex items-center gap-2.5 font-display text-xl font-extrabold tracking-tight text-white whitespace-nowrap group"
+        style={{
+          touchAction: 'manipulation',
+          WebkitTapHighlightColor: 'transparent',
+          transform: 'none',
+        }}
+        className="flex items-center gap-2.5 font-display text-xl font-extrabold tracking-tight text-white whitespace-nowrap"
       >
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#4A90E2] to-[#2563EB] flex items-center justify-center text-white font-display font-black text-lg shadow-[0_0_14px_rgba(74,144,226,0.5)] group-hover:scale-105 transition-transform">
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#4A90E2] to-[#2563EB] flex items-center justify-center text-white font-display font-black text-lg shadow-[0_0_14px_rgba(74,144,226,0.5)]">
           B
         </div>
         <span>BoostHub</span>
       </button>
-
-      {/* Prominent App Search Bar in Header */}
-      <div className="flex-1 max-w-xs md:max-w-sm mx-2 sm:mx-4">
-        <button
-          type="button"
-          onClick={onOpenSearch}
-          className="w-full h-9 sm:h-10 px-3 sm:px-3.5 rounded-full bg-[#1E1E26] hover:bg-white/[0.08] border border-white/10 flex items-center gap-2 sm:gap-2.5 text-xs text-slate-400 hover:text-slate-200 transition-all text-left shadow-inner group"
-          aria-label="Search BoostHub"
-          title="Search BoostHub (Press / to search)"
-        >
-          <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 group-hover:text-blue-400 transition-colors shrink-0" />
-          <span className="truncate text-xs">Search people, posts, #tags...</span>
-          <kbd className="hidden md:inline-block ml-auto px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-slate-400 font-mono">
-            /
-          </kbd>
-        </button>
-      </div>
 
       {/* Center: Clean Facebook-style 5-tab navigation on desktop */}
       <nav className="hidden lg:flex items-center gap-2">
@@ -85,9 +82,15 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
           return (
             <button
               key={item.id}
+              type="button"
               onClick={() => onChangeTab(item.id)}
               title={item.label}
-              className={`relative px-6 h-12 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold transition-all ${
+              style={{
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                transform: 'none',
+              }}
+              className={`relative px-6 h-12 rounded-xl flex items-center justify-center gap-2 text-sm font-semibold ${
                 isActive
                   ? 'text-[#4A90E2]'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
@@ -113,7 +116,13 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
       {/* Right: 3 icons: Search (magnify), Messages (paper plane), Create (+) blue circle button */}
       <div className="flex items-center gap-2.5">
         <button
+          type="button"
           onClick={onOpenSearch}
+          style={{
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'transparent',
+            transform: 'none',
+          }}
           className="w-10 h-10 rounded-full bg-[#1E1E26] hover:bg-white/15 border border-white/[0.08] text-slate-200 flex items-center justify-center transition-colors"
           aria-label="Search BoostHub"
           title="Search"
@@ -122,7 +131,13 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={onOpenMessages}
+          style={{
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'transparent',
+            transform: 'none',
+          }}
           className="relative w-10 h-10 rounded-full bg-[#1E1E26] hover:bg-white/15 border border-white/[0.08] text-slate-200 flex items-center justify-center transition-colors"
           aria-label="Messages"
           title="Direct Messages"
@@ -136,8 +151,14 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         </button>
 
         <button
+          type="button"
           onClick={onOpenCreateSheet}
-          className="w-10 h-10 rounded-full bg-[#4A90E2] hover:bg-[#357ABD] text-white flex items-center justify-center shadow-[0_0_16px_rgba(74,144,226,0.5)] active:scale-95 transition-all"
+          style={{
+            touchAction: 'manipulation',
+            WebkitTapHighlightColor: 'transparent',
+            transform: 'none',
+          }}
+          className="w-10 h-10 rounded-full bg-[#4A90E2] hover:bg-[#357ABD] text-white flex items-center justify-center shadow-[0_0_16px_rgba(74,144,226,0.5)] transition-colors"
           aria-label="Create Capshot or Open B-Edit Studio"
           title="Create (+)"
         >
@@ -173,15 +194,36 @@ export const BottomNavigationBar: React.FC<{
   ];
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-[#121212]/98 backdrop-blur-xl rounded-t-2xl border-t border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.65)] grid grid-cols-5 items-center px-2">
+    <nav
+      style={{
+        position: 'fixed',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        width: '100%',
+        height: '64px',
+        zIndex: 9999,
+        paddingBottom: 'env(safe-area-inset-bottom)',
+        backgroundColor: '#0f0f0f',
+        backdropFilter: 'blur(10px)',
+        WebkitBackdropFilter: 'blur(10px)',
+      }}
+      className="lg:hidden border-t border-white/10 grid grid-cols-5 items-center px-2 select-none"
+    >
       {items.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
         return (
           <button
             key={item.id}
+            type="button"
             onClick={() => onChangeTab(item.id)}
-            className={`relative h-full flex flex-col items-center justify-center transition-colors ${
+            style={{
+              touchAction: 'manipulation',
+              WebkitTapHighlightColor: 'transparent',
+              transform: 'none',
+            }}
+            className={`relative h-full flex flex-col items-center justify-center ${
               isActive
                 ? 'text-[#4A90E2]'
                 : 'text-slate-400 hover:text-slate-200'
@@ -330,7 +372,7 @@ export const DesktopLeftRail: React.FC<{
   ];
 
   return (
-    <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-14 h-[calc(100vh-3.5rem)] border-r border-white/[0.08] p-4 justify-between">
+    <aside className="hidden lg:flex flex-col w-64 shrink-0 sticky top-[56px] h-[calc(100dvh-56px)] border-r border-white/[0.08] p-4 justify-between">
       <div className="space-y-1.5">
         {userProfile && (
           <button

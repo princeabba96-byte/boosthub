@@ -2,8 +2,11 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Sparkles, CheckCircle2, ArrowUpRight, Send, Package, Lock } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { BShopCatalogItem } from '../data/bshopCatalog';
-import { GIFT_TIER_CONFIGS, GiftTier } from '../data/giftTiers';
-import { getGiftImageUrl } from '../data/giftImagesData';
+import {
+  GIFT_TIER_CONFIGS,
+  GiftTier,
+  resolveGiftAssetUrl,
+} from '../data/giftTiers';
 
 export interface SendGiftFlowOverlayProps {
   item: BShopCatalogItem;
@@ -31,6 +34,17 @@ export const SendGiftFlowOverlay: React.FC<SendGiftFlowOverlayProps> = ({
 
   const tier: GiftTier = item.tier || 'Random';
   const tierConfig = GIFT_TIER_CONFIGS[tier];
+
+  const resolvedItemIcon = resolveGiftAssetUrl(item?.iconPng);
+  const resolvedBoxIcon = resolveGiftAssetUrl(tierConfig?.boxIconPng);
+
+  const handleGiftImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const target = e.currentTarget;
+    const currentSrc = target.src;
+    if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
+      target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
+    }
+  };
 
   // Synthesize Web Audio sound effects for packing, snap seal, and whoosh
   const playSwooshAudio = (type: 'pack' | 'seal' | 'swoosh' | 'delivered') => {
@@ -218,7 +232,8 @@ export const SendGiftFlowOverlay: React.FC<SendGiftFlowOverlayProps> = ({
             >
               <div className="relative w-24 h-24 flex items-center justify-center drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)]">
                 <img
-                  src={item.iconPng || getGiftImageUrl(item.code)}
+                  src={resolvedItemIcon}
+                  onError={handleGiftImgError}
                   alt={item.name}
                   className="w-20 h-20 object-contain filter drop-shadow-md animate-bounce"
                   style={{ animationDuration: '2s' }}
@@ -254,7 +269,8 @@ export const SendGiftFlowOverlay: React.FC<SendGiftFlowOverlayProps> = ({
             />
 
             <img
-              src={tierConfig.boxIconPng || getGiftImageUrl(tierConfig.boxCode)}
+              src={resolvedBoxIcon}
+              onError={handleGiftImgError}
               alt={tierConfig.boxName}
               className="relative w-full h-full object-contain drop-shadow-[0_15px_30px_rgba(0,0,0,0.85)] select-none"
             />

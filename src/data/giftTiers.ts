@@ -1,5 +1,3 @@
-import { getGiftImageUrl } from './giftImagesData';
-
 export type GiftTier =
   | 'Random'
   | 'Uncommon'
@@ -54,7 +52,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '10-50 BP',
     boxName: 'Pink Ribbon Box',
     boxCode: 'pink_ribbon_box',
-    boxIconPng: getGiftImageUrl('pink_ribbon_box'),
+    boxIconPng: '/assets/gifts/pink_ribbon_box.png',
     unboxAnimation: 'bounce_pop',
     unboxLabel: 'Bounce Pop',
     badgeClass: 'bg-pink-500/20 text-pink-300 border-pink-500/40',
@@ -76,7 +74,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '100-250 BP',
     boxName: 'Red Heart Box',
     boxCode: 'red_heart_box',
-    boxIconPng: getGiftImageUrl('red_heart_box'),
+    boxIconPng: '/assets/gifts/red_heart_box.png',
     unboxAnimation: 'hearts_explode',
     unboxLabel: 'Hearts Explode',
     badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40',
@@ -98,7 +96,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '500-800 BP',
     boxName: 'Black Gold Luxury Box',
     boxCode: 'black_gold_luxury_box',
-    boxIconPng: getGiftImageUrl('black_gold_luxury_box'),
+    boxIconPng: '/assets/gifts/black_gold_luxury_box.png',
     unboxAnimation: 'magnetic_snap_gold_beam',
     unboxLabel: 'Magnetic Snap + Gold Beam',
     badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40',
@@ -120,7 +118,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '1500-2500 BP',
     boxName: 'Galaxy Box with particles',
     boxCode: 'galaxy_box',
-    boxIconPng: getGiftImageUrl('galaxy_box'),
+    boxIconPng: '/assets/gifts/galaxy_box.png',
     unboxAnimation: 'nebula_smoke',
     unboxLabel: 'Nebula Smoke',
     badgeClass: 'bg-purple-500/20 text-purple-300 border-purple-500/40',
@@ -142,7 +140,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '5000 BP',
     boxName: 'Void Box',
     boxCode: 'void_box',
-    boxIconPng: getGiftImageUrl('void_box'),
+    boxIconPng: '/assets/gifts/void_box.png',
     unboxAnimation: 'void_shatter',
     unboxLabel: 'Void Shatter',
     badgeClass: 'bg-fuchsia-600/25 text-fuchsia-300 border-fuchsia-500/50',
@@ -164,7 +162,7 @@ export const GIFT_TIER_CONFIGS: Record<GiftTier, GiftTierConfig> = {
     priceRange: '10,000+ BP',
     boxName: 'Cosmic God Box',
     boxCode: 'cosmic_god_box',
-    boxIconPng: getGiftImageUrl('cosmic_god_box'),
+    boxIconPng: '/assets/gifts/cosmic_god_box.png',
     unboxAnimation: 'slow_mo_god_rays',
     unboxLabel: 'Slow-mo God Rays',
     badgeClass: 'bg-yellow-400/25 text-yellow-200 border-yellow-400/60 animate-pulse',
@@ -197,3 +195,30 @@ export function isGiftRecipeUnlocked(
     completedMissionsCount >= cfg.missionRecipe.requiredMissions
   );
 }
+
+/**
+ * Resolves the gift asset URL accurately for both local dev preview and GitHub Pages live hosting.
+ * Handles subpaths like /boosthub/ as well as relative paths and direct URLs.
+ */
+export function resolveGiftAssetUrl(path: string | undefined | null): string {
+  if (!path) return '';
+  if (
+    path.startsWith('data:') ||
+    path.startsWith('http://') ||
+    path.startsWith('https://') ||
+    path.startsWith('blob:')
+  ) {
+    return path;
+  }
+  const clean = path.replace(/^\/+/, '');
+  if (typeof window !== 'undefined') {
+    const isGh =
+      window.location.hostname.endsWith('.github.io') ||
+      window.location.pathname.startsWith('/boosthub');
+    if (isGh) {
+      return `/boosthub/${clean}`;
+    }
+  }
+  return `/${clean}`;
+}
+

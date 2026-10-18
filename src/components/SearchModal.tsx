@@ -75,22 +75,9 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     communities: [],
   });
 
-  const [suggestedPeople, setSuggestedPeople] = useState<UserProfile[]>([]);
-
-  // Load initial suggestions
-  useEffect(() => {
-    apiFetch<typeof results>('/api/search?q=')
-      .then((res: any) => {
-        if (Array.isArray(res?.people)) setSuggestedPeople(res.people);
-        else if (Array.isArray(res?.users)) setSuggestedPeople(res.users);
-      })
-      .catch(() => {});
-  }, []);
-
   // Debounced search
   useEffect(() => {
-    const rawTrimmed = query.trim();
-    const trimmed = rawTrimmed.replace(/^[@#]+/, '').trim();
+    const trimmed = query.trim();
     if (!trimmed) {
       setResults({
         people: [],
@@ -99,43 +86,41 @@ export const SearchModal: React.FC<SearchModalProps> = ({
         hashtags: [],
         communities: [],
       });
-      setLoading(false);
       return;
     }
 
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await apiFetch<typeof results>(
+        const res: any = await apiFetch<any>(
           `/api/search?q=${encodeURIComponent(trimmed)}`
         );
-        const rawResults = res as any;
+        const safePeople = Array.isArray(res?.people)
+          ? res.people
+          : Array.isArray(res?.users)
+            ? res.users
+            : [];
+        const safePosts = Array.isArray(res?.posts) ? res.posts : [];
+        const safeVideos = Array.isArray(res?.videos)
+          ? res.videos
+          : safePosts.filter(
+              (p: any) =>
+                p.postType === 'capshot' ||
+                p.postType === 'video' ||
+                p.mediaType === 'video'
+            );
+        const safeHashtags = Array.isArray(res?.hashtags) ? res.hashtags : [];
+        const safeComms = Array.isArray(res?.communities) ? res.communities : [];
+
         setResults({
-          people: Array.isArray(rawResults?.people)
-            ? rawResults.people
-            : Array.isArray(rawResults?.users)
-            ? rawResults.users
-            : [],
-          posts: Array.isArray(rawResults?.posts) ? rawResults.posts : [],
-          videos: Array.isArray(rawResults?.videos)
-            ? rawResults.videos
-            : Array.isArray(rawResults?.posts)
-            ? rawResults.posts.filter(
-                (p: any) =>
-                  p.postType === 'capshot' ||
-                  p.postType === 'video' ||
-                  Boolean(p.videoUrl)
-              )
-            : [],
-          hashtags: Array.isArray(rawResults?.hashtags)
-            ? rawResults.hashtags
-            : [],
-          communities: Array.isArray(rawResults?.communities)
-            ? rawResults.communities
-            : [],
+          people: safePeople,
+          posts: safePosts,
+          videos: safeVideos,
+          hashtags: safeHashtags,
+          communities: safeComms,
         });
         setRecentSearches((prev) => {
-          const next = [rawTrimmed, ...prev.filter((i) => i !== rawTrimmed)].slice(0, 6);
+          const next = [trimmed, ...prev.filter((i) => i !== trimmed)].slice(0, 6);
           try {
             localStorage.setItem('bh_recent_searches', JSON.stringify(next));
           } catch {
@@ -148,13 +133,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({
       } finally {
         setLoading(false);
       }
-    }, 250);
+    }, 280);
 
     return () => clearTimeout(timer);
   }, [query]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-start justify-center p-0 sm:p-6 animate-in fade-in duration-200">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-start justify-center p-0 sm:p-6">
       <div className="w-full max-w-2xl h-full sm:h-[82vh] bg-[#0B1021] sm:border border-white/10 sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl">
         {/* Search Input Header */}
         <div className="p-4 border-b border-white/10 flex items-center gap-3">
@@ -165,24 +150,13 @@ export const SearchModal: React.FC<SearchModalProps> = ({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoFocus
-              placeholder="Search people, @username, posts, #hashtags, communities..."
-              className="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-9 py-2.5 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+              placeholder="Search people, posts, Capshots, #hashtags, communities..."
+              className="w-full bg-white/5 border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
             />
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1"
-                title="Clear query"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
           </div>
           <button
             onClick={onClose}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center text-slate-400 hover:text-white rounded-xl"
-            title="Close Search"
           >
             <X className="w-5 h-5" />
           </button>
@@ -190,26 +164,21 @@ export const SearchModal: React.FC<SearchModalProps> = ({
 
         {/* Category Filter Tabs */}
         <div className="flex items-center gap-1.5 px-4 py-2.5 border-b border-white/10 overflow-x-auto no-scrollbar">
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'people', label: 'Friends & People' },
-            { id: 'posts', label: 'Posts' },
-            { id: 'videos', label: 'Videos' },
-            { id: 'hashtags', label: 'Hashtags' },
-            { id: 'communities', label: 'Communities' },
-          ].map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setActiveCategory(cat.id as any)}
-              className={`px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition-colors ${
-                activeCategory === cat.id
-                  ? 'bg-blue-600 text-white font-bold'
-                  : 'bg-white/5 text-slate-400 hover:text-white'
-              }`}
-            >
-              {cat.label}
-            </button>
-          ))}
+          {(['all', 'people', 'posts', 'videos', 'hashtags', 'communities'] as const).map(
+            (cat) => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-medium capitalize whitespace-nowrap transition-colors ${
+                  activeCategory === cat
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 text-slate-400 hover:text-white'
+                }`}
+              >
+                {cat}
+              </button>
+            )
+          )}
         </div>
 
         {/* Body */}

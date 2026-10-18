@@ -220,21 +220,6 @@ const BoostHubAppShell: React.FC = () => {
   );
 
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key === '/' &&
-        !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)
-      ) {
-        e.preventDefault();
-        setSearchInitialQuery('');
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  useEffect(() => {
     openDeepLinkDestination({ url: window.location.search });
 
     if ('serviceWorker' in navigator && window.self === window.top) {
@@ -297,6 +282,12 @@ const BoostHubAppShell: React.FC = () => {
     } else if (window.location.hash === '#/edit') {
       window.history.replaceState({}, '', window.location.pathname);
     }
+    // Instant switch without animation or zoom
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // ignore
+    }
     setActiveTab(tab);
   };
 
@@ -309,11 +300,22 @@ const BoostHubAppShell: React.FC = () => {
     setProfileInitialMode(options?.mainMode || 'profile');
     setProfileInitialContentTab(options?.contentTab || 'posts');
     setProfileInitialSettingsSubMenu(options?.settingsSubMenu || 'general');
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // ignore
+    }
     setActiveTab('me');
   };
 
   return (
-    <div className="min-h-screen bg-[#060813] text-[#F8FAFC] flex flex-col pb-16 lg:pb-0">
+    <div
+      style={{
+        minHeight: '100dvh',
+        overscrollBehavior: 'contain',
+      }}
+      className="bg-[#060813] text-[#F8FAFC] flex flex-col"
+    >
       {/* Offline Resilience Banner */}
       {isOffline && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-300 flex items-center justify-center gap-2">
@@ -355,7 +357,15 @@ const BoostHubAppShell: React.FC = () => {
           }}
         />
 
-        <main className="flex-1 min-w-0">
+        <main
+          className="flex-1 min-w-0 main-content-container"
+          style={{
+            minHeight: '100dvh',
+            paddingTop: '56px',
+            paddingBottom: '84px',
+            overscrollBehavior: 'contain',
+          }}
+        >
           {activeTab === 'home' && (
             <HomeScreen
               onOpenComments={(post) => setActiveCommentPost(post)}
@@ -542,6 +552,10 @@ const BoostHubAppShell: React.FC = () => {
       <GiftCelebrationOverlay
         celebration={giftCelebration}
         onDismiss={() => setGiftCelebration(null)}
+        onOpenChatWithSender={(senderId) => {
+          setMessagePartner({ id: senderId } as any);
+          setMessagesOpen(true);
+        }}
       />
 
       {/* Non-Blocking Toast Notifications */}

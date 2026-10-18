@@ -151,44 +151,6 @@ export async function apiFetch<T = any>(
   const method = (options.method || 'GET').toUpperCase();
   const activeToken = getAuthToken();
 
-  // Special handling for AI & BoostBot routes: Try Express server first in preview, fallback seamlessly to staticBackend
-  if (path === '/api/ai/bflash' || path.startsWith('/api/admin/boostbot')) {
-    const isStaticDeployment =
-      typeof window !== 'undefined' &&
-      (window.location.hostname.includes('github.io') ||
-        window.location.hostname.includes('pages.dev') ||
-        window.location.hostname.includes('netlify.app'));
-
-    if (!isStaticDeployment) {
-      try {
-        const headersObj: Record<string, string> = {
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        };
-        if (activeToken) {
-          headersObj['Authorization'] = `Bearer ${activeToken}`;
-        }
-        const serverRes = await fetch(path, {
-          ...options,
-          method,
-          headers: headersObj,
-        });
-        if (serverRes.ok) {
-          return (await serverRes.json()) as T;
-        }
-      } catch {
-        // Fall through to handleStaticBackendRequest
-      }
-    }
-
-    return handleStaticBackendRequest<T>(
-      path,
-      method,
-      options.body,
-      activeToken
-    );
-  }
-
   // Route all data API requests directly to the real Supabase backend engine
   if (path.startsWith('/api/') && path !== '/api/admin/github-pages-push') {
     const dedupeKey = method === 'GET' ? `${activeToken || 'anon'}:${path}` : '';
