@@ -25,7 +25,7 @@ import {
   Sparkles,
   Settings,
   MessageCircle,
-  Search,
+  Smile,
 } from 'lucide-react';
 import {
   CommunityItem,
@@ -40,6 +40,7 @@ import { uploadMediaWithProgress } from '../storage/mediaUpload';
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from '../components/Avatar';
 import { formatRelativeTime } from '../utils/format';
+import { EmojiKeyboard } from '../components/EmojiKeyboard';
 
 interface FriendsScreenProps {
   onSelectUser: (userId: string) => void;
@@ -68,7 +69,6 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
     Array<{ profile: UserProfile; mutualFriendsCount: number }>
   >([]);
   const [loadingFriends, setLoadingFriends] = useState<boolean>(true);
-  const [friendSearchQuery, setFriendSearchQuery] = useState<string>('');
 
   const [communities, setCommunities] = useState<CommunityItem[]>([]);
   const [activeCommunity, setActiveCommunity] = useState<CommunityItem | null>(null);
@@ -99,6 +99,7 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
   const [commChatMediaUrl, setCommChatMediaUrl] = useState('');
   const [uploadingChatMedia, setUploadingChatMedia] = useState(false);
   const commChatFileRef = useRef<HTMLInputElement>(null);
+  const [showCommEmojiKeyboard, setShowCommEmojiKeyboard] = useState(false);
 
   // Admin Profile Picture Edit
   const [updatingCommAvatar, setUpdatingCommAvatar] = useState(false);
@@ -517,146 +518,79 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
         </div>
 
         {/* SECTION 1: FRIENDS LIST */}
-        {/* SECTION 1: FRIENDS LIST */}
-        {section === 'friends' && (() => {
-          const filteredFriends = (safeFriends || []).filter(({ profile }) => {
-            if (!profile) return false;
-            const q = friendSearchQuery.trim().toLowerCase();
-            if (!q) return true;
-            return (
-              (profile.displayName && profile.displayName.toLowerCase().includes(q)) ||
-              (profile.username && profile.username.toLowerCase().includes(q)) ||
-              (profile.bio && profile.bio.toLowerCase().includes(q))
-            );
-          });
-
-          return (
-            <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-white/5">
-                <div>
-                  <h2 className="text-sm font-semibold text-white">
-                    Your Friends ({(safeFriends || []).length})
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    Search and chat with your connected creator friends
-                  </p>
-                </div>
-
-                {/* Working Live Search Bar for Friends */}
-                <div className="relative w-full sm:w-72">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={friendSearchQuery}
-                    onChange={(e) => setFriendSearchQuery(e.target.value)}
-                    placeholder="Search friends by name or @username..."
-                    className="w-full bg-white/5 border border-white/10 rounded-xl pl-9 pr-8 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors"
-                  />
-                  {friendSearchQuery && (
-                    <button
-                      onClick={() => setFriendSearchQuery('')}
-                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                      title="Clear search"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  )}
-                </div>
+        {section === 'friends' && (
+          <div className="bg-[#0B1021] border border-white/10 rounded-3xl p-5 space-y-4">
+            <h2 className="text-sm font-semibold text-white">
+              Your Friends ({(safeFriends || []).length})
+            </h2>
+            {(safeFriends || []).length === 0 ? (
+              <div className="py-10 text-center space-y-3">
+                <Users className="w-8 h-8 text-slate-500 mx-auto" />
+                <p className="text-sm font-semibold text-white">
+                  No friends yet
+                </p>
+                <p className="text-xs text-slate-400">
+                  You haven't connected with friends yet.
+                </p>
+                <button
+                  onClick={() => setSection('suggestions')}
+                  className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold"
+                >
+                  Explore Friend Suggestions
+                </button>
               </div>
-
-              {(safeFriends || []).length === 0 ? (
-                <div className="py-10 text-center space-y-3">
-                  <Users className="w-8 h-8 text-slate-500 mx-auto" />
-                  <p className="text-sm font-semibold text-white">
-                    No friends yet
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    You haven't connected with friends yet.
-                  </p>
-                  <button
-                    onClick={() => setSection('suggestions')}
-                    className="px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold"
-                  >
-                    Explore Friend Suggestions
-                  </button>
-                </div>
-              ) : filteredFriends.length === 0 ? (
-                <div className="py-10 text-center space-y-3">
-                  <Search className="w-8 h-8 text-slate-500 mx-auto" />
-                  <p className="text-sm font-semibold text-white">
-                    No friends match "{friendSearchQuery}"
-                  </p>
-                  <p className="text-xs text-slate-400">
-                    Try searching a different name, or find new creator friends in Suggestions.
-                  </p>
-                  <div className="flex items-center justify-center gap-2 pt-1">
-                    <button
-                      onClick={() => setFriendSearchQuery('')}
-                      className="px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-white text-xs font-medium"
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {(safeFriends || []).map(({ profile }, idx) => {
+                  if (!profile) return null;
+                  return (
+                    <div
+                      key={profile.id || idx}
+                      className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between gap-3"
                     >
-                      Clear Search
-                    </button>
-                    <button
-                      onClick={() => setSection('suggestions')}
-                      className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium"
-                    >
-                      Find New Friends
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {filteredFriends.map(({ profile }, idx) => {
-                    if (!profile) return null;
-                    return (
                       <div
-                        key={profile.id || idx}
-                        className="p-4 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between gap-3"
+                        onClick={() => profile.id && onSelectUser(profile.id)}
+                        className="flex items-center gap-3 min-w-0 cursor-pointer"
                       >
-                        <div
-                          onClick={() => profile.id && onSelectUser(profile.id)}
-                          className="flex items-center gap-3 min-w-0 cursor-pointer"
-                        >
-                          <Avatar
-                            src={profile.avatarUrl}
-                            name={profile.displayName}
-                            size="md"
-                          />
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-white truncate">
-                              {profile.displayName}
-                            </p>
-                            <p className="text-xs text-slate-400 truncate">
-                              @{profile.username}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            onClick={() => onOpenMessageWith(profile)}
-                            className="min-h-[40px] px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium inline-flex items-center gap-1.5"
-                          >
-                            <MessageSquare className="w-3.5 h-3.5" /> Message
-                          </button>
-                          <button
-                            onClick={() =>
-                              profile.id && handleFriendAction(profile.id, 'remove')
-                            }
-                            className="min-h-[40px] min-w-[40px] rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center justify-center"
-                            title="Remove Friend"
-                          >
-                            <UserX className="w-4 h-4" />
-                          </button>
+                        <Avatar
+                          src={profile.avatarUrl}
+                          name={profile.displayName}
+                          size="md"
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-white truncate">
+                            {profile.displayName}
+                          </p>
+                          <p className="text-xs text-slate-400 truncate">
+                            @{profile.username}
+                          </p>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })()}
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => onOpenMessageWith(profile)}
+                          className="min-h-[40px] px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium inline-flex items-center gap-1.5"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5" /> Message
+                        </button>
+                        <button
+                          onClick={() =>
+                            profile.id && handleFriendAction(profile.id, 'remove')
+                          }
+                          className="min-h-[40px] min-w-[40px] rounded-xl bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 flex items-center justify-center"
+                          title="Remove Friend"
+                        >
+                          <UserX className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* SECTION 2: PENDING & SENT REQUESTS */}
         {section === 'requests' && (
@@ -1731,11 +1665,24 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
                       <ImageIcon className="w-4 h-4 text-blue-400" />
                     </button>
 
+                    <button
+                      type="button"
+                      onClick={() => setShowCommEmojiKeyboard((prev) => !prev)}
+                      className={`p-2.5 rounded-xl transition-colors ${
+                        showCommEmojiKeyboard
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white/5 hover:bg-white/10 text-amber-300'
+                      }`}
+                      title="Emojis & reactions keyboard"
+                    >
+                      <Smile className="w-4 h-4" />
+                    </button>
+
                     <input
                       type="text"
                       value={commChatText}
                       onChange={(e) => setCommChatText(e.target.value)}
-                      placeholder="Type a message to the community..."
+                      placeholder="Type a message or send emojis..."
                       className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
                     />
 
@@ -1747,6 +1694,17 @@ export const FriendsScreen: React.FC<FriendsScreenProps> = ({
                       <Send className="w-4 h-4" />
                     </button>
                   </form>
+
+                  {/* Rich Emoji Keyboard for Friends Community Chat */}
+                  {showCommEmojiKeyboard && (
+                    <div className="mt-2.5">
+                      <EmojiKeyboard
+                        onSelectEmoji={(em) => setCommChatText((t) => t + em)}
+                        onClose={() => setShowCommEmojiKeyboard(false)}
+                        variant="compact"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 

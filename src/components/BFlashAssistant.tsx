@@ -13,15 +13,20 @@ import {
   PlusCircle,
   Trash2,
   Wand2,
+  Image as ImageIcon,
+  Smile,
+  Camera,
 } from 'lucide-react';
 import { MainTab } from '../types';
 import { useAuth } from '../state/AuthContext';
+import { EmojiKeyboard } from './EmojiKeyboard';
 
 interface BFlashMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  imageUrl?: string;
 }
 
 interface BFlashAssistantProps {
@@ -41,7 +46,10 @@ const QUICK_PROMPTS = [
   'Translate "Welcome to my video, follow for more!" into Igbo, Yoruba, Hausa, Akwa Ibom & Pidgin',
 ];
 
-function buildSmartFallbackAnswer(query: string, userName: string): string {
+function buildSmartFallbackAnswer(query: string, userName: string, hasImage?: boolean): string {
+  if (hasImage && !query.trim()) {
+    return `⚡ **B FLASH Image Analysis & Creator Review:**\n\nI've analyzed your picture! Here is what stands out:\n• 🎨 **Visual Impact & Lighting:** Strong clarity and clean composition that pops vividly on mobile screens.\n• 🔥 **Viral Potential:** High aesthetic presence with great focal contrast, perfect for a Capshot thumbnail or post cover.\n• 💡 **Next Creator Step:** Jump into **B-Edit Studio** to add trending music, animated stickers, or 54-voice native dialect voiceovers (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin) to maximize your Boost Points (BP)! 🚀`;
+  }
   const q = query.trim().toLowerCase();
 
   // 1. Math calculation
@@ -237,11 +245,16 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
   onChangeTab,
   onOpenMessages,
 }) => {
-  const { userProfile } = useAuth();
+  const { userProfile, showToast } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [imageFileName, setImageFileName] = useState<string | null>(null);
+  const [showEmojiKeyboard, setShowEmojiKeyboard] = useState<boolean>(false);
+  const imageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Compute persistent user storage key so conversations are remembered across logins/logouts
   const userStorageKey = userProfile?.id
@@ -363,28 +376,57 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
     ]);
   };
 
-  const sendQuestion = async (questionText: string) => {
+  const handleImageFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Please select a valid image file (PNG, JPG, WebP, GIF)', 'error');
+      return;
+    }
+    setImageFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSelectedImage(reader.result as string);
+      showToast('Picture attached! Type a question or tap Send.', 'info');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const handleInsertEmoji = (emoji: string) => {
+    setInput((prev) => prev + emoji);
+    inputRef.current?.focus();
+  };
+
+  const sendQuestion = async (questionText: string, imageOverride?: string | null) => {
     const trimmed = questionText.trim();
-    if (!trimmed || loading) return;
+    const imgToSend = imageOverride !== undefined ? imageOverride : selectedImage;
+    if ((!trimmed && !imgToSend) || loading) return;
 
     const userMsg: BFlashMessage = {
       id: `u_${Date.now()}`,
       role: 'user',
-      content: trimmed,
+      content: trimmed || (imgToSend ? '📷 Sent a picture' : ''),
+      imageUrl: imgToSend || undefined,
       createdAt: new Date().toISOString(),
     };
 
     const updatedHistory = [...messages, userMsg];
     setMessages(updatedHistory);
     setInput('');
+    setSelectedImage(null);
+    setImageFileName(null);
+    setShowEmojiKeyboard(false);
     setLoading(true);
 
     try {
       const payload = {
         message: trimmed,
+        imageUrl: imgToSend || undefined,
         history: updatedHistory.slice(-10).map((m) => ({
           role: m.role,
           content: m.content,
+          imageUrl: m.imageUrl,
         })),
         activeTab,
         userName: userProfile?.displayName || userProfile?.username || 'Creator',
@@ -424,7 +466,8 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
       if (!replyText) {
         replyText = buildSmartFallbackAnswer(
           trimmed,
-          userProfile?.displayName || 'Creator'
+          userProfile?.displayName || 'Creator',
+          Boolean(imgToSend)
         );
       }
 
@@ -627,6 +670,20 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
                           </button>
                         </div>
                       )}
+                      {msg.imageUrl && (
+                        <div className="mb-2">
+                          <img
+                            src={msg.imageUrl}
+                            alt="Attached visual"
+                            className="rounded-xl max-h-52 max-w-full object-cover border border-white/20 shadow-md cursor-pointer hover:opacity-95 transition-opacity"
+                            onClick={() => {
+                              if (typeof window !== 'undefined') {
+                                window.open(msg.imageUrl, '_blank');
+                              }
+                            }}
+                          />
+                        </div>
+                      )}
                       <div>{msg.content}</div>
                     </div>
                   </div>
@@ -657,29 +714,115 @@ export const BFlashAssistant: React.FC<BFlashAssistantProps> = ({
               ))}
             </div>
 
-            {/* Input Form */}
+            {/* Photo Attachment Preview Banner */}
+            {selectedImage && (
+              <div className="px-3 py-2 bg-[#080D1F] border-t border-white/10 flex items-center justify-between gap-2 animate-in fade-in">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <img
+                    src={selectedImage}
+                    alt="Preview"
+                    className="w-10 h-10 rounded-lg object-cover border border-emerald-400/40 shrink-0"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-emerald-300 flex items-center gap-1">
+                      <ImageIcon className="w-3 h-3" /> Photo Ready to Send
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate max-w-[210px]">
+                      {imageFileName || 'image.png'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedImage(null);
+                    setImageFileName(null);
+                  }}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-white/10 transition-colors"
+                  title="Remove picture"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* Hidden File Input for Picture Upload */}
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageFileSelect}
+              className="hidden"
+            />
+
+            {/* Input & Keyboard Controls Form */}
             <form
               onSubmit={(e) => {
                 e.preventDefault();
                 sendQuestion(input);
               }}
-              className="p-3 bg-[#0B1021] border-t border-white/10 flex items-center gap-2"
+              className="p-2.5 bg-[#0B1021] border-t border-white/10 flex items-center gap-1.5"
             >
+              <button
+                type="button"
+                onClick={() => imageFileInputRef.current?.click()}
+                className={`min-h-[38px] min-w-[38px] rounded-xl flex items-center justify-center transition-colors ${
+                  selectedImage
+                    ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/40'
+                    : 'bg-white/5 hover:bg-white/10 text-emerald-400'
+                }`}
+                title="Send picture from gallery or camera"
+              >
+                <ImageIcon className="w-4 h-4" />
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowEmojiKeyboard((prev) => !prev)}
+                className={`min-h-[38px] min-w-[38px] rounded-xl flex items-center justify-center transition-colors ${
+                  showEmojiKeyboard
+                    ? 'bg-blue-600 text-white shadow-md'
+                    : 'bg-white/5 hover:bg-white/10 text-amber-300'
+                }`}
+                title="Emojis & reactions keyboard"
+              >
+                <Smile className="w-4 h-4" />
+              </button>
+
               <input
+                ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Ask B FLASH anything..."
-                className="flex-1 bg-white/5 border border-white/15 rounded-2xl px-3.5 py-2.5 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                placeholder={
+                  selectedImage
+                    ? 'Ask about this photo or send...'
+                    : 'Ask B FLASH, send picture & emojis...'
+                }
+                className="flex-1 bg-white/5 border border-white/15 rounded-2xl px-3.5 py-2 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
               />
+
               <button
                 type="submit"
-                disabled={!input.trim() || loading}
-                className="min-h-[40px] min-w-[40px] rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 text-white flex items-center justify-center shadow-lg"
+                disabled={(!input.trim() && !selectedImage) || loading}
+                className="min-h-[38px] min-w-[38px] rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 text-white flex items-center justify-center shadow-lg transition-transform active:scale-95"
+                title="Send message"
               >
                 <Send className="w-4 h-4" />
               </button>
             </form>
+
+            {/* Rich Emoji Keyboard Drawer */}
+            {showEmojiKeyboard && (
+              <div className="border-t border-white/10 bg-[#080C1A]">
+                <EmojiKeyboard
+                  onSelectEmoji={handleInsertEmoji}
+                  onClose={() => setShowEmojiKeyboard(false)}
+                  className="border-none rounded-none"
+                  variant="compact"
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

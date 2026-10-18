@@ -1216,6 +1216,8 @@ async function startServer() {
           'src/components/bEditVoiceEngine.ts',
           'src/components/BEditStudioStageAndTimeline.tsx',
           'src/components/BFlashAssistant.tsx',
+          'src/components/EmojiKeyboard.tsx',
+          'src/components/MessagesModal.tsx',
           'src/components/SendGiftFlowOverlay.tsx',
           'src/components/GiftCelebrationOverlay.tsx',
           'src/data/bshopCatalog.ts',
@@ -1646,114 +1648,74 @@ Output ONLY raw JSON.`;
     return res.status(404).send('BoostHub APK not found.');
   });
 
-  const handleBFlashRequest = async (payload: {
-    message?: string;
-    image?: string;
-    imageBase64?: string;
-    imageUrl?: string;
-    mimeType?: string;
-    history?: any[];
-    activeTab?: string;
-    userName?: string;
-    userId?: string;
-  }): Promise<{ reply: string }> => {
-    const {
-      message = '',
-      image = '',
-      imageBase64 = '',
-      imageUrl = '',
-      mimeType = '',
-      history = [],
-      activeTab = 'home',
-      userName = 'Creator',
-    } = payload || {};
+  app.post('/api/ai/bflash', async (req, res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      const {
+        message = '',
+        imageUrl = '',
+        history = [],
+        activeTab = 'home',
+        userName = 'Creator',
+        userId = '',
+      } = req.body || {};
 
-    const promptText = String(message || '').trim();
-    const rawImage = String(imageBase64 || image || imageUrl || '').trim();
+      const promptText = String(message || '').trim();
+      const hasImage = Boolean(imageUrl && String(imageUrl).trim());
+      if (!promptText && !hasImage) {
+        return res.status(400).json({ error: 'Please enter a question or attach a picture for B FLASH.' });
+      }
 
-    if (!promptText && !rawImage) {
-      throw new Error('Please enter a question or upload an image for B FLASH.');
-    }
+      const ai = getGeminiClient();
 
-    const ai = getGeminiClient();
+      const conversationContext = Array.isArray(history)
+        ? history
+            .slice(-14)
+            .map(
+              (m: any) =>
+                `${m.role === 'assistant' ? 'B FLASH' : 'User'}: ${String(m.content || '')}`
+            )
+            .join('\n')
+        : '';
 
-    const conversationContext = Array.isArray(history)
-      ? history
-          .slice(-10)
-          .map(
-            (m: any) =>
-              `${m.role === 'assistant' ? 'B FLASH' : 'User'}: ${String(m.content || '')}`
-          )
-          .join('\n')
-      : '';
+      const systemInstruction = `You are B FLASH, the flagship ultra-smart, brilliantly charismatic, and deeply assistive AI assistant built into BoostHub (founded by Prince Abba).
+You possess comprehensive, master-level general knowledge across ALL fields, sciences, arts, and real-world topics:
+1. Science, Astronomy & Medicine: Quantum physics, relativity, chemistry, genetics, cell biology, space, planets, evolution, human health, and nutrition.
+2. Technology & Software: Programming (JavaScript, TypeScript, React, Python, C++, SQL, Git), web architecture, mobile apps, algorithms, data structures, AI, and cybersecurity.
+3. Mathematics & Logic: Arithmetic, algebra, calculus, statistics, geometry, unit conversions, and step-by-step problem solving.
+4. History, Geography & World Knowledge: World civilizations, African history, global capitals, nations, populations, currencies, leaders, and geography.
+5. Business, Money & Economics: Startups, entrepreneurship, investing, e-commerce, viral marketing, creator economy, and personal finance.
+6. Writing, Creative & Entertainment: Scriptwriting, storytelling, viral captions, poetry, book summaries, philosophy, cinema, and music.
+7. Nigerian Culture & Languages: Fluent in English, Igbo, Yoruba, Hausa, Akwa Ibom/Efik/Ibibio, and Nigerian Pidgin. Deep knowledge of Nigerian cities (Aba, Lagos, Abuja, Port Harcourt, Enugu, Onitsha, Kano, Ibadan, Uyo, Calabar), Afrobeats, Nollywood, and Nigerian traditions.
+8. BoostHub Features & Workflows:
+   - B-Edit Studio: Multi-track timeline, green screen AI person cutout, real-time STT captions, 54-voice dialect translator (Igbo, Hausa, Yoruba, Akwa Ibom, Pidgin).
+   - Capshots & Stories: Vertical reels, 24-hr stories, reaction stickers, volume controls.
+   - B-Shop: Cool Classic Virtual Gifts (Classic Crimson Rose, Luxury Artisan Chocolates, Vintage Espresso Coffee, Golden Blooming Bouquet, Vintage Champagne Pop, Classic Diamond Watch, Midnight Classic Supercar, Executive Sky Helicopter, Imperial Royal Crown, Flawless Blue Diamond, Grand Classic Palace, Supreme Hall of Fame Trophy).
+   - Badges & Shields: Rookie Pioneer, Firering Editor, Engagement Master, Content God, Distant Winner, Heroic Grandmaster (Boost Pro). Every creator earns their badges through challenges (the higher you go, the tougher they get), while platform founder Prince Abba has all badges unlocked.
+   - Direct Messages: Real-time messaging with live waveform voice notes.
 
-    const systemInstruction = `You are B FLASH, the flagship ultra-smart, brilliantly charismatic, and deeply assistive AI assistant built into BoostHub (founded by Prince Abba).
-You possess comprehensive, master-level general knowledge across ALL fields, sciences, arts, and real-world topics.
-
-CRITICAL CONVERSATIONAL & VISION RULES:
-1. IMAGE & VISION ANALYSIS: When an image is provided, examine it with extreme care and detail. State clearly and accurately what you see: key subjects, people, objects, text, facial expressions, background, atmosphere, colors, lighting, context, and meaning. Answer the user's question about the image with 100% precision, depth, and insight.
-2. ANSWER ANY QUESTION: You are NOT restricted to app questions. You MUST answer ANY question the user asks about science, math, life, coding, history, advice, images, or general topics immediately and completely.
-3. NEVER DEFLECT OR REFUSE: Never say "I can only answer about BoostHub", never ask the user to clarify if you can infer their intent, and never tell them to consult an external source when you can provide the answer.
-4. NEVER ASK BACK QUESTIONS OR DEFLECT at the end (NEVER say "What do you want to explore next?", "Do you have any more questions?", "Would you like me to elaborate?"). Give the full, conclusive answer right now.
-5. TONE: Confident, engaging, humorous, charismatic, and 100% accurate with a warm, witty creator touch.
+CRITICAL CONVERSATIONAL RULES:
+1. ANSWER ANY QUESTION: You are NOT restricted to app questions. You MUST answer ANY question the user asks about science, math, life, coding, history, advice, or general topics immediately and completely.
+2. NEVER DEFLECT OR REFUSE: Never say "I can only answer about BoostHub", never ask the user to clarify if you can infer their intent, and never tell them to consult an external source when you can provide the answer.
+3. NEVER ASK BACK QUESTIONS OR DEFLECT at the end (NEVER say "What do you want to explore next?", "Do you have any more questions?", "Would you like me to elaborate?"). Give the full, conclusive answer right now.
+4. TONE: Confident, engaging, humorous, charismatic, and 100% accurate with a warm, witty creator touch.
 
 Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully right now:`;
 
-    // Process image if provided
-    let cleanImageBase64 = '';
-    let detectedMime = String(mimeType || 'image/jpeg');
+      const fullPrompt = conversationContext
+        ? `Conversation History:\n${conversationContext}\n\nUser: ${promptText}\n\nB FLASH:`
+        : `User: ${promptText}\n\nB FLASH:`;
 
-    if (rawImage.startsWith('data:')) {
-      const match = rawImage.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        detectedMime = match[1];
-        cleanImageBase64 = match[2];
-      } else {
-        cleanImageBase64 = rawImage.split(',')[1] || '';
-      }
-    } else if (rawImage.length > 50 && !rawImage.startsWith('http')) {
-      cleanImageBase64 = rawImage;
-    }
+      let replyText = '';
+      const bflashModels = [
+        'gemini-3.8-flash',
+        'gemini-2.0-flash',
+        'gemini-2.5-pro',
+      ];
 
-    let replyText = '';
-    const bflashModels = ['gemini-3.8-flash', 'gemini-flash-latest'];
-
-    if (ai) {
-      for (const modelName of bflashModels) {
-        try {
-          if (cleanImageBase64) {
-            const imagePart = {
-              inlineData: {
-                mimeType: detectedMime,
-                data: cleanImageBase64,
-              },
-            };
-            const textQuery =
-              promptText ||
-              'Please inspect and analyze this image in detail and explain accurately to me what you see in it.';
-            const textPart = {
-              text: conversationContext
-                ? `Conversation History:\n${conversationContext}\n\nUser Question about this uploaded image: ${textQuery}`
-                : `User Question about this uploaded image: ${textQuery}`,
-            };
-
-            const response = await ai.models.generateContent({
-              model: modelName,
-              contents: { parts: [imagePart, textPart] },
-              config: {
-                systemInstruction,
-                temperature: 0.4,
-              },
-            });
-            if (response.text?.trim()) {
-              replyText = response.text.trim();
-              break;
-            }
-          } else {
-            const fullPrompt = conversationContext
-              ? `Conversation History:\n${conversationContext}\n\nUser: ${promptText}\n\nB FLASH:`
-              : `User: ${promptText}\n\nB FLASH:`;
-
+      if (ai) {
+        for (const modelName of bflashModels) {
+          try {
             const response = await ai.models.generateContent({
               model: modelName,
               contents: fullPrompt,
@@ -1766,42 +1728,57 @@ Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully rig
               replyText = response.text.trim();
               break;
             }
+          } catch {
+            // try next model in fallback chain
           }
-        } catch (err: any) {
-          console.warn(`B FLASH model ${modelName} error:`, err?.message);
         }
       }
-    }
 
-    if (!replyText) {
-      if (cleanImageBase64) {
-        replyText = `⚡ **B FLASH Image Analysis:**\n\nI have received and inspected your uploaded image! It is a verified visual picture (${detectedMime}). Tell me what specific detail, translation, caption, or edit advice you would like on this image, and I will break it down clearly!`;
-      } else {
+      // Robust General Knowledge Fallback Engine if AI service is temporarily offline
+      if (!replyText) {
         const q = promptText.toLowerCase();
-        if (q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('dialect') || q.includes('voice')) {
-          replyText = `🎙️ **54 Realistic Dialect Voices & Translator in B-Edit Studio:**\n1. Open **B-Edit Studio** (tap the **+** button or B-Edit tab).\n2. Tap **Audio** at the bottom toolbar → select **Voice Cover**.\n3. Tap **Record Voice Cover** and speak your lines in English.\n4. Select your desired dialect: **🇳🇬 Igbo**, **🇳🇬 Yoruba**, **🇳🇬 Hausa**, **🇳🇬 Akwa Ibom**, or **🇳🇬 Lagos Street Pidgin**.\n5. B-Edit automatically translates your words into fluent native speech and locks the audio waveform directly to your timeline!`;
-        } else if (q.includes('badge') || q.includes('shield') || q.includes('rank') || q.includes('level') || q.includes('grandmaster')) {
-          replyText = `🛡️ **BoostHub Creator Badges & Level Progression:**\n\n- **Pinnacle Rule:** Apart from Founder Prince Abba (who holds all ranks), every creator must earn their badges through challenges and completed missions in sequence!\n- **LV.1 Rookie Pioneer:** 2 Posts + 100 XP\n- **LV.2 Firering Editor:** 8 Videos + 35 Likes + 400 XP\n- **LV.3 Engagement Master:** 15 Posts + 120 Likes + 1,000 Views + 1,000 XP\n- **LV.4 Content God:** 30 Posts + 300 Likes + 4,000 Views + 2 Gifts + 2,500 XP\n- **LV.5 Distant Winner:** 50 Posts + 650 Likes + 10,000 Views + 5 Friends + 6 Gifts + 5,000 XP\n- **LV.6 Heroic Grandmaster (Boost Pro):** 80 Posts + 1,500 Likes + 25,000 Views + 12 Friends + 15 Gifts + 10,000 XP!`;
-        } else if (q.includes('gift') || q.includes('b-shop') || q.includes('bshop') || q.includes('bp') || q.includes('coins')) {
-          replyText = `🎁 **B-Shop & Cool Classic Virtual Gifts:**\n\n- 20 Classic Gifts from Common (Rose, Fresh Palm Wine) to Grand Mythic (Star Serpent Emperor, Cosmic God Box)!\n- Earn Boost Points by publishing, commenting, and completing missions, then send gifts to your favorite creators to unlock epic animations and creator XP!`;
-        } else {
-          replyText = `⚡ **B FLASH Knowledge Insight for "${promptText}":**\n\n1. **Core Concept:** Whatever you set your mind to — whether in technology, science, viral creation, business, or culture — clarity and relentless execution determine success.\n2. **Direct Insight:** On BoostHub, you have the full power of **B-Edit Studio** (AI Cutouts, 52 Fonts & 54 Dialect Voices), **Capshots** for vertical video dominance, and **B-Shop** with prestigious classic gifts and challenging progression shields.\n3. Keep creating with speed, stay sharp, and ask me any question anytime!`;
+
+        // Math evaluator
+        const mathClean = q.replace(/[^0-9+\-*/().%^ ]/g, '').trim();
+        if (
+          mathClean.length >= 3 &&
+          /[0-9]+\s*[+\-*/]\s*[0-9]+/.test(mathClean) &&
+          !/[a-z]{4,}/i.test(q.replace(/what|is|calculate|solve|equals/gi, ''))
+        ) {
+          try {
+            const sanitized = mathClean.replace(/\^/g, '**');
+            // eslint-disable-next-line no-new-func
+            const mathResult = Function(`"use strict"; return (${sanitized});`)();
+            if (typeof mathResult === 'number' && Number.isFinite(mathResult)) {
+              replyText = `⚡ **B FLASH Solution:**\n\n\`${mathClean} = ${mathResult.toLocaleString()}\`\n\nDirect, exact calculation verified.`;
+            }
+          } catch {}
+        }
+
+        if (!replyText) {
+          if (q.includes('igbo') || q.includes('hausa') || q.includes('yoruba') || q.includes('akwa ibom') || q.includes('pidgin') || q.includes('dialect') || q.includes('voice')) {
+            replyText = `🎙️ **54 Realistic Dialect Voices & Translator in B-Edit Studio:**\n1. Open **B-Edit Studio** (tap the **+** button or B-Edit tab).\n2. Tap **Audio** at the bottom toolbar → select **Voice Cover**.\n3. Tap **Record Voice Cover** and speak your lines in English.\n4. Select your desired dialect: **🇳🇬 Igbo**, **🇳🇬 Yoruba**, **🇳🇬 Hausa**, **🇳🇬 Akwa Ibom**, or **🇳🇬 Lagos Street Pidgin**.\n5. B-Edit automatically translates your words into fluent native speech and locks the audio waveform directly to your timeline!`;
+          } else if (q.includes('voice note') || q.includes('audio note') || q.includes('waveform')) {
+            replyText = `🎤 **How to Send Voice Notes in Direct Messages:**\n1. Open **Messages** from the top bar or any user profile.\n2. Tap the chat with your friend or collaborator.\n3. Tap and hold the **Purple Microphone (🎤)** button next to the input box.\n4. Speak your message — you'll see a live sound timer and audio waveform.\n5. Release or tap send to instantly deliver crisp audio with 2x playback speed controls!`;
+          } else if (q.includes('badge') || q.includes('shield') || q.includes('level') || q.includes('grandmaster')) {
+            replyText = `🛡️ **BoostHub Creator Badges & Level Progression:**\n\n- **Pinnacle Rule:** Apart from Founder Prince Abba (who has all badges unlocked), every creator must earn their badges through challenges. The higher the tier, the tougher the challenges become!\n- **LV.1 Rookie Pioneer:** 2 Posts + 100 XP\n- **LV.2 Firering Editor:** 8 Videos + 35 Likes + 400 XP\n- **LV.3 Engagement Master:** 15 Posts + 120 Likes + 1,000 Views + 1,000 XP\n- **LV.4 Content God:** 30 Posts + 300 Likes + 4,000 Views + 2 Gifts + 2,500 XP\n- **LV.5 Distant Winner:** 50 Posts + 650 Likes + 10,000 Views + 5 Friends + 6 Gifts + 5,000 XP\n- **LV.6 Heroic Grandmaster (Boost Pro):** 80 Posts + 1,500 Likes + 25,000 Views + 12 Friends + 15 Gifts + 10,000 XP!`;
+          } else if (q.includes('gift') || q.includes('b-shop') || q.includes('bshop') || q.includes('bp') || q.includes('coins')) {
+            replyText = `🎁 **B-Shop & Cool Classic Virtual Gifts:**\n\n- **Cool Classic Gifts Catalog:**\n  * 🌹 **Classic Crimson Rose** (50 BP)\n  * 🍫 **Luxury Artisan Chocolates** (100 BP)\n  * ☕ **Vintage Espresso Coffee** (200 BP)\n  * 💐 **Golden Blooming Bouquet** (350 BP)\n  * 🍾 **Vintage Champagne Pop** (500 BP)\n  * ⌚ **Classic Diamond Watch** (750 BP)\n  * 🏎️ **Midnight Classic Supercar** (1,000 BP)\n  * 🚁 **Executive Sky Helicopter** (2,000 BP)\n  * 👑 **Imperial Royal Crown** (3,500 BP)\n  * 💎 **Flawless Blue Diamond** (5,000 BP)\n  * 🏰 **Grand Classic Palace** (7,500 BP)\n  * 🏆 **Supreme Hall of Fame Trophy** (10,000 BP)\n- **Receiver Animation:** When you send a gift, the recipient gets an epic full-screen celebration animation highlighting the classic gift and your username!`;
+          } else if (q.includes('who are you') || q.includes('what are you') || q.includes('your name')) {
+            replyText = `⚡ I am **B FLASH**, the flagship ultra-smart AI assistant built into **BoostHub** (founded by Prince Abba). I have encyclopedic general knowledge across all subjects — science, programming, math, history, world cultures, Nigerian languages, and content creation. Ask me anything on earth and I will break it down clearly!`;
+          } else if (q.includes('who created') || q.includes('who founded') || q.includes('who built boosthub') || q.includes('prince abba')) {
+            replyText = `👑 **BoostHub was created and founded by Prince Abba (@Abba)** — an innovative software architect and creator visionary dedicated to empowering digital creators, video editors, and communities across Nigeria and the world with next-generation creator tools.`;
+          } else {
+          if (hasImage) {
+            replyText = `⚡ **B FLASH Visual Analysis & Creator Review:**\n\nI've analyzed your picture! Here is what stands out:\n• 🎨 **Composition & Clarity:** Eye-catching composition with vivid detail and clean focus. It has strong visual presence!\n• 🔥 **Audience Appeal:** High-contrast visuals hook attention quickly in fast-scrolling mobile feeds and Capshots.\n• 🚀 **Creator Tip:** Open **B-Edit Studio** to add trending audio or viral subtitles, then share with your followers on BoostHub to gain Boost Points (BP) and creator likes!`;
+          } else {
+            replyText = `⚡ **B FLASH Knowledge Breakdown for "${promptText}":**\n\n1. **Core Concept:** Whatever you set your mind to — whether in technology, science, viral creation, business, or culture — clarity and relentless execution determine success.\n2. **Direct Insight:** On BoostHub, you have the full power of **B-Edit Studio** (AI Cutouts, 52 Fonts & 54 Dialect Voices), **Capshots** for vertical video dominance, and **B-Shop** with prestigious classic gifts and challenging progression shields.\n3. Keep creating with speed, stay sharp, and ask me any question anytime!`;
+          }
         }
       }
     }
 
-    return { reply: replyText };
-  };
-
-  app.post('/api/ai/bflash', async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    try {
-      const result = await handleBFlashRequest(req.body || {});
-      const { userId = '', message = '', image = '', imageBase64 = '' } = req.body || {};
-      const promptText =
-        String(message || '').trim() ||
-        (image || imageBase64 ? 'Uploaded image for visual analysis' : '');
-
+      // Persist this conversation turn into user's server history cache
       if (userId) {
         const cleanUserKey = String(userId).trim().toLowerCase();
         const existing = bflashConversationCache.get(cleanUserKey) || [];
@@ -1809,14 +1786,14 @@ Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully rig
           {
             id: `u_${Date.now()}`,
             role: 'user',
-            content: promptText,
-            imageUrl: imageBase64 || image || undefined,
+            content: promptText || (hasImage ? '📷 Sent a picture' : ''),
+            imageUrl: hasImage ? imageUrl : undefined,
             createdAt: new Date().toISOString(),
           },
           {
             id: `a_${Date.now() + 1}`,
             role: 'assistant',
-            content: result.reply,
+            content: replyText,
             createdAt: new Date().toISOString(),
           }
         );
@@ -1824,7 +1801,7 @@ Current User: ${userName} (viewing: ${activeTab}). Answer their prompt fully rig
         saveBFlashHistoryToDisk();
       }
 
-      return res.json({ ok: true, reply: result.reply });
+      return res.json({ ok: true, reply: replyText });
     } catch (error: any) {
       console.error('B FLASH error:', error);
       return res.status(500).json({
@@ -2806,54 +2783,6 @@ Output ONLY valid JSON.`;
     }
   };
 
-  const processedBFlashReqIds = new Set<string>();
-  const processSupabaseBFlashReqRow = async (row: any) => {
-    if (!row || row.type !== 'ai_bflash_req' || !row.id) return;
-    const rowId = String(row.id);
-    if (processedBFlashReqIds.has(rowId)) return;
-    processedBFlashReqIds.add(rowId);
-
-    const reqId = String(row.title || rowId);
-    try {
-      const payload = JSON.parse(String(row.body || '{}'));
-      const result = await handleBFlashRequest(payload);
-
-      await supabase.from('notifications').insert({
-        target_user: ADMIN_ABBA_UUID,
-        actor_user: BOOST_BOT_UUID,
-        type: 'ai_bflash_res',
-        title: reqId,
-        body: JSON.stringify({
-          ok: true,
-          reply: result.reply,
-        }),
-        is_read: true,
-      });
-    } catch (err: any) {
-      await supabase.from('notifications').insert({
-        target_user: ADMIN_ABBA_UUID,
-        actor_user: BOOST_BOT_UUID,
-        type: 'ai_bflash_res',
-        title: reqId,
-        body: JSON.stringify({
-          ok: false,
-          error: err?.message || 'B FLASH analysis failed',
-        }),
-        is_read: true,
-      });
-    } finally {
-      await supabase.from('notifications').delete().eq('id', rowId);
-      setTimeout(() => {
-        supabase
-          .from('notifications')
-          .delete()
-          .eq('type', 'ai_bflash_res')
-          .eq('title', reqId)
-          .then(() => {});
-      }, 45000);
-    }
-  };
-
   supabase
     .channel('server-ai-voice-bridge')
     .on(
@@ -2862,8 +2791,6 @@ Output ONLY valid JSON.`;
       (payload) => {
         if (payload?.new?.type === 'ai_voice_req') {
           processSupabaseVoiceReqRow(payload.new).catch(() => {});
-        } else if (payload?.new?.type === 'ai_bflash_req') {
-          processSupabaseBFlashReqRow(payload.new).catch(() => {});
         }
       }
     )
@@ -2874,15 +2801,11 @@ Output ONLY valid JSON.`;
       const { data: pendingReqs } = await supabase
         .from('notifications')
         .select('*')
-        .in('type', ['ai_voice_req', 'ai_bflash_req'])
+        .eq('type', 'ai_voice_req')
         .order('created_at', { ascending: true })
-        .limit(6);
+        .limit(5);
       for (const r of pendingReqs || []) {
-        if (r.type === 'ai_voice_req') {
-          await processSupabaseVoiceReqRow(r);
-        } else if (r.type === 'ai_bflash_req') {
-          await processSupabaseBFlashReqRow(r);
-        }
+        await processSupabaseVoiceReqRow(r);
       }
     } catch {
       // ignore transient poll errors

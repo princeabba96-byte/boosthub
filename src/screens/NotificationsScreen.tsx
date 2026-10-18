@@ -356,7 +356,7 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
       : notifications;
 
   return (
-    <div className="min-h-full bg-[#0B1220] max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-5 rounded-3xl">
+    <div className="min-h-screen bg-[#0B1220] max-w-3xl mx-auto px-4 sm:px-6 py-6 space-y-5 rounded-3xl">
       {/* Top: BoostHub header, Notifications title, subtitle & All / Unread / Mark all read */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

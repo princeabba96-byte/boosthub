@@ -21,7 +21,6 @@ import {
   GiftBoxType,
   GiftTier,
   UnboxAnimationType,
-  resolveGiftAssetUrl,
 } from '../data/giftTiers';
 
 export interface GiftCelebrationPayload {
@@ -67,17 +66,6 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
   const tierConfig = GIFT_TIER_CONFIGS[tier];
   const boxType: GiftBoxType = tierConfig.boxName;
   const unboxAnim: UnboxAnimationType = tierConfig.unboxAnimation;
-
-  const resolvedBoxIcon = resolveGiftAssetUrl(tierConfig?.boxIconPng);
-  const resolvedItemIcon = resolveGiftAssetUrl(item?.iconPng);
-
-  const handleGiftImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const target = e.currentTarget;
-    const currentSrc = target.src;
-    if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
-      target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
-    }
-  };
 
   // Calculate bonus Boost Points reward to display
   const rewardBp = Math.max(10, Math.round(item.costBp * 0.5 * (celebration?.quantity || 1)));
@@ -400,8 +388,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
             {/* 3D Box Transparent PNG Icon */}
             <div className="relative w-44 h-44 sm:w-52 sm:h-52 mx-auto flex items-center justify-center transform group-hover:scale-108 transition-all duration-300 drop-shadow-[0_20px_35px_rgba(0,0,0,0.85)]">
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt={boxType}
                 className="w-full h-full object-contain select-none animate-bounce"
                 style={{ animationDuration: '2.5s' }}
@@ -447,8 +434,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
             <div className="relative w-64 h-64 flex items-center justify-center animate-[bounce_0.6s_infinite]">
               <div className="absolute inset-0 rounded-full bg-pink-500/40 blur-2xl animate-ping" />
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="w-48 h-48 object-contain transform scale-125 transition-transform"
               />
@@ -460,8 +446,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
             <div className="relative w-64 h-64 flex items-center justify-center">
               <div className="absolute inset-0 rounded-full bg-rose-600/50 blur-3xl animate-ping" />
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="w-44 h-44 object-contain animate-pulse"
               />
@@ -486,8 +471,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
               <div className="absolute -top-40 bottom-0 w-24 bg-gradient-to-t from-amber-400 via-yellow-200 to-transparent blur-md opacity-90 animate-pulse" />
               <div className="absolute -top-40 bottom-0 w-8 bg-white opacity-95 blur-sm" />
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="relative w-44 h-44 object-contain z-10"
               />
@@ -503,8 +487,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
               <div className="absolute inset-0 rounded-full bg-gradient-to-r from-purple-600/60 via-cyan-500/50 to-indigo-600/60 blur-3xl animate-[spin_4s_linear_infinite]" />
               <div className="absolute inset-4 rounded-full border-4 border-dashed border-cyan-400/80 animate-[spin_6s_linear_infinite]" />
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="relative w-48 h-48 object-contain z-10 animate-pulse"
               />
@@ -517,8 +500,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
               {/* Dark void energy + shattering crystal cracks */}
               <div className="absolute inset-0 rounded-full bg-fuchsia-950/80 border-4 border-fuchsia-500/80 animate-ping blur-sm" />
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="relative w-44 h-44 object-contain filter invert opacity-90 animate-[spin_0.8s_ease-out]"
               />
@@ -547,8 +529,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
                 ))}
               </div>
               <img
-                src={resolvedBoxIcon}
-                onError={handleGiftImgError}
+                src={tierConfig.boxIconPng}
                 alt="Box"
                 className="relative w-52 h-52 object-contain z-10 animate-[bounce_1.5s_infinite]"
               />
@@ -613,8 +594,7 @@ export const GiftCelebrationOverlay: React.FC<GiftCelebrationOverlayProps> = ({
 
             {/* Genuine Transparent PNG Icon */}
             <img
-              src={resolvedItemIcon}
-              onError={handleGiftImgError}
+              src={item.iconPng}
               alt={item.name}
               className="relative w-28 h-28 object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.8)] select-none transform hover:scale-115 transition-transform duration-300"
             />

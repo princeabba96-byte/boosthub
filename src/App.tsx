@@ -282,12 +282,6 @@ const BoostHubAppShell: React.FC = () => {
     } else if (window.location.hash === '#/edit') {
       window.history.replaceState({}, '', window.location.pathname);
     }
-    // Instant switch without animation or zoom
-    try {
-      window.scrollTo(0, 0);
-    } catch {
-      // ignore
-    }
     setActiveTab(tab);
   };
 
@@ -300,22 +294,11 @@ const BoostHubAppShell: React.FC = () => {
     setProfileInitialMode(options?.mainMode || 'profile');
     setProfileInitialContentTab(options?.contentTab || 'posts');
     setProfileInitialSettingsSubMenu(options?.settingsSubMenu || 'general');
-    try {
-      window.scrollTo(0, 0);
-    } catch {
-      // ignore
-    }
     setActiveTab('me');
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100dvh',
-        overscrollBehavior: 'contain',
-      }}
-      className="bg-[#060813] text-[#F8FAFC] flex flex-col"
-    >
+    <div className="min-h-screen bg-[#060813] text-[#F8FAFC] flex flex-col pb-16 lg:pb-0">
       {/* Offline Resilience Banner */}
       {isOffline && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-300 flex items-center justify-center gap-2">
@@ -357,15 +340,7 @@ const BoostHubAppShell: React.FC = () => {
           }}
         />
 
-        <main
-          className="flex-1 min-w-0 main-content-container"
-          style={{
-            minHeight: '100dvh',
-            paddingTop: '56px',
-            paddingBottom: '84px',
-            overscrollBehavior: 'contain',
-          }}
-        >
+        <main className="flex-1 min-w-0">
           {activeTab === 'home' && (
             <HomeScreen
               onOpenComments={(post) => setActiveCommentPost(post)}

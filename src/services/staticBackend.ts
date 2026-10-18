@@ -3319,7 +3319,7 @@ export async function handleStaticBackendRequest<T = any>(
         code: item.code,
         name: item.name,
         icon: item.icon,
-        rarity: item.rarity as any,
+        rarity: item.rarity,
         costBp: item.costBp,
         receivedCount,
         ownedInInventoryCount: isAbba ? 999 : invItem?.quantity || 0,
@@ -4154,18 +4154,8 @@ export async function handleStaticBackendRequest<T = any>(
         c.name.toLowerCase().includes(q) ||
         c.description.toLowerCase().includes(q)
     );
-    const videos = posts.filter(
-      (p) => p.postType === 'capshot' || p.postType === 'video' || (p as any).mediaType === 'video'
-    );
 
-    return {
-      people: users,
-      users,
-      posts,
-      videos,
-      communities,
-      hashtags: [],
-    } as unknown as T;
+    return { users, posts, communities, hashtags: [] } as unknown as T;
   }
 
   // 13. Admin Overview & Actions (/api/admin/overview, /api/admin/action)

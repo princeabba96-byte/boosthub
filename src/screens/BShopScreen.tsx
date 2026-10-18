@@ -24,7 +24,6 @@ import {
   GIFT_TIER_CONFIGS,
   GiftTier,
   isGiftRecipeUnlocked,
-  resolveGiftAssetUrl,
 } from '../data/giftTiers';
 import { SendGiftFlowOverlay } from '../components/SendGiftFlowOverlay';
 import { BShopUserState, UserProfile } from '../types';
@@ -598,16 +597,19 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
                     <div className="w-16 h-16 rounded-2xl bg-[#070B17] border border-white/10 flex items-center justify-center select-none shrink-0 p-1.5 relative overflow-hidden group">
                       {item.iconPng ? (
                         <img
-                          src={resolveGiftAssetUrl(item.iconPng)}
+                          src={item.iconPng}
                           alt={item.name}
+                          className="w-12 h-12 object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] transform group-hover:scale-110 transition-transform duration-200"
                           onError={(e) => {
-                            const target = e.currentTarget;
-                            const currentSrc = target.src;
-                            if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
-                              target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
+                            e.currentTarget.style.display = 'none';
+                            const p = e.currentTarget.parentElement;
+                            if (p && !p.querySelector('.emoji-fallback')) {
+                              const s = document.createElement('span');
+                              s.className = 'text-3xl emoji-fallback select-none';
+                              s.innerText = item.icon || '🎁';
+                              p.appendChild(s);
                             }
                           }}
-                          className="w-12 h-12 object-contain drop-shadow-[0_4px_10px_rgba(0,0,0,0.6)] transform group-hover:scale-110 transition-transform duration-200"
                         />
                       ) : (
                         <span className="text-3xl">{item.icon}</span>
@@ -775,15 +777,8 @@ export const BShopScreen: React.FC<BShopScreenProps> = ({
                 <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center p-1.5 shrink-0">
                   {selectedGiftModalItem.iconPng ? (
                     <img
-                      src={resolveGiftAssetUrl(selectedGiftModalItem.iconPng)}
+                      src={selectedGiftModalItem.iconPng}
                       alt={selectedGiftModalItem.name}
-                      onError={(e) => {
-                        const target = e.currentTarget;
-                        const currentSrc = target.src;
-                        if (currentSrc.includes('/assets/gifts/') && !currentSrc.includes('/gh-bundle/')) {
-                          target.src = currentSrc.replace('/assets/gifts/', '/gh-bundle/assets/gifts/');
-                        }
-                      }}
                       className="w-11 h-11 object-contain drop-shadow-md"
                     />
                   ) : (

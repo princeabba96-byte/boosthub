@@ -10,3 +10,4 @@ coverage/
 node-compile-cache/
 *.hm
 .*.hm
+.bflash_conversations.json

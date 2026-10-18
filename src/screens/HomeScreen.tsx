@@ -693,7 +693,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   };
 
   return (
-    <div className="min-h-full bg-[#0B1220] max-w-6xl mx-auto px-4 sm:px-6 py-4 flex gap-7">
+    <div className="min-h-screen bg-[#0B1220] max-w-6xl mx-auto px-4 sm:px-6 py-5 flex gap-7">
       {/* Main Feed Column */}
       <div className="flex-1 min-w-0 max-w-2xl mx-auto space-y-5">
         {/* 24-Hour Stories Bar */}

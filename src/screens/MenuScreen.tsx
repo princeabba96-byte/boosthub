@@ -94,7 +94,7 @@ export const MenuScreen: React.FC<MenuScreenProps> = ({
   const followingCount = userProfile?.followingCount ?? 0;
 
   return (
-    <div className="min-h-full pb-8">
+    <div className="min-h-[calc(100vh-7.5rem)] pb-24 animate-in slide-in-from-bottom-6 duration-300 ease-out">
       {/* Top Menu Header */}
       <div className="flex items-center justify-between mb-4 px-1">
         <div>

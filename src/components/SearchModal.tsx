@@ -92,33 +92,10 @@ export const SearchModal: React.FC<SearchModalProps> = ({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res: any = await apiFetch<any>(
+        const res = await apiFetch<typeof results>(
           `/api/search?q=${encodeURIComponent(trimmed)}`
         );
-        const safePeople = Array.isArray(res?.people)
-          ? res.people
-          : Array.isArray(res?.users)
-            ? res.users
-            : [];
-        const safePosts = Array.isArray(res?.posts) ? res.posts : [];
-        const safeVideos = Array.isArray(res?.videos)
-          ? res.videos
-          : safePosts.filter(
-              (p: any) =>
-                p.postType === 'capshot' ||
-                p.postType === 'video' ||
-                p.mediaType === 'video'
-            );
-        const safeHashtags = Array.isArray(res?.hashtags) ? res.hashtags : [];
-        const safeComms = Array.isArray(res?.communities) ? res.communities : [];
-
-        setResults({
-          people: safePeople,
-          posts: safePosts,
-          videos: safeVideos,
-          hashtags: safeHashtags,
-          communities: safeComms,
-        });
+        setResults(res);
         setRecentSearches((prev) => {
           const next = [trimmed, ...prev.filter((i) => i !== trimmed)].slice(0, 6);
           try {

@@ -36,7 +36,7 @@ export interface GiftCollectionCardItem {
   code: string;
   name: string;
   icon: string;
-  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic';
+  rarity: 'Common' | 'Rare' | 'Epic' | 'Legendary' | 'Mythic' | 'Grand' | 'Random' | 'Uncommon' | string;
   costBp: number;
   receivedCount: number;
   ownedInInventoryCount: number;
@@ -287,7 +287,7 @@ export interface NotificationItem {
   title: string;
   body: string;
   entityId: string;
-  postId?: string;
+  postId?: string | number;
   isRead: boolean;
   createdAt: string;
   actor?: UserProfile | null;

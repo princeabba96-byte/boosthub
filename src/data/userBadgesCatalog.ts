@@ -237,6 +237,7 @@ export function isUserPlatformOwner(user: {
   isAdmin?: boolean;
 }): boolean {
   if (!user) return false;
+  if (user.isAdmin) return true;
   const uid = String(user.id || '').toLowerCase();
   if (
     uid === 'eaada352-5704-4566-a7a7-88df80853ada' ||
@@ -250,15 +251,9 @@ export function isUserPlatformOwner(user: {
     return true;
   }
   const username = String(user.username || '').toLowerCase().trim();
-  if (
-    username === 'abba' ||
-    username === 'princeabba' ||
-    username === 'princeabba96' ||
-    username === 'princeabba96-byte'
-  ) {
+  if (username === 'abba' || username === 'princeabba' || username === 'princeabba96') {
     return true;
   }
-  // Strictly enforce that only founder Prince Abba has godmode with all ranks automatically unlocked
   return false;
 }
 
@@ -340,39 +335,15 @@ export function calculateUserBadges(user: {
     challenges?: BadgeChallengeItem[];
   }[] = [];
 
-  // Progression rank order: each level is strictly locked until the previous rank is genuinely earned!
-  const progressionOrder = [
-    'rookie',
-    'firering_editor',
-    'engagement_master',
-    'content_god',
-    'distant_winner',
-    'boost_pro',
-  ];
-
-  const earnedCodes = new Set<string>();
-
   // Strictly evaluate every badge: every challenge must be satisfied (the higher the tier, the harder it is)
-  // And progression ranks must be earned one by one in sequence without skipping!
   const isBadgeFullyEarned = (def: BadgeDefinition): boolean => {
     if (isOwnerAdmin) return true;
-
-    // Sequential progression check: cannot unlock higher rank without previous rank
-    const rankIndex = progressionOrder.indexOf(def.code);
-    if (rankIndex > 0) {
-      const prevCode = progressionOrder[rankIndex - 1];
-      if (!earnedCodes.has(prevCode)) {
-        return false;
-      }
-    }
-
     const challengeList = calculateBadgeChallenges(def, stats, false);
     return challengeList.every((ch) => ch.completed);
   };
 
   for (const def of USER_BADGES_CATALOG) {
     if (isBadgeFullyEarned(def)) {
-      earnedCodes.add(def.code);
       earned.push({
         id: def.id,
         code: def.code,

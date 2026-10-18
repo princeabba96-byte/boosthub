@@ -367,7 +367,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
 
   if (loading) {
     return (
-      <div className="h-[calc(100dvh-140px)] flex items-center justify-center">
+      <div className="h-[calc(100vh-7.5rem)] flex items-center justify-center">
         <div className="text-center space-y-2">
           <div className="w-10 h-10 rounded-full border-2 border-blue-500 border-t-transparent animate-spin mx-auto" />
           <p className="text-xs text-slate-400">Loading Capshots...</p>
@@ -400,7 +400,7 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
   }
 
   return (
-    <div className="h-[calc(100dvh-140px)] flex items-center justify-center bg-black/95 p-0 sm:p-4 select-none">
+    <div className="h-[calc(100vh-7.2rem)] lg:h-[calc(100vh-3.5rem)] flex items-center justify-center bg-black/95 p-0 sm:p-4 select-none">
       {/* Preload Next Video in Background */}
       {nextVideo?.mediaUrl && (
         <video
