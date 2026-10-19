@@ -1,61 +1,40 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.boosthub.aba">
+    package="com.boosthub.society">
 
-    <!-- BoostHub Aba - Video Editor for Nigerian Creators -->
-    <!-- Explicitly strip any ARCore / Google Play Services for AR requirements so APK installs on all Android devices -->
-    <uses-feature
-        android:name="android.hardware.camera.ar"
-        android:required="false"
-        tools:node="remove" />
-    <uses-feature
-        android:name="com.google.ar.core.depth"
-        android:required="false"
-        tools:node="remove" />
-    <uses-feature
-        android:name="android.hardware.camera"
-        android:required="false" />
-    <uses-feature
-        android:name="android.hardware.camera.autofocus"
-        android:required="false" />
-
+    <!-- BoostHub - Hybrid Native Android App for Uptodown & Google Play -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
-        android:label="BoostHub Aba - Video Editor for Nigerian Creators"
+        android:icon="@drawable/ic_boosthub_logo"
+        android:label="BoostHub"
+        android:roundIcon="@drawable/ic_boosthub_logo"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.NoTitleBar">
-
-        <!-- Ensure com.google.ar.core metadata is never merged into the APK -->
-        <meta-data
-            android:name="com.google.ar.core"
-            tools:node="remove" />
-
-        <meta-data
-            android:name="asset_statements"
-            android:resource="@string/asset_statements" />
+        android:theme="@style/Theme.BoostHub"
+        android:usesCleartextTraffic="true">
 
         <activity
-            android:name="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:name=".SplashActivity"
             android:exported="true"
-            android:label="BoostHub Aba"
-            android:screenOrientation="portrait">
-            <meta-data
-                android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                android:value="https://princeabba96-byte.github.io/boosthub/" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.STATUS_BAR_COLOR"
-                android:resource="@color/colorPrimary" />
-            <meta-data
-                android:name="android.support.customtabs.trusted.NAVIGATION_BAR_COLOR"
-                android:resource="@color/navigationColor" />
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.BoostHub.Splash">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -65,6 +44,34 @@
                     android:host="princeabba96-byte.github.io"
                     android:pathPrefix="/boosthub" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="boosthub"
+                    android:host="app" />
+            </intent-filter>
         </activity>
+
+        <service
+            android:name=".MyFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_alerts" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/colorPrimary" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/fcm_channel_id" />
+
     </application>
+
 </manifest>

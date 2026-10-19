@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- BoostHub Brand Palette -->
+    <color name="colorPrimary">#4A90E2</color>
+    <color name="colorPrimaryDark">#1E40AF</color>
+    <color name="colorAccent">#2563EB</color>
+
+    <!-- Dark Theme Backgrounds & Surfaces -->
+    <color name="colorBackground">#060813</color>
+    <color name="colorSurface">#121212</color>
+    <color name="colorSurfaceElevated">#181820</color>
+    <color name="colorSurfaceBorder">#262635</color>
+
+    <!-- Text Colors -->
+    <color name="textPrimary">#F8FAFC</color>
+    <color name="textSecondary">#94A3B8</color>
+    <color name="textMuted">#64748B</color>
+
+    <!-- Bottom Navigation -->
+    <color name="bottomNavBackground">#121212</color>
+    <color name="navItemActive">#4A90E2</color>
+    <color name="navItemInactive">#94A3B8</color>
+
+    <!-- Status & Notification -->
+    <color name="colorError">#EF4444</color>
+    <color name="colorSuccess">#10B981</color>
+</resources>

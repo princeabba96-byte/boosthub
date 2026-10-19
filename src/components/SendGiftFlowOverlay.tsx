@@ -3,6 +3,7 @@ import { Sparkles, CheckCircle2, ArrowUpRight, Send, Package, Lock } from 'lucid
 import confetti from 'canvas-confetti';
 import { BShopCatalogItem } from '../data/bshopCatalog';
 import { GIFT_TIER_CONFIGS, GiftTier } from '../data/giftTiers';
+import { getGiftImageUrl } from '../data/giftImagesData';
 
 export interface SendGiftFlowOverlayProps {
   item: BShopCatalogItem;
@@ -217,7 +218,7 @@ export const SendGiftFlowOverlay: React.FC<SendGiftFlowOverlayProps> = ({
             >
               <div className="relative w-24 h-24 flex items-center justify-center drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)]">
                 <img
-                  src={item.iconPng}
+                  src={item.iconPng || getGiftImageUrl(item.code)}
                   alt={item.name}
                   className="w-20 h-20 object-contain filter drop-shadow-md animate-bounce"
                   style={{ animationDuration: '2s' }}
@@ -253,7 +254,7 @@ export const SendGiftFlowOverlay: React.FC<SendGiftFlowOverlayProps> = ({
             />
 
             <img
-              src={tierConfig.boxIconPng}
+              src={tierConfig.boxIconPng || getGiftImageUrl(tierConfig.boxCode)}
               alt={tierConfig.boxName}
               className="relative w-full h-full object-contain drop-shadow-[0_15px_30px_rgba(0,0,0,0.85)] select-none"
             />

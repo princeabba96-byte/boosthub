@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="72dp"
+    android:height="72dp"
+    android:viewportWidth="72"
+    android:viewportHeight="72">
+    <!-- Blue Circle Background -->
+    <path
+        android:fillColor="#4A90E2"
+        android:pathData="M36,0C16.12,0 0,16.12 0,36s16.12,36 36,36 36,-16.12 36,-36S55.88,0 36,0z" />
+    <!-- White Letter 'B' -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M27,18h11.5c4.69,0 8.5,3.81 8.5,8.5 0,2.69 -1.25,5.09 -3.19,6.65C46.3,34.8 48,37.69 48,41c0,5.25 -4.25,9.5 -9.5,9.5H27V18zM34,24.5v9h4.5c2.49,0 4.5,-2.01 4.5,-4.5S40.99,24.5 38.5,24.5H34zM34,39.5v8.5h5c2.76,0 5,-2.24 5,-5s-2.24,-5 -5,-5H34z" />
+</vector>

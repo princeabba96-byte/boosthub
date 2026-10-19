@@ -37,7 +37,7 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
   const { unreadNotifications, unreadMessages } = useAuth();
 
   return (
-    <header className="sticky top-0 z-30 h-14 bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md">
+    <header className="sticky top-0 z-30 h-14 bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md select-none touch-manipulation pt-[env(safe-area-inset-top,0px)]">
       {/* Left: BoostHub logo with blue B circle + "BoostHub" text */}
       <button
         onClick={() => onChangeTab('home')}
@@ -48,6 +48,23 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
         </div>
         <span>BoostHub</span>
       </button>
+
+      {/* Prominent App Search Bar in Header */}
+      <div className="flex-1 max-w-xs md:max-w-sm mx-2 sm:mx-4">
+        <button
+          type="button"
+          onClick={onOpenSearch}
+          className="w-full h-9 sm:h-10 px-3 sm:px-3.5 rounded-full bg-[#1E1E26] hover:bg-white/[0.08] border border-white/10 flex items-center gap-2 sm:gap-2.5 text-xs text-slate-400 hover:text-slate-200 transition-all text-left shadow-inner group"
+          aria-label="Search BoostHub"
+          title="Search BoostHub (Press / to search)"
+        >
+          <Search className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400 group-hover:text-blue-400 transition-colors shrink-0" />
+          <span className="truncate text-xs">Search people, posts, #tags...</span>
+          <kbd className="hidden md:inline-block ml-auto px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-slate-400 font-mono">
+            /
+          </kbd>
+        </button>
+      </div>
 
       {/* Center: Clean Facebook-style 5-tab navigation on desktop */}
       <nav className="hidden lg:flex items-center gap-2">
@@ -156,7 +173,7 @@ export const BottomNavigationBar: React.FC<{
   ];
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-[#121212]/98 backdrop-blur-xl rounded-t-2xl border-t border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.65)] grid grid-cols-5 items-center px-2">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#121212]/98 backdrop-blur-xl rounded-t-2xl border-t border-white/10 shadow-[0_-8px_30px_rgba(0,0,0,0.65)] grid grid-cols-5 items-center px-2 select-none touch-manipulation pb-[env(safe-area-inset-bottom,0px)] h-[calc(4rem+env(safe-area-inset-bottom,0px))]">
       {items.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
@@ -164,7 +181,7 @@ export const BottomNavigationBar: React.FC<{
           <button
             key={item.id}
             onClick={() => onChangeTab(item.id)}
-            className={`relative h-full flex flex-col items-center justify-center transition-colors ${
+            className={`relative h-full flex flex-col items-center justify-center transition-colors select-none touch-manipulation active:scale-95 cursor-pointer outline-none ${
               isActive
                 ? 'text-[#4A90E2]'
                 : 'text-slate-400 hover:text-slate-200'

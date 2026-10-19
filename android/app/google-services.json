@@ -1,0 +1,34 @@
+{
+  "project_info": {
+    "project_number": "323768947309",
+    "project_id": "spiritual-component-z2ts5",
+    "storage_bucket": "spiritual-component-z2ts5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:323768947309:android:a1b2c3d4e5f67890abcdef",
+        "android_client_info": {
+          "package_name": "com.boosthub.society"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "323768947309-f9m6crogvso5u648pl11gcrd3n8m3qij.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDBx3rgP-v5QayGZKN9t1g4cJ1_MZZmRl0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

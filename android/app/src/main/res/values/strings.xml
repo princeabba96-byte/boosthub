@@ -1,0 +1,24 @@
+<resources>
+    <string name="app_name">BoostHub</string>
+    <string name="app_tagline">Creator Community &amp; Video Platform</string>
+    
+    <!-- Native Navigation - Matches Website Sections Exactly (No Fake Sections) -->
+    <string name="nav_home">Home</string>
+    <string name="nav_capshots">Capshots</string>
+    <string name="nav_friends">Friends</string>
+    <string name="nav_alerts">Alerts</string>
+    <string name="nav_menu">Menu</string>
+
+    <!-- Native Offline UI -->
+    <string name="offline_title">No Internet Connection</string>
+    <string name="offline_message">Please check your mobile data or Wi-Fi connection and tap retry to continue.</string>
+    <string name="btn_retry">Retry Connection</string>
+
+    <!-- Native Notification Channel -->
+    <string name="fcm_channel_id">boosthub_notifications</string>
+    <string name="fcm_channel_name">BoostHub Alerts</string>
+    <string name="fcm_channel_desc">Native push notifications for messages, likes, mentions, and updates</string>
+
+    <!-- Back button toast -->
+    <string name="toast_back_exit">Press back again to exit BoostHub</string>
+</resources>

@@ -17,14 +17,9 @@ import {
   Zap,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { apiFetch } from '../services/api';
 import { UserProfile, UserBadge } from '../types';
-import {
-  USER_BADGES_CATALOG,
-  BadgeDefinition,
-  isUserPlatformOwner,
-  calculateBadgeChallenges,
-  calculateUserBadges,
-} from '../data/userBadgesCatalog';
+import { USER_BADGES_CATALOG, BadgeDefinition } from '../data/userBadgesCatalog';
 import {
   BronzeShieldFireringEditor,
   SilverShieldEngagementMaster,
@@ -52,52 +47,97 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
 }) => {
   const [selectedBadge, setSelectedBadge] = useState<BadgeDefinition | null>(null);
   const [claimedNotice, setClaimedNotice] = useState<string>('');
+  const [badgeError, setBadgeError] = useState<string | null>(null);
+  const [claimingBadgeCode, setClaimingBadgeCode] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const isOwner = isUserPlatformOwner(profile);
   const userXp = profile.xp || 0;
-  const maxTrackXp = 10000;
+  const maxTrackXp = 3000;
   const progressPct = Math.min(100, Math.round((userXp / maxTrackXp) * 100));
   const xpToNext = Math.max(0, maxTrackXp - userXp);
 
-  const stats = {
-    xp: Number(profile.xp || 0),
-    posts: Number(profile.postsCount || 0),
-    likes: Number(profile.likesReceivedCount || 0),
-    views: Number(profile.viewsReceivedCount || 0),
-    friends: Number(profile.friendsCount || profile.followersCount || 0),
-    gifts: Number(profile.giftsReceivedCount || 0),
-  };
-
-  // Check which badges user has unlocked (only owner has all; others must earn through challenges)
-  const computedBadges = calculateUserBadges(profile);
-  const earnedCodeSet = new Set(
-    (computedBadges || [])
-      .filter((b) => b.unlocked)
-      .map((b) => b.code)
-  );
+  // Check which badges user has unlocked
+  const earnedCodeSet = new Set((profile.badges || []).map((b) => b.code));
+  const userCompletedMissions = Array.isArray(profile.completedMissions)
+    ? profile.completedMissions
+    : [];
 
   // Determine current badge level
   let currentLevel = 1;
-  if (userXp >= 10000) currentLevel = 6;
-  else if (userXp >= 5000) currentLevel = 5;
-  else if (userXp >= 2500) currentLevel = 4;
-  else if (userXp >= 1000) currentLevel = 3;
-  else if (userXp >= 400) currentLevel = 2;
+  if (userXp >= 3000) currentLevel = 6;
+  else if (userXp >= 2000) currentLevel = 5;
+  else if (userXp >= 1200) currentLevel = 4;
+  else if (userXp >= 600) currentLevel = 3;
+  else if (userXp >= 200) currentLevel = 2;
+
+  const handleClaimBadge = async (badge: BadgeDefinition) => {
+    if (claimingBadgeCode) return;
+    setClaimingBadgeCode(badge.code);
+    setBadgeError(null);
+    try {
+      const res = await apiFetch<{
+        ok: boolean;
+        message?: string;
+        error?: string;
+      }>('/api/badges/claim', {
+        method: 'POST',
+        body: JSON.stringify({ badgeCode: badge.code }),
+      });
+
+      if (res?.ok) {
+        try {
+          confetti({
+            particleCount: 90,
+            spread: 90,
+            origin: { y: 0.6 },
+            colors: ['#F59E0B', '#EF4444', '#38BDF8', '#10B981'],
+          });
+        } catch {}
+        setClaimedNotice(
+          res.message || `🎉 Badge "${badge.name}" verified & awarded!`
+        );
+        setTimeout(() => setClaimedNotice(''), 5000);
+        onRefreshProfile?.();
+      } else {
+        setBadgeError(
+          res?.error ||
+            `Requirement not met: You must pass Mission #${badge.requiredMissionId} first!`
+        );
+        setTimeout(() => setBadgeError(null), 6000);
+      }
+    } catch (err: any) {
+      setBadgeError(
+        err.message ||
+          `Requirement not met: You must pass Mission #${badge.requiredMissionId} ("${badge.requiredMissionName}") before this badge can be awarded!`
+      );
+      setTimeout(() => setBadgeError(null), 6000);
+    } finally {
+      setClaimingBadgeCode(null);
+    }
+  };
 
   const handleClaimRewards = () => {
-    try {
-      confetti({
-        particleCount: 80,
-        spread: 90,
-        origin: { y: 0.6 },
-        colors: ['#F59E0B', '#EF4444', '#38BDF8', '#FDE047'],
-      });
-    } catch {}
-    setClaimedNotice('🔥 Seasonal XP bonuses & Challenge Badges synchronized!');
-    setTimeout(() => setClaimedNotice(''), 4500);
-    onRefreshProfile?.();
+    // Attempt to claim any badges whose mission requirements are completed
+    let claimedCount = 0;
+    USER_BADGES_CATALOG.forEach((badge) => {
+      const hasMission = userCompletedMissions.some(
+        (m: any) =>
+          String(m).toLowerCase() === String(badge.requiredMissionId).toLowerCase() ||
+          String(m).toLowerCase() === badge.requiredMissionCode.toLowerCase()
+      );
+      if (hasMission && !earnedCodeSet.has(badge.code)) {
+        handleClaimBadge(badge);
+        claimedCount++;
+      }
+    });
+
+    if (claimedCount === 0) {
+      setBadgeError(
+        '⚠️ No new badges ready to claim. Complete missions in the Missions panel first to unlock badges!'
+      );
+      setTimeout(() => setBadgeError(null), 5000);
+    }
   };
 
   const renderBadgeIcon = (code: string, size = 52, locked = false) => {
@@ -165,23 +205,17 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
           </button>
         </div>
 
-        {/* Creator Notice or Founder Notice */}
-        {isOwner ? (
-          <div className="bg-amber-950/80 border-b border-amber-500/40 px-4 py-2 text-center text-xs font-bold text-amber-300 flex items-center justify-center gap-2">
-            <Crown className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>👑 FOUNDER PRIVILEGE: Platform Founder Prince Abba has all prestige badges permanently unlocked.</span>
-          </div>
-        ) : (
-          <div className="bg-blue-950/80 border-b border-cyan-500/30 px-4 py-2 text-center text-xs font-bold text-cyan-200 flex items-center justify-center gap-2">
-            <Award className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span>🛡️ CREATOR CHALLENGE TRACK: Every creator must earn their badges through challenges. The higher you go, the tougher they get!</span>
-          </div>
-        )}
-
         {claimedNotice && (
           <div className="bg-emerald-950/80 border-b border-emerald-500/40 px-4 py-2 text-center text-xs font-bold text-emerald-300 flex items-center justify-center gap-2">
             <Sparkles className="w-4 h-4 text-emerald-400 animate-bounce" />
             <span>{claimedNotice}</span>
+          </div>
+        )}
+
+        {badgeError && (
+          <div className="bg-rose-950/90 border-b border-rose-500/50 px-4 py-2.5 text-center text-xs font-bold text-rose-300 flex items-center justify-center gap-2">
+            <Lock className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{badgeError}</span>
           </div>
         )}
 
@@ -212,7 +246,7 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                 {/* Centered Readout Over Tube */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none p-3 text-center">
                   <span className="text-lg sm:text-xl font-black text-white drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] tracking-tight font-mono">
-                    {userXp.toLocaleString()} / {maxTrackXp.toLocaleString()} XP
+                    {userXp} / {maxTrackXp} XP
                   </span>
                   <span className="text-xs font-bold text-amber-300 drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">
                     Level {currentLevel} Creator
@@ -227,7 +261,7 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                 </p>
                 <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-[#0F172A] border border-orange-500/40 text-[11px] font-bold text-orange-200">
                   <Flame className="w-3.5 h-3.5 text-orange-400" />
-                  <span>+{xpToNext.toLocaleString()} XP TO NEXT REWARD</span>
+                  <span>+{xpToNext} XP TO NEXT REWARD</span>
                 </div>
               </div>
             </div>
@@ -261,28 +295,34 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                 <span>SEASON MILESTONE TRACK</span>
               </span>
               <span className="text-[10px] font-bold text-slate-400">
-                Tap any badge to inspect challenges
+                Tap any badge for details
               </span>
             </div>
 
             {/* Vertical Milestone Pathway */}
             <div className="relative pl-6 space-y-4 before:absolute before:top-4 before:bottom-4 before:left-3.5 before:w-1 before:bg-gradient-to-b before:from-orange-500 before:via-cyan-400 before:to-slate-700 before:rounded-full">
               {USER_BADGES_CATALOG.filter((b) => b.category === 'progression').map((badge) => {
-                const isEarned = isOwner || earnedCodeSet.has(badge.code);
+                const isEarned = earnedCodeSet.has(badge.code);
+                const hasPassedMission = userCompletedMissions.some(
+                  (m: any) =>
+                    String(m).toLowerCase() === String(badge.requiredMissionId).toLowerCase() ||
+                    String(m).toLowerCase() === badge.requiredMissionCode.toLowerCase()
+                );
                 const isSelected = selectedBadge?.code === badge.code;
-                const challengeItems = calculateBadgeChallenges(badge, stats, isOwner);
-                const completedCount = challengeItems.filter((c) => c.completed).length;
+                const isClaiming = claimingBadgeCode === badge.code;
 
                 return (
                   <div
                     key={badge.code}
                     onClick={() => setSelectedBadge(badge)}
-                    className={`relative p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                    className={`relative p-3 rounded-2xl border transition-all cursor-pointer ${
                       isSelected
                         ? 'bg-gradient-to-r from-amber-950/40 via-[#111A38] to-[#0B1224] border-amber-400 ring-2 ring-amber-400/30'
                         : isEarned
                           ? 'bg-[#0B1224]/80 border-cyan-500/30 hover:border-cyan-400'
-                          : 'bg-[#060A17]/70 border-white/10 hover:border-white/20'
+                          : hasPassedMission
+                            ? 'bg-amber-950/20 border-amber-500/50 hover:border-amber-400'
+                            : 'bg-[#060A17]/60 border-white/10 opacity-75 hover:opacity-100 hover:border-white/20'
                     }`}
                   >
                     {/* Node Dot on Path Line */}
@@ -290,7 +330,9 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                       className={`absolute -left-6 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
                         isEarned
                           ? 'bg-amber-400 border-white shadow-[0_0_10px_rgba(251,191,36,0.8)]'
-                          : 'bg-slate-900 border-slate-600'
+                          : hasPassedMission
+                            ? 'bg-emerald-500 border-white shadow-[0_0_8px_rgba(16,185,129,0.8)]'
+                            : 'bg-slate-900 border-slate-600'
                       }`}
                     >
                       {isEarned && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
@@ -306,36 +348,42 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                           <span className="text-xs font-extrabold text-white truncate">
                             {badge.name}
                           </span>
-                          <span
-                            className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                              isEarned
-                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                            }`}
-                          >
-                            {isEarned
-                              ? isOwner
-                                ? '👑 OWNER UNLOCKED'
-                                : `EARNED • +${badge.xpReward} XP`
-                              : `${completedCount}/${challengeItems.length} CHALLENGES`}
-                          </span>
+                          {isEarned ? (
+                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border bg-emerald-500/20 text-emerald-300 border-emerald-500/40 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              UNLOCKED • +{badge.xpReward} XP
+                            </span>
+                          ) : hasPassedMission && isMe ? (
+                            <button
+                              type="button"
+                              disabled={isClaiming}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleClaimBadge(badge);
+                              }}
+                              className="text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-md shadow-orange-500/40 hover:brightness-110 active:scale-95 transition-all"
+                            >
+                              {isClaiming ? 'CLAIMING...' : 'CLAIM BADGE'}
+                            </button>
+                          ) : (
+                            <span className="text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border bg-slate-800 text-slate-400 border-slate-700 flex items-center gap-1">
+                              <Lock className="w-3 h-3" />
+                              NEEDS MISSION #{badge.requiredMissionId}
+                            </span>
+                          )}
                         </div>
 
                         <p className="text-[10px] text-slate-300 line-clamp-1 mt-0.5">
                           {badge.requirementDescription}
                         </p>
 
-                        <div className="flex items-center justify-between gap-2 mt-1.5">
-                          <span className="text-[10px] text-amber-400 font-mono font-bold">
+                        <div className="flex items-center justify-between gap-2 mt-1 text-[10px] font-bold">
+                          <span className="text-amber-400 font-mono">
                             {badge.levelLabel}
                           </span>
-                          {isEarned ? (
-                            <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-0.5">
-                              <CheckCircle2 className="w-3 h-3" /> Unlocked
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-400 font-medium flex items-center gap-1">
-                              <Lock className="w-3 h-3 text-slate-500" /> Must Earn
+                          {!isEarned && !hasPassedMission && (
+                            <span className="text-slate-400 text-[10px]">
+                              Pass Mission #{badge.requiredMissionId} to unlock
                             </span>
                           )}
                         </div>
@@ -344,6 +392,27 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
                   </div>
                 );
               })}
+
+              {/* Level 6 Master Locked Milestone from Image 1 */}
+              <div className="relative p-3 rounded-2xl bg-[#060A17]/60 border border-slate-800 opacity-60">
+                <div className="absolute -left-6 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-slate-900 border-2 border-slate-700" />
+                <div className="flex items-center gap-3">
+                  <MasterPadlockIcon size={52} locked={true} />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-slate-300">
+                        LV.6 • MASTER LEGEND
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-400 px-1.5 py-0.5 rounded bg-slate-800">
+                        LOCKED • 3000 XP
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Supreme Season 23 Pass Master Tier. Complete all weekly quests.
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Achievement Badges Showcase */}
@@ -354,7 +423,7 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {USER_BADGES_CATALOG.filter((b) => b.category === 'achievement').map((ach) => {
-                  const isEarned = isOwner || earnedCodeSet.has(ach.code);
+                  const isEarned = earnedCodeSet.has(ach.code);
                   return (
                     <button
                       key={ach.code}
@@ -387,103 +456,50 @@ export const UserBadgesProgressModal: React.FC<UserBadgesProgressModalProps> = (
           </div>
         </div>
 
-        {/* Selected Badge Modal Inspector Popup with Detailed Multi-Metric Challenges */}
-        {selectedBadge && (() => {
-          const isEarned = isOwner || earnedCodeSet.has(selectedBadge.code);
-          const challengeItems = calculateBadgeChallenges(selectedBadge, stats, isOwner);
-          const allCompleted = isEarned || challengeItems.every((c) => c.completed);
-
-          return (
-            <div className="bg-[#0B132B] border-t-2 border-amber-500/40 p-4 space-y-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="shrink-0">
-                    {renderBadgeIcon(selectedBadge.code, 56, !isEarned)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-sm font-black text-white">{selectedBadge.name}</h4>
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                        {selectedBadge.levelLabel}
-                      </span>
-                      {isEarned && (
-                        <span className="text-[10px] font-black px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                          {isOwner ? '👑 FOUNDER SHIELD' : '✅ EARNED'}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-300 mt-0.5">{selectedBadge.description}</p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setSelectedBadge(null)}
-                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white shrink-0"
-                >
-                  Close
-                </button>
+        {/* Selected Badge Modal Inspector Popup */}
+        {selectedBadge && (
+          <div className="bg-[#0B132B] border-t-2 border-amber-500/40 p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="shrink-0">
+                {renderBadgeIcon(selectedBadge.code, 56, !earnedCodeSet.has(selectedBadge.code))}
               </div>
-
-              {/* Challenge Requirement Breakdown */}
-              <div className="p-3 rounded-xl bg-[#060914] border border-cyan-500/30 space-y-2">
-                <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
-                  <span className="flex items-center gap-1.5">
-                    <Trophy className="w-3.5 h-3.5 text-amber-400" />
-                    <span>CHALLENGE REQUIREMENTS (HARDER AS YOU LEVEL UP):</span>
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    {challengeItems.filter((c) => c.completed).length} / {challengeItems.length} COMPLETE
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-black text-white">{selectedBadge.name}</h4>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    {selectedBadge.levelLabel}
                   </span>
                 </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                  {challengeItems.map((c) => {
-                    const pct = Math.min(100, Math.round((c.current / c.target) * 100));
-                    return (
-                      <div
-                        key={c.key}
-                        className={`p-2 rounded-lg border text-xs flex flex-col justify-between ${
-                          c.completed
-                            ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
-                            : 'bg-slate-900/50 border-slate-700/60 text-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <span className="font-semibold text-[11px]">{c.label}</span>
-                          <span className="font-mono text-[11px] font-black">
-                            {c.current.toLocaleString()} / {c.target.toLocaleString()} ({pct}%)
-                          </span>
-                        </div>
-                        <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                          <div
-                            style={{ width: `${pct}%` }}
-                            className={`h-full rounded-full transition-all ${
-                              c.completed
-                                ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
-                                : 'bg-amber-400'
-                            }`}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="pt-1 flex items-center justify-between text-[11px]">
-                  <span className="text-slate-400">
-                    {allCompleted
-                      ? '🎉 All challenges conquered! This badge is legitimately unlocked.'
-                      : '⚠️ Higher tiers require higher persistence. Complete all challenges above to earn.'}
-                  </span>
-                  <span className="font-bold text-amber-300 font-mono">
-                    XP REWARD: +{selectedBadge.xpReward} XP
-                  </span>
-                </div>
+                <p className="text-xs text-slate-300 mt-0.5">{selectedBadge.description}</p>
+                <p className="text-[11px] text-cyan-300 font-medium mt-0.5">
+                  🎯 Requirement: {selectedBadge.requirementDescription}
+                </p>
               </div>
             </div>
-          );
-        })()}
+
+            <div className="flex items-center gap-2 shrink-0">
+              {isMe && !earnedCodeSet.has(selectedBadge.code) && (
+                <button
+                  type="button"
+                  disabled={claimingBadgeCode === selectedBadge.code}
+                  onClick={() => handleClaimBadge(selectedBadge)}
+                  className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:brightness-110 text-xs font-black text-white shadow-md active:scale-95 transition-all"
+                >
+                  {claimingBadgeCode === selectedBadge.code
+                    ? 'Claiming...'
+                    : 'Claim Badge'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setSelectedBadge(null)}
+                className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-xs font-bold text-white shrink-0"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Bottom Bar: Season Reward & Claim Rewards matching Image 1 */}
         <div className="bg-[#070B17] border-t border-white/10 p-4 flex flex-wrap items-center justify-between gap-3">

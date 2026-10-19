@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Matches real website navigation items exactly (NO fake Wallet, Orders, etc.) -->
+    <item
+        android:id="@+id/navigation_home"
+        android:icon="@drawable/ic_home"
+        android:title="@string/nav_home" />
+
+    <item
+        android:id="@+id/navigation_capshots"
+        android:icon="@drawable/ic_capshots"
+        android:title="@string/nav_capshots" />
+
+    <item
+        android:id="@+id/navigation_friends"
+        android:icon="@drawable/ic_friends"
+        android:title="@string/nav_friends" />
+
+    <item
+        android:id="@+id/navigation_alerts"
+        android:icon="@drawable/ic_alerts"
+        android:title="@string/nav_alerts" />
+
+    <item
+        android:id="@+id/navigation_menu"
+        android:icon="@drawable/ic_menu"
+        android:title="@string/nav_menu" />
+</menu>

@@ -14,11 +14,6 @@ import {
   Send,
   Smartphone,
   CheckCircle2,
-  Trash2,
-  X,
-  ExternalLink,
-  Calendar,
-  Gift,
 } from 'lucide-react';
 import { NotificationItem } from '../types';
 import { apiFetch } from '../services/api';
@@ -58,32 +53,16 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const [loading, setLoading] = useState(true);
-  const [selectedNotif, setSelectedNotif] = useState<NotificationItem | null>(null);
 
   // Background Web Push state
   const [pushEnabled, setPushEnabled] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
   const [testingPush, setTestingPush] = useState(false);
 
-  const getDeletedIdsSet = (): Set<string> => {
-    try {
-      const key = `boosthub_deleted_notifs_${userProfile?.id || 'guest'}`;
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        return new Set(JSON.parse(raw));
-      }
-    } catch {}
-    return new Set();
-  };
-
   const loadNotifications = async () => {
     try {
       const list = await apiFetch<NotificationItem[]>('/api/notifications');
-      const deletedSet = getDeletedIdsSet();
-      const filtered = Array.isArray(list)
-        ? list.filter((n) => !deletedSet.has(String(n.id)))
-        : [];
-      setNotifications(filtered);
+      setNotifications(list);
       await refreshBadgesCount();
     } catch {
       // ignore
@@ -254,58 +233,6 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
     }
   };
 
-  const handleDeleteNotification = async (
-    notificationId: string | number,
-    e?: React.MouseEvent
-  ) => {
-    if (e) e.stopPropagation();
-    const idStr = String(notificationId);
-    try {
-      const key = `boosthub_deleted_notifs_${userProfile?.id || 'guest'}`;
-      try {
-        const deletedSet = getDeletedIdsSet();
-        deletedSet.add(idStr);
-        localStorage.setItem(key, JSON.stringify(Array.from(deletedSet)));
-      } catch {}
-
-      await apiFetch('/api/notifications/delete', {
-        method: 'POST',
-        body: JSON.stringify({ notificationId }),
-      });
-      setNotifications((prev) => prev.filter((n) => String(n.id) !== idStr));
-      if (selectedNotif && String(selectedNotif.id) === idStr) {
-        setSelectedNotif(null);
-      }
-      await refreshBadgesCount();
-      showToast('Notification deleted.', 'info');
-    } catch {
-      showToast('Could not delete notification.', 'error');
-    }
-  };
-
-  const handleClearAll = async () => {
-    if (notifications.length === 0) return;
-    try {
-      const key = `boosthub_deleted_notifs_${userProfile?.id || 'guest'}`;
-      try {
-        const deletedSet = getDeletedIdsSet();
-        notifications.forEach((n) => deletedSet.add(String(n.id)));
-        localStorage.setItem(key, JSON.stringify(Array.from(deletedSet)));
-      } catch {}
-
-      await apiFetch('/api/notifications/delete', {
-        method: 'POST',
-        body: JSON.stringify({ notificationId: 'all' }),
-      });
-      setNotifications([]);
-      setSelectedNotif(null);
-      await refreshBadgesCount();
-      showToast('All notifications cleared.', 'info');
-    } catch {
-      showToast('Could not clear notifications.', 'error');
-    }
-  };
-
   const handleMarkOneRead = async (notif: NotificationItem) => {
     if (!notif.isRead) {
       try {
@@ -321,8 +248,11 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
         // ignore
       }
     }
-    // Open detailed view modal so user sees full message details!
-    setSelectedNotif(notif);
+    if (onOpenNotification) {
+      onOpenNotification(notif);
+    } else if (notif.actorId) {
+      onSelectUser(notif.actorId);
+    }
   };
 
   const getIcon = (type: string) => {
@@ -398,20 +328,10 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
 
           <button
             onClick={handleMarkAllRead}
-            className="px-3 py-2 rounded-xl bg-[#131A2A] hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap"
+            className="px-3.5 py-2 rounded-xl bg-[#131A2A] hover:bg-white/10 border border-white/10 text-xs font-medium text-slate-200 inline-flex items-center gap-1.5 whitespace-nowrap"
           >
             <CheckCheck className="w-4 h-4 text-blue-400" />
             <span>Mark all read</span>
-          </button>
-
-          <button
-            onClick={handleClearAll}
-            disabled={notifications.length === 0}
-            className="px-3 py-2 rounded-xl bg-[#131A2A] hover:bg-rose-500/20 hover:text-rose-300 border border-white/10 disabled:opacity-40 text-xs font-medium text-slate-300 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors"
-            title="Delete all notifications"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-            <span>Clear all</span>
           </button>
         </div>
       </div>
@@ -528,10 +448,10 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
           </div>
         ) : (
           displayed.map((n) => (
-            <div
+            <button
               key={n.id}
               onClick={() => handleMarkOneRead(n)}
-              className={`w-full p-4 flex items-start gap-3.5 text-left transition-colors cursor-pointer ${
+              className={`w-full p-4 flex items-start gap-3.5 text-left transition-colors ${
                 n.isRead
                   ? 'hover:bg-white/[0.02]'
                   : 'bg-blue-600/10 hover:bg-blue-600/15'
@@ -573,184 +493,13 @@ export const NotificationsScreen: React.FC<NotificationsScreenProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-1.5 shrink-0 ml-1">
-                {!n.isRead && (
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-500 shrink-0" />
-                )}
-                <button
-                  type="button"
-                  onClick={(e) => handleDeleteNotification(n.id, e)}
-                  className="p-2 rounded-xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/15 border border-transparent hover:border-rose-500/25 transition-all cursor-pointer"
-                  title="Delete notification"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
+              {!n.isRead && (
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500 mt-2 shrink-0" />
+              )}
+            </button>
           ))
         )}
       </div>
-
-      {/* Notification Details Modal (Tapping notification shows full details) */}
-      {selectedNotif && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
-          onClick={() => setSelectedNotif(null)}
-        >
-          <div
-            className="w-full max-w-lg bg-[#0E1526] border border-white/15 rounded-3xl p-6 shadow-2xl space-y-5 text-white max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-150"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                  {getIcon(selectedNotif.type)}
-                </div>
-                <div>
-                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-blue-400">
-                    {selectedNotif.type.replace('_', ' ')}
-                  </span>
-                  <p className="text-xs text-slate-400">
-                    {formatRelativeTime(selectedNotif.createdAt)}
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedNotif(null)}
-                className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-colors cursor-pointer"
-                title="Close"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Sender / Actor Info */}
-            {selectedNotif.actor && (
-              <div className="p-3.5 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <Avatar
-                    src={selectedNotif.actor.avatarUrl}
-                    name={selectedNotif.actor.displayName}
-                    size="md"
-                  />
-                  <div className="min-w-0">
-                    <p className="font-bold text-sm text-white truncate inline-flex items-center gap-1.5">
-                      <span>{selectedNotif.actor.displayName}</span>
-                      {selectedNotif.actor.isVerified && (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                      )}
-                    </p>
-                    <p className="text-xs text-slate-400 truncate">
-                      @{selectedNotif.actor.username}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedNotif(null);
-                    onSelectUser(selectedNotif.actor!.id);
-                  }}
-                  className="px-3.5 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-300 text-xs font-semibold shrink-0 cursor-pointer"
-                >
-                  View Profile
-                </button>
-              </div>
-            )}
-
-            {/* Notification Title & Full Body */}
-            <div className="space-y-2">
-              <h3
-                className={`text-base font-extrabold tracking-wide ${
-                  selectedNotif.title === 'BOOST BOT' ||
-                  selectedNotif.actorId === 'boost_bot_official'
-                    ? 'text-amber-300'
-                    : 'text-white'
-                }`}
-              >
-                {selectedNotif.title}
-              </h3>
-              <div className="p-4 rounded-2xl bg-[#070B16] border border-white/10 text-sm text-slate-200 whitespace-pre-wrap break-words leading-relaxed">
-                {selectedNotif.body}
-              </div>
-            </div>
-
-            {/* Type-specific highlight */}
-            {selectedNotif.type === 'gift' && (
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center text-xl shrink-0">
-                  🎁
-                </div>
-                <div className="text-xs">
-                  <p className="font-bold text-amber-300">
-                    Virtual Gift Received
-                  </p>
-                  <p className="text-slate-300 mt-0.5">
-                    This gift adds directly to your creator recognition points and Boost Points.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* Modal Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/10">
-              <button
-                type="button"
-                onClick={(e) => handleDeleteNotification(selectedNotif.id, e)}
-                className="px-4 py-2.5 rounded-2xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/35 text-rose-300 text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Trash2 className="w-4 h-4" />
-                <span>Delete Notification</span>
-              </button>
-
-              <div className="flex items-center gap-2">
-                {selectedNotif.postId && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedNotif(null);
-                      if (onOpenNotification) {
-                        onOpenNotification(selectedNotif);
-                      } else {
-                        window.location.search = `?tab=home&post=${encodeURIComponent(
-                          String(selectedNotif.postId)
-                        )}`;
-                      }
-                    }}
-                    className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>View Post</span>
-                  </button>
-                )}
-                {(selectedNotif.title === 'BOOST BOT' ||
-                  selectedNotif.actorId === 'boost_bot_official') && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedNotif(null);
-                      window.location.search = '?messages=boost_bot_official';
-                    }}
-                    className="px-4 py-2.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                    <span>Open Chat</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setSelectedNotif(null)}
-                  className="px-4 py-2.5 rounded-2xl bg-white/10 hover:bg-white/15 text-white text-xs font-semibold cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

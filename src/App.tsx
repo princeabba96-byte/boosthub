@@ -220,6 +220,21 @@ const BoostHubAppShell: React.FC = () => {
   );
 
   useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === '/' &&
+        !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)
+      ) {
+        e.preventDefault();
+        setSearchInitialQuery('');
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  useEffect(() => {
     openDeepLinkDestination({ url: window.location.search });
 
     if ('serviceWorker' in navigator && window.self === window.top) {
@@ -240,6 +255,45 @@ const BoostHubAppShell: React.FC = () => {
       };
     }
   }, [openDeepLinkDestination]);
+
+  // Hybrid Native Android Bridge: Listen for native BottomNavigationView tab events
+  useEffect(() => {
+    const handleNavEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tab?: MainTab }>;
+      const tab = customEvent.detail?.tab;
+      if (
+        tab &&
+        ['home', 'capshots', 'friends', 'notifications', 'menu', 'me', 'bshop', 'bedit'].includes(tab)
+      ) {
+        setActiveTab(tab);
+      }
+    };
+
+    window.addEventListener('boosthub:nav', handleNavEvent);
+    (window as any).navigateToTab = (tab: MainTab) => {
+      if (
+        ['home', 'capshots', 'friends', 'notifications', 'menu', 'me', 'bshop', 'bedit'].includes(tab)
+      ) {
+        setActiveTab(tab);
+      }
+    };
+
+    return () => {
+      window.removeEventListener('boosthub:nav', handleNavEvent);
+      delete (window as any).navigateToTab;
+    };
+  }, []);
+
+  // When activeTab changes, inform native Android bridge if available
+  useEffect(() => {
+    if (typeof (window as any).AndroidInterface?.onTabChanged === 'function') {
+      try {
+        (window as any).AndroidInterface.onTabChanged(activeTab);
+      } catch {
+        // ignore
+      }
+    }
+  }, [activeTab]);
 
   if (loading) {
     return (
@@ -298,7 +352,7 @@ const BoostHubAppShell: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#060813] text-[#F8FAFC] flex flex-col pb-16 lg:pb-0">
+    <div className="min-h-screen bg-[#060813] text-[#F8FAFC] flex flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))] lg:pb-0 touch-manipulation">
       {/* Offline Resilience Banner */}
       {isOffline && (
         <div className="bg-amber-500/15 border-b border-amber-500/30 px-4 py-2 text-xs text-amber-300 flex items-center justify-center gap-2">
@@ -527,10 +581,6 @@ const BoostHubAppShell: React.FC = () => {
       <GiftCelebrationOverlay
         celebration={giftCelebration}
         onDismiss={() => setGiftCelebration(null)}
-        onOpenChatWithSender={(senderId) => {
-          setMessagePartner({ id: senderId } as any);
-          setMessagesOpen(true);
-        }}
       />
 
       {/* Non-Blocking Toast Notifications */}

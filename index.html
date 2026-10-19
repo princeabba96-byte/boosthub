@@ -2,21 +2,21 @@
 <html lang="en" style="background-color: #060813; color: #f8fafc;">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0A84FF" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="BoostHub Aba" />
-    <title>BoostHub Aba - Video Editor for Nigerian Creators</title>
+    <title>BoostHub — Social & Creator Platform</title>
     <meta
       name="description"
-      content="BoostHub Aba - Video Editor for Nigerian Creators. Social video editor with AI audio transcription, green screen chroma key, real-time messaging, stories, and viral video creation."
+      content="BoostHub — Social & Creator Platform featuring personalized feeds, Capshots short videos, stories, real-time messaging, B-Shop, and creator analytics."
     />
-    <meta property="og:title" content="BoostHub Aba - Video Editor for Nigerian Creators" />
+    <meta property="og:title" content="BoostHub — Social & Creator Platform" />
     <meta
       property="og:description"
-      content="BoostHub Aba - Video Editor for Nigerian Creators. Social video editor with AI audio transcription, green screen chroma key, real-time messaging, stories, and viral video creation."
+      content="BoostHub — Social & Creator Platform featuring personalized feeds, Capshots short videos, stories, real-time messaging, B-Shop, and creator analytics."
     />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -27,6 +27,12 @@
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <style>
       html,
+      *,
+      *::before,
+      *::after {
+        touch-action: manipulation;
+      }
+      html,
       body {
         margin: 0;
         padding: 0;
@@ -34,6 +40,23 @@
         color: #f8fafc;
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
         min-height: 100vh;
+        touch-action: manipulation;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior-y: none;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      button, a, nav, header, [role="button"], .tab-btn, .nav-btn {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      input, textarea, [contenteditable="true"] {
+        user-select: text;
+        -webkit-user-select: text;
+        touch-action: auto;
       }
       @keyframes bh-spin {
         to {
@@ -42,6 +65,37 @@
       }
     </style>
     <script>
+      // Prevent mobile double-tap and pinch zoom while preserving single clicks
+      (function () {
+        // Prevent multi-touch pinch zoom
+        document.addEventListener(
+          'touchstart',
+          function (e) {
+            if (e.touches && e.touches.length > 1) {
+              e.preventDefault();
+            }
+          },
+          { passive: false }
+        );
+
+        // Prevent dblclick zoom
+        document.addEventListener(
+          'dblclick',
+          function (e) {
+            var target = e.target;
+            if (!target || !target.closest('input, textarea, [contenteditable="true"]')) {
+              e.preventDefault();
+            }
+          },
+          { passive: false }
+        );
+
+        // Prevent iOS gesture zoom
+        document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+        document.addEventListener('gesturechange', function (e) { e.preventDefault(); });
+        document.addEventListener('gestureend', function (e) { e.preventDefault(); });
+      })();
+
       // Preserve native browser fetch before any iframe shim wraps it
       if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
         window.__nativeFetch = window.fetch.bind(window);
@@ -87,7 +141,7 @@
               ? '/boosthub/'
               : '/';
             navigator.serviceWorker
-              .register(baseScope + 'sw.js?v=38', { scope: baseScope })
+              .register(baseScope + 'sw.js?v=40', { scope: baseScope })
               .then(function (reg) {
                 if (reg && typeof reg.update === 'function') {
                   reg.update().catch(function () {});
@@ -147,11 +201,11 @@
       ) {
         var ghCss = document.createElement('link');
         ghCss.rel = 'stylesheet';
-        ghCss.href = './gh-bundle/app.css?v=38';
+        ghCss.href = './gh-bundle/app.css?v=40';
         document.head.appendChild(ghCss);
         var ghJs = document.createElement('script');
         ghJs.type = 'module';
-        ghJs.src = './gh-bundle/app.js?v=38';
+        ghJs.src = './gh-bundle/app.js?v=40';
         document.body.appendChild(ghJs);
       }
     </script>

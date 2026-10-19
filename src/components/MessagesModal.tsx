@@ -31,7 +31,6 @@ import {
 import { useAuth } from '../state/AuthContext';
 import { Avatar } from './Avatar';
 import { formatRelativeTime } from '../utils/format';
-import { EmojiKeyboard } from './EmojiKeyboard';
 
 interface MessagesModalProps {
   initialPartner?: UserProfile | null;
@@ -1004,14 +1003,19 @@ export const MessagesModal: React.FC<MessagesModalProps> = ({
                 <div ref={bottomRef} />
               </div>
 
-              {/* Rich Emoji Keyboard for Chatting Friends */}
+              {/* Emoji Picker Bar */}
               {showEmojiBar && (
-                <div className="border-t border-white/10 bg-[#080C1A]">
-                  <EmojiKeyboard
-                    onSelectEmoji={(em) => setInputContent((c) => c + em)}
-                    onClose={() => setShowEmojiBar(false)}
-                    variant="compact"
-                  />
+                <div className="px-4 py-2 bg-[#0B1021] border-t border-white/10 flex items-center gap-2 overflow-x-auto">
+                  {QUICK_EMOJIS.map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setInputContent((c) => c + em)}
+                      className="text-lg hover:scale-125 transition-transform px-1.5"
+                    >
+                      {em}
+                    </button>
+                  ))}
                 </div>
               )}
 
