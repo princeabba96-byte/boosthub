@@ -14,11 +14,19 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
-    touch-action: manipulation;
+    min-height: 100%;
+    height: auto;
+    touch-action: pan-x pan-y;
     -webkit-text-size-adjust: 100%;
-    overscroll-behavior-y: none;
+    -webkit-overflow-scrolling: touch;
     -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+  }
+
+  #root {
+    min-height: 100%;
+    width: 100%;
+    overflow-x: hidden;
   }
 
   /* Prevent rapid tapping from triggering browser zoom or text selection highlights */

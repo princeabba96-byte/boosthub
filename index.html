@@ -27,25 +27,24 @@
     <link rel="icon" type="image/svg+xml" href="./icon.svg" />
     <style>
       html,
-      *,
-      *::before,
-      *::after {
-        touch-action: manipulation;
-      }
-      html,
       body {
         margin: 0;
         padding: 0;
         background-color: #060813;
         color: #f8fafc;
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-        min-height: 100vh;
-        touch-action: manipulation;
+        min-height: 100%;
+        height: auto;
+        touch-action: pan-x pan-y;
         -webkit-text-size-adjust: 100%;
-        overscroll-behavior-y: none;
+        -webkit-overflow-scrolling: touch;
         -webkit-tap-highlight-color: transparent;
-        user-select: none;
-        -webkit-user-select: none;
+        scroll-behavior: smooth;
+      }
+      #root {
+        min-height: 100%;
+        width: 100%;
+        overflow-x: hidden;
       }
       button, a, nav, header, [role="button"], .tab-btn, .nav-btn {
         touch-action: manipulation;
@@ -65,20 +64,8 @@
       }
     </style>
     <script>
-      // Prevent mobile double-tap and pinch zoom while preserving single clicks
+      // Prevent double-click zoom without interfering with fluid upward/downward scrolling
       (function () {
-        // Prevent multi-touch pinch zoom
-        document.addEventListener(
-          'touchstart',
-          function (e) {
-            if (e.touches && e.touches.length > 1) {
-              e.preventDefault();
-            }
-          },
-          { passive: false }
-        );
-
-        // Prevent dblclick zoom
         document.addEventListener(
           'dblclick',
           function (e) {

@@ -88,13 +88,22 @@ class MainActivity : AppCompatActivity() {
             binding.pageLoadProgress.visibility = View.VISIBLE
             binding.webView.reload()
         }
+        // Tapping the native toolbar title scrolls smoothly to top
+        binding.tvToolbarTitle.setOnClickListener {
+            binding.webView.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+        }
     }
 
     private fun setupNativeBottomNavigation() {
         binding.bottomNavigation.setOnItemSelectedListener { item ->
             when (item.itemId) {
                 R.id.navigation_home -> {
-                    navigateToTab("home")
+                    if (binding.bottomNavigation.selectedItemId == R.id.navigation_home) {
+                        // If already on Home, smooth scroll back up to the top!
+                        binding.webView.evaluateJavascript("window.scrollTo({ top: 0, behavior: 'smooth' });", null)
+                    } else {
+                        navigateToTab("home")
+                    }
                     true
                 }
                 R.id.navigation_capshots -> {
@@ -169,6 +178,14 @@ class MainActivity : AppCompatActivity() {
         binding.swipeRefresh.setProgressBackgroundColorSchemeColor(
             ContextCompat.getColor(this, R.color.colorSurfaceElevated)
         )
+
+        // CRITICAL FIX: Ensure SwipeRefreshLayout only activates when WebView is at the VERY TOP (scrollY == 0).
+        // If webView is scrolled down (canScrollVertically(-1) is true), return true so SwipeRefreshLayout
+        // DOES NOT intercept the touch, allowing the user to smoothly scroll UP through the content!
+        binding.swipeRefresh.setOnChildScrollUpCallback { _, _ ->
+            binding.webView.scrollY > 0 || binding.webView.canScrollVertically(-1)
+        }
+
         binding.swipeRefresh.setOnRefreshListener {
             if (isNetworkAvailable()) {
                 binding.webView.reload()
@@ -199,6 +216,13 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             cacheMode = WebSettings.LOAD_DEFAULT
             userAgentString = "${settings.userAgentString} BoostHubHybrid/2.0"
+        }
+
+        // Dynamically toggle swipe-to-refresh: Only active when user is scrolled to the absolute top
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            binding.webView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                binding.swipeRefresh.isEnabled = (scrollY <= 0 && !binding.webView.canScrollVertically(-1))
+            }
         }
 
         // Add JavaScript Interface Bridge

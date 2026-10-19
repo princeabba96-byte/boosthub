@@ -203,6 +203,22 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
     }
   };
 
+  // Keyboard navigation: ArrowUp to scroll up (previous video), ArrowDown to scroll down (next video)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+        e.preventDefault();
+        goPrev();
+      } else if (e.key === 'ArrowDown' || e.key === 'PageDown') {
+        e.preventDefault();
+        goNext();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentIndex, capshots.length, currentVideo]);
+
   const togglePlayPause = () => {
     const vid = videoRef.current;
     if (!vid) return;
@@ -420,11 +436,16 @@ export const CapshotsScreen: React.FC<CapshotsScreenProps> = ({
         onTouchEnd={(e) => {
           if (touchStartYRef.current === null) return;
           const deltaY = touchStartYRef.current - e.changedTouches[0].clientY;
-          if (deltaY > 55) goNext();
-          else if (deltaY < -55) goPrev();
+          if (deltaY > 35) goNext();
+          else if (deltaY < -35) goPrev();
           touchStartYRef.current = null;
         }}
-        className="relative w-full max-w-[420px] h-full sm:rounded-3xl overflow-hidden bg-[#060813] border border-white/10 shadow-2xl flex items-center justify-center"
+        onWheel={(e) => {
+          if (Math.abs(e.deltaY) < 25) return;
+          if (e.deltaY > 0) goNext();
+          else goPrev();
+        }}
+        className="relative w-full max-w-[420px] h-full sm:rounded-3xl overflow-hidden bg-[#060813] border border-white/10 shadow-2xl flex items-center justify-center select-none"
       >
         {currentVideo.mediaUrl ? (() => {
           const studioMeta = parseStudioUrlHash(currentVideo.mediaUrl);

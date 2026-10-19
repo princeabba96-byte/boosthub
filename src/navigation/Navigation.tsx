@@ -40,7 +40,13 @@ export const TopNavigationBar: React.FC<NavigationProps> = ({
     <header className="sticky top-0 z-30 h-14 bg-[#121212] border-b border-white/[0.08] px-4 sm:px-6 flex items-center justify-between shadow-md select-none touch-manipulation pt-[env(safe-area-inset-top,0px)]">
       {/* Left: BoostHub logo with blue B circle + "BoostHub" text */}
       <button
-        onClick={() => onChangeTab('home')}
+        onClick={() => {
+          if (activeTab === 'home') {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          } else {
+            onChangeTab('home');
+          }
+        }}
         className="flex items-center gap-2.5 font-display text-xl font-extrabold tracking-tight text-white whitespace-nowrap group"
       >
         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#4A90E2] to-[#2563EB] flex items-center justify-center text-white font-display font-black text-lg shadow-[0_0_14px_rgba(74,144,226,0.5)] group-hover:scale-105 transition-transform">
@@ -180,7 +186,13 @@ export const BottomNavigationBar: React.FC<{
         return (
           <button
             key={item.id}
-            onClick={() => onChangeTab(item.id)}
+            onClick={() => {
+              if (activeTab === item.id) {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              } else {
+                onChangeTab(item.id);
+              }
+            }}
             className={`relative h-full flex flex-col items-center justify-center transition-colors select-none touch-manipulation active:scale-95 cursor-pointer outline-none ${
               isActive
                 ? 'text-[#4A90E2]'
