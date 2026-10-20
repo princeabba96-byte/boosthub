@@ -113,6 +113,22 @@ async function startServer() {
   app.use(express.json({ limit: '45mb' }));
   app.use(express.urlencoded({ extended: true, limit: '45mb' }));
 
+  // Direct Android APK and download page routes
+  app.get(['/BoostHub.apk', '/app-release.apk'], (_req, res) => {
+    const apkPath = path.join(__dirname, 'BoostHub.apk');
+    if (fs.existsSync(apkPath)) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+      res.setHeader('Content-Disposition', 'attachment; filename="BoostHub.apk"');
+      return res.sendFile(apkPath);
+    }
+    return res.status(404).send('APK file not found');
+  });
+
+  app.get(['/download', '/download.html'], (_req, res) => {
+    const downloadPagePath = path.join(__dirname, 'download.html');
+    return res.sendFile(downloadPagePath);
+  });
+
   // Universal CORS support so GitHub Pages (https://princeabba96-byte.github.io/boosthub/) can call /api/*
   app.use('/api', (req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');

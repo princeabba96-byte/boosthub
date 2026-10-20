@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "545329170490",
+    "project_id": "boost-hub-bd22d",
+    "storage_bucket": "boost-hub-bd22d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:545329170490:android:c6ede884f8ceeb6c304d03",
+        "android_client_info": {
+          "package_name": "com.boosthub.society"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCDGFsextmnLXfF_c5fw5hEUUPcat1zheM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

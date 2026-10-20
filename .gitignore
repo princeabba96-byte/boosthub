@@ -7,3 +7,8 @@ coverage/
 .env*
 !.env.example
 .vapid-keys.json
+android-sdk/
+gradle-8.4/
+.gradle/
+*.keystore
+*.jks

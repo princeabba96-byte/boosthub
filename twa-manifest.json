@@ -1,8 +1,8 @@
 {
-  "packageId": "com.boosthub.aba",
+  "packageId": "com.boosthub.society",
   "host": "princeabba96-byte.github.io",
-  "name": "BoostHub Aba - Video Editor for Nigerian Creators",
-  "launcherName": "BoostHub Aba",
+  "name": "BoostHub - Hybrid Native Creator Platform",
+  "launcherName": "BoostHub",
   "display": "standalone",
   "themeColor": "#0A84FF",
   "themeColorDark": "#0A0A0A",
@@ -20,8 +20,8 @@
     "path": "./android.keystore",
     "alias": "boosthub-key"
   },
-  "appVersionName": "1.0.1",
-  "appVersionCode": 2,
+  "appVersionName": "2.0.0",
+  "appVersionCode": 3,
   "shortcuts": [],
   "generatorApp": "bubblewrap-cli",
   "webManifestUrl": "https://princeabba96-byte.github.io/boosthub/manifest.json",

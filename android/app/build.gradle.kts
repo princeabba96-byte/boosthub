@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.boosthub.society"
-        minSdk = 24
+        minSdk = 21
         targetSdk = 34
         versionCode = 3
         versionName = "2.0.0"
@@ -21,15 +21,19 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("release.keystore")
+            storePassword = "boosthub2026"
+            keyAlias = "boosthub-key"
+            keyPassword = "boosthub2026"
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
         debug {
             isMinifyEnabled = false
